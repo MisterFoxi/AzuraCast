@@ -9,6 +9,7 @@ use App\Doctrine\Repository;
 use App\Entity\Song;
 use App\Entity\Station;
 use App\Entity\StationMedia;
+use App\Entity\StationMediaCategory;
 use App\Entity\StationMediaCustomField;
 use App\Entity\StorageLocation;
 use App\Exception\NotFoundException;
@@ -17,6 +18,7 @@ use App\Media\AlbumArt;
 use App\Media\MetadataManager;
 use App\Media\RemoteAlbumArt;
 use App\Service\AudioWaveform;
+use App\Utilities\Types;
 use Exception;
 use Generator;
 use League\Flysystem\FilesystemException;
@@ -166,6 +168,32 @@ final class StationMediaRepository extends Repository
         $metadata = $this->metadataManager->read($filePath);
 
         $media->fromMetadata($metadata);
+
+        $tags = $metadata->getKnownTags();
+        $categoryName = Types::stringOrNull($tags['content_group_description'] ?? null, true);
+
+        if (null !== $categoryName && '' !== $categoryName) {
+            /** @var Station|null $station */
+            $station = $this->em->getRepository(Station::class)->findOneBy([
+                'media_storage_location' => $media->storage_location,
+            ]);
+
+            if ($station instanceof Station) {
+                $category = $this->em->getRepository(StationMediaCategory::class)->findOneBy([
+                    'station' => $station,
+                    'name' => $categoryName,
+                ]);
+
+                if (!$category instanceof StationMediaCategory) {
+                    $category = new StationMediaCategory($station);
+                    $category->name = $categoryName;
+
+                    $this->em->persist($category);
+                }
+
+                $media->category = $category;
+            }
+        }
 
         // Persist the media record for later custom field operations.
         $this->em->persist($media);

@@ -41,12 +41,10 @@ final class Writer
 
         $writeTags = $metadata->getKnownTags();
 
-        if (!empty($metadata->getExtraTags())) {
-            // GetID3 requires all tags for vorbiscomment & metaflac to have string values
-            // so we explicitly need to convert the extra tags into a multiline string
-            $writeTags['text'] = !empty(array_intersect(['vorbiscomment', 'metaflac'], $tagFormats))
-                ? implode(PHP_EOL, $metadata->getExtraTags())
-                : $metadata->getExtraTags();
+        if (!empty($metadata->getExtraTags()) && !empty(array_intersect(['vorbiscomment', 'metaflac'], $tagFormats))) {
+            // GetID3 requires all tags for vorbiscomment & metaflac to have string values.
+            // ID3v2 TXXX frames require a different structure, so don't write extra tags there.
+            $writeTags['text'] = implode(PHP_EOL, $metadata->getExtraTags());
         }
 
         $artContents = $metadata->getArtwork();

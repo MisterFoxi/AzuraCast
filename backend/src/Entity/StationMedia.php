@@ -233,6 +233,7 @@ final class StationMedia implements
                 'artist' => $this->artist,
                 'album' => $this->album,
                 'genre' => $this->genre,
+                'content_group_description' => $this->category?->name,
                 'unsynchronised_lyric' => $this->lyrics,
                 'isrc' => $this->isrc,
             ]
