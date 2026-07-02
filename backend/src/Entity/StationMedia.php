@@ -227,12 +227,33 @@ final class StationMedia implements
         $metadata = new Metadata();
         $metadata->setDuration($this->length);
 
+        $extraMetadata = $this->extra_metadata->toArray() ?? [];
+
+        $artist = Types::stringOrNull($this->artist);
+        $genre = Types::stringOrNull($this->genre);
+        $originalArtist = null;
+
+        if (null !== $artist && null !== $genre) {
+            $separator = ' - ';
+
+            if (str_contains($artist, $separator)) {
+                $artistParts = explode($separator, $artist);
+                array_pop($artistParts);
+                $originalArtist = implode($separator, $artistParts);
+            } else {
+                $originalArtist = $artist;
+            }
+
+            $artist = $originalArtist . $separator . $genre;
+        }
+
         $tags = array_filter(
             [
                 'title' => $this->title,
-                'artist' => $this->artist,
+                'artist' => $artist,
                 'album' => $this->album,
-                'genre' => $this->genre,
+                'genre' => $genre,
+                'original_artist' => $originalArtist,
                 'content_group_description' => $this->category?->name,
                 'unsynchronised_lyric' => $this->lyrics,
                 'isrc' => $this->isrc,
@@ -240,8 +261,7 @@ final class StationMedia implements
         );
 
         $metadata->setKnownTags($tags);
-        $metadata->setExtraTags($this->extra_metadata->toArray() ?? []);
-
+        $metadata->setExtraTags($extraMetadata);
         return $metadata;
     }
 
