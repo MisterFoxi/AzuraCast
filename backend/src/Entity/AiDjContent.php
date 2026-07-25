@@ -48,6 +48,22 @@ final class AiDjContent implements Interfaces\IdentifiableEntityInterface
         self::TYPE_STORY,
     ];
 
+    /**
+     * System categories essential to song playback — cannot be wiped or removed
+     * at the category level (individual items may still be edited/deleted).
+     *
+     * @var list<string>
+     */
+    public const array REQUIRED_TYPES = [
+        self::TYPE_SONG_INTRO_TEMPLATE,
+        self::TYPE_POST_SONG_TEMPLATE,
+    ];
+
+    public static function isRequiredType(string $type): bool
+    {
+        return in_array($type, self::REQUIRED_TYPES, true);
+    }
+
     #[
         ORM\ManyToOne,
         ORM\JoinColumn(name: 'station_id', referencedColumnName: 'id', nullable: false, onDelete: 'CASCADE')

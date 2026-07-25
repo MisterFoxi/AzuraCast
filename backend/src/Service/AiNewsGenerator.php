@@ -27,8 +27,16 @@ final class AiNewsGenerator
 
     private const string PIPER_BIN = 'piper';
     private const string FFMPEG_BIN = 'ffmpeg';
+    private const string PIPER_VOICES_DIR = '/usr/local/share/piper-voices';
     private const string DEFAULT_VOICE_MODEL =
         '/usr/local/share/piper-voices/en/en_US/lessac/medium/en_US-lessac-medium.onnx';
+
+    /**
+     * Fallback Piper voices when the voice library directory is missing
+     * (e.g. local non-Docker PHPUnit runs).
+     *
+     * @var list<array{label: string, path: string}>
+     */
     public const array AVAILABLE_VOICE_MODELS = [
         [
             'label' => 'Lessac (Default)',
@@ -43,6 +51,59 @@ final class AiNewsGenerator
             'path' => '/usr/local/share/piper-voices/en/en_US/ryan/medium/en_US-ryan-medium.onnx',
         ],
     ];
+
+    /**
+     * Discover every installed Piper .onnx voice under the Docker voice library.
+     * Shared by AI Newscaster and AI DJ Piper fallback voice pickers.
+     *
+     * @return list<array{label: string, path: string}>
+     */
+    public static function getAvailableVoiceModels(): array
+    {
+        $voicesDir = self::PIPER_VOICES_DIR;
+        if (!is_dir($voicesDir)) {
+            return self::AVAILABLE_VOICE_MODELS;
+        }
+
+        $found = [];
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator(
+                $voicesDir,
+                \FilesystemIterator::SKIP_DOTS
+            )
+        );
+
+        /** @var \SplFileInfo $file */
+        foreach ($iterator as $file) {
+            if (!$file->isFile()) {
+                continue;
+            }
+
+            $name = $file->getFilename();
+            if (!str_ends_with($name, '.onnx') || str_ends_with($name, '.onnx.json')) {
+                continue;
+            }
+
+            $path = str_replace('\\', '/', $file->getPathname());
+            $basename = $file->getBasename('.onnx');
+            $found[] = [
+                'label' => $basename,
+                'path' => $path,
+            ];
+        }
+
+        if ($found === []) {
+            return self::AVAILABLE_VOICE_MODELS;
+        }
+
+        usort(
+            $found,
+            static fn(array $a, array $b): int => strcmp($a['label'], $b['label'])
+        );
+
+        return $found;
+    }
+
     public const string OUTPUT_FILENAME = 'news_bulletin.mp3';
     public const array DEFAULT_SOURCE_URLS = [
         'https://worthynews.com/',

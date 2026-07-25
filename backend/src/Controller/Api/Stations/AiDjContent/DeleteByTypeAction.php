@@ -6,6 +6,7 @@ namespace App\Controller\Api\Stations\AiDjContent;
 
 use App\Container\EntityManagerAwareTrait;
 use App\Controller\SingleActionInterface;
+use App\Entity\AiDjContent;
 use App\Http\Response;
 use App\Http\ServerRequest;
 use App\OpenApi;
@@ -21,12 +22,16 @@ use Psr\Http\Message\ResponseInterface;
         new OA\Parameter(ref: OpenApi::REF_STATION_ID_REQUIRED),
     ],
     requestBody: new OA\RequestBody(
-        description: 'The content type to clear',
+        description: 'The content type to clear, optionally removing the category tab',
         required: true,
         content: new OA\JsonContent(
             type: 'object',
             properties: [
                 'type' => new OA\Property(description: 'Content type slug', type: 'string'),
+                'remove_category' => new OA\Property(
+                    description: 'When true, also hide/remove the category tab (not just wipe items)',
+                    type: 'boolean'
+                ),
             ],
             required: ['type']
         )
@@ -40,6 +45,7 @@ use Psr\Http\Message\ResponseInterface;
                 properties: [
                     'success' => new OA\Property(type: 'boolean'),
                     'deleted' => new OA\Property(type: 'integer'),
+                    'category_removed' => new OA\Property(type: 'boolean'),
                 ]
             )
         ),
@@ -60,10 +66,18 @@ final class DeleteByTypeAction implements SingleActionInterface
         $body = $request->getParsedBody();
 
         $type = is_array($body) ? trim((string)($body['type'] ?? '')) : '';
+        $removeCategory = is_array($body) && filter_var($body['remove_category'] ?? false, FILTER_VALIDATE_BOOLEAN);
         if ($type === '') {
             return $response->withStatus(400)->withJson([
                 'success' => false,
                 'message' => 'Missing "type".',
+            ]);
+        }
+
+        if (AiDjContent::isRequiredType($type)) {
+            return $response->withStatus(400)->withJson([
+                'success' => false,
+                'message' => 'This content category is required for song playback and cannot be deleted.',
             ]);
         }
 
@@ -78,9 +92,24 @@ final class DeleteByTypeAction implements SingleActionInterface
             ->setParameter('type', $type)
             ->execute();
 
+        $categoryRemoved = false;
+        if ($removeCategory) {
+            $backendConfig = $station->backend_config;
+            $removed = $backendConfig->ai_dj_removed_content_types;
+            if (!in_array($type, $removed, true)) {
+                $removed[] = $type;
+                $backendConfig->ai_dj_removed_content_types = $removed;
+                $station->backend_config = $backendConfig;
+                $this->em->persist($station);
+                $this->em->flush();
+            }
+            $categoryRemoved = true;
+        }
+
         return $response->withJson([
             'success' => true,
             'deleted' => (int)$deleted,
+            'category_removed' => $categoryRemoved,
         ]);
     }
 }

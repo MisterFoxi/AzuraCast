@@ -24,17 +24,17 @@ tar -xzf /tmp/piper.tar.gz -C /usr/local/share/piper/ --strip-components=1
 ln -sf /usr/local/share/piper/piper /usr/local/bin/piper
 chmod a+x /usr/local/share/piper/piper
 
-# Download voice models using hf CLI (handles CDN auth/retries automatically)
-# This fixes 403 Forbidden errors from HuggingFace CDN in GitHub Actions
+# US + British English Piper voices only (keeps the image size reasonable).
+# Used by AI Newscaster and as Piper fallback voices for AI DJ.
+# Inference assets only (.onnx + sidecars + catalog) — skip WAV samples.
 export HF_HOME=/tmp/hf_cache
 
 hf download rhasspy/piper-voices \
-  en/en_US/lessac/medium/en_US-lessac-medium.onnx \
-  en/en_US/lessac/medium/en_US-lessac-medium.onnx.json \
-  en/en_US/joe/medium/en_US-joe-medium.onnx \
-  en/en_US/joe/medium/en_US-joe-medium.onnx.json \
-  en/en_US/ryan/medium/en_US-ryan-medium.onnx \
-  en/en_US/ryan/medium/en_US-ryan-medium.onnx.json \
+  --include "en/en_US/**/*.onnx" \
+  --include "en/en_US/**/*.onnx.json" \
+  --include "en/en_GB/**/*.onnx" \
+  --include "en/en_GB/**/*.onnx.json" \
+  --include "voices.json" \
   --local-dir /usr/local/share/piper-voices
 
 rm -f /tmp/piper.tar.gz

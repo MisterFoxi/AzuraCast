@@ -1460,6 +1460,11 @@ return static function (RouteCollectorProxy $group) {
                                 '/delete-by-type',
                                 Controller\Api\Stations\AiDjContent\DeleteByTypeAction::class
                             );
+
+                            $group->post(
+                                '/restore-type',
+                                Controller\Api\Stations\AiDjContent\RestoreTypeAction::class
+                            );
                         }
                     )->add(new Middleware\Permissions(StationPermissions::AiDjContent, true));
 

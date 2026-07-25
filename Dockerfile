@@ -159,7 +159,8 @@ COPY --chown=azuracast:azuracast . .
 
 USER root
 
-# Install Kokoro TTS for human-like AI DJ voices (same as production final stage)
+# Install Kokoro TTS for human-like AI DJ voices (same as production final stage).
+# kokoro-v1.0.onnx + voices-v1.0.bin ship the FULL Kokoro v1.0 voice set (~53 speakers).
 RUN pip install --break-system-packages kokoro-onnx soundfile \
     && mkdir -p /opt/kokoro \
     && curl -L -o /opt/kokoro/kokoro-v1.0.onnx \
@@ -236,7 +237,8 @@ RUN composer install --no-dev --no-ansi --no-autoloader --no-interaction \
 
 USER root
 
-# Install Kokoro TTS for human-like AI DJ voices
+# Install Kokoro TTS for human-like AI DJ voices.
+# kokoro-v1.0.onnx + voices-v1.0.bin ship the FULL Kokoro v1.0 voice set (~53 speakers).
 RUN pip install --break-system-packages kokoro-onnx soundfile \
     && mkdir -p /opt/kokoro \
     && curl -L -o /opt/kokoro/kokoro-v1.0.onnx \

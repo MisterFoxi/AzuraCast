@@ -64,6 +64,19 @@ final class PostAction implements SingleActionInterface
         }
 
         $this->em->persist($content);
+
+        // Creating content for a removed optional category restores its tab.
+        $backendConfig = $station->backend_config;
+        $removed = $backendConfig->ai_dj_removed_content_types;
+        if (!AiDjContent::isRequiredType($content->type) && in_array($content->type, $removed, true)) {
+            $backendConfig->ai_dj_removed_content_types = array_values(array_filter(
+                $removed,
+                static fn(string $slug): bool => $slug !== $content->type
+            ));
+            $station->backend_config = $backendConfig;
+            $this->em->persist($station);
+        }
+
         $this->em->flush();
 
         return $response->withJson([
