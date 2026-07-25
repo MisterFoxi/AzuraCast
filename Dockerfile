@@ -159,6 +159,17 @@ COPY --chown=azuracast:azuracast . .
 
 USER root
 
+# Install Kokoro TTS for human-like AI DJ voices (same as production final stage)
+RUN pip install --break-system-packages kokoro-onnx soundfile \
+    && mkdir -p /opt/kokoro \
+    && curl -L -o /opt/kokoro/kokoro-v1.0.onnx \
+       https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx \
+    && curl -L -o /opt/kokoro/voices-v1.0.bin \
+       https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+
+COPY --chown=root:root util/docker/kokoro/kokoro_tts.py /opt/kokoro/kokoro_tts.py
+RUN chmod +x /opt/kokoro/kokoro_tts.py
+
 # Sensible default environment variables.
 ENV APPLICATION_ENV="development" \
     PROFILING_EXTENSION_ENABLED=1 \

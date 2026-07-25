@@ -65,12 +65,16 @@ final class BuildQueue extends Event
 
     /**
      * @param StationQueue|StationQueue[]|null $nextSongs
-     * @return bool
+     *        Pass null to clear a previously selected pick (e.g. DMCA rejection).
+     * @return bool True when the selection was updated (set or cleared).
      */
     public function setNextSongs(StationQueue|array|null $nextSongs): bool
     {
+        // Clear selection so validators (DMCA) can reject a pick and force a retry.
+        // Do not stopPropagation here — later listeners still need to run.
         if (null === $nextSongs) {
-            return false;
+            $this->nextSongs = [];
+            return true;
         }
 
         if (!is_array($nextSongs)) {
@@ -83,7 +87,9 @@ final class BuildQueue extends Event
             $this->nextSongs = $nextSongs;
         }
 
-        $this->stopPropagation();
+        // Intentionally do NOT stopPropagation: lower-priority validators such as
+        // DmcaComplianceListener must still run after a successful selector pick.
+        // Selectors themselves early-return when getNextSongs() is already non-empty.
         return true;
     }
 
