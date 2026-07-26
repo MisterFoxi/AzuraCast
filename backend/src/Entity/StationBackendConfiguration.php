@@ -484,6 +484,31 @@ final class StationBackendConfiguration extends AbstractArrayEntity
         }
     }
 
+    /**
+     * Optional AI DJ content category slugs the station has removed as tabs.
+     * Required categories (song intros / post-song) are never stored here.
+     *
+     * @var list<string>
+     */
+    #[OA\Property(
+        description: 'AI DJ content type slugs hidden from the Content Library tab list',
+        type: 'array',
+        items: new OA\Items(type: 'string')
+    )]
+    public array $ai_dj_removed_content_types = [] {
+        set (mixed $value) {
+            $types = array_values(array_unique(array_filter(
+                array_map(
+                    static fn(mixed $type): string => strtolower(trim((string)$type)),
+                    Types::array($value)
+                ),
+                static fn(string $type): bool => $type !== ''
+            )));
+
+            $this->ai_dj_removed_content_types = $types;
+        }
+    }
+
     #[OA\Property]
     public ?string $ai_news_voice_model_path = null {
         set => Types::stringOrNull($value, true);

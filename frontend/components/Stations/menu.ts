@@ -16,6 +16,8 @@ import IconIcSettingsApplication from "~icons/ic/baseline-settings-applications"
 import IconIcPsychology from "~icons/ic/baseline-psychology";
 import IconBiBroadcast from "~icons/bi/broadcast";
 import IconIcSchedule from "~icons/ic/baseline-schedule";
+import IconIcGavel from "~icons/ic/baseline-gavel";
+import IconIcAttachMoney from "~icons/ic/baseline-attach-money";
 import IconIcGraphicEq from "~icons/ic/baseline-graphic-eq";
 import IconIcCategory from "~icons/ic/baseline-category";
 import {useUserAllowedForStation} from "~/functions/useUserallowedForStation.ts";
@@ -282,6 +284,22 @@ export function useStationsMenu() {
                     url: {
                         name: 'stations:reports:soundexchange'
                     }
+                },
+                {
+                    key: 'reports_dmca_compliance',
+                    label: $gettext('DMCA Compliance'),
+                    url: {
+                        name: 'stations:dmca_compliance'
+                    },
+                    visible: () => userAllowedForStation(StationPermissions.Broadcasting)
+                },
+                {
+                    key: 'reports_sponsor_plays',
+                    label: $gettext('Sponsor Play Report'),
+                    url: {
+                        name: 'stations:sponsor_plays'
+                    },
+                    visible: () => userAllowedForStation(StationPermissions.Broadcasting)
                 }
             ]
         },

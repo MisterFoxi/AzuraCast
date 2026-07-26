@@ -72,7 +72,7 @@ final class IndexAction implements SingleActionInterface
             AiDjGenerator::KOKORO_VOICES
         );
 
-        $piperVoices = AiNewsGenerator::AVAILABLE_VOICE_MODELS;
+        $piperVoices = AiNewsGenerator::getAvailableVoiceModels();
 
         // Find currently active DJ for "Live on Air" indicator
         $activeDj = $this->scheduler->findActiveDj($station->id);

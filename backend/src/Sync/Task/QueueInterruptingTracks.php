@@ -8,6 +8,8 @@ use App\Entity\Station;
 use App\Event\Radio\AnnotateNextSong;
 use App\Radio\Adapters;
 use App\Radio\AutoDJ\Queue;
+use App\Radio\AutoDJ\Scheduler;
+use App\Radio\AutoDJ\SponsorGuaranteedPlayoutService;
 use App\Radio\Backend\Liquidsoap;
 use App\Radio\Enums\LiquidsoapQueues;
 use Monolog\LogRecord;
@@ -18,7 +20,9 @@ final class QueueInterruptingTracks extends AbstractTask
     public function __construct(
         private readonly Queue $queue,
         private readonly Adapters $adapters,
-        private readonly EventDispatcherInterface $eventDispatcher
+        private readonly EventDispatcherInterface $eventDispatcher,
+        private readonly Scheduler $scheduler,
+        private readonly SponsorGuaranteedPlayoutService $sponsorGuarantee,
     ) {
     }
 
@@ -61,11 +65,19 @@ final class QueueInterruptingTracks extends AbstractTask
 
         // This feature is not useful for stations without interrupting playlists.
         $hasInterruptingPlaylist = false;
+        $tz = $station->getTimezoneObject();
         foreach ($station->playlists as $playlist) {
-            if ($playlist->isPlayable(true)) {
+            if (
+                $playlist->isPlayable(true)
+                || $this->scheduler->isPlaylistStrictStartDueNow($playlist, $tz)
+            ) {
                 $hasInterruptingPlaylist = true;
                 break;
             }
+        }
+
+        if (!$hasInterruptingPlaylist && !empty($this->sponsorGuarantee->getPlaylistsBehindPace($station))) {
+            $hasInterruptingPlaylist = true;
         }
 
         if (!$hasInterruptingPlaylist) {

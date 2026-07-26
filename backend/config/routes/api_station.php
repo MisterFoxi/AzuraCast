@@ -172,6 +172,11 @@ return static function (RouteCollectorProxy $group) {
                             );
 
                             $group->get(
+                                '/overview-stats',
+                                Controller\Api\Stations\OverviewStatsAction::class
+                            )->setName('api:stations:overview-stats');
+
+                            $group->get(
                                 '/custom_assets/{type}',
                                 Controller\Api\Stations\CustomAssets\GetCustomAssetAction::class
                             )->setName('api:stations:custom_assets');
@@ -764,6 +769,16 @@ return static function (RouteCollectorProxy $group) {
                                 Controller\Api\Stations\ClockWheels\ReconciliationLogAction::class
                             )->setName('api:stations:clock-wheels:reconciliation-log');
 
+                            $group->get(
+                                '/clock-wheels/reconciliation-log/export',
+                                Controller\Api\Stations\ClockWheels\ReconciliationLogExportAction::class
+                            )->setName('api:stations:clock-wheels:reconciliation-log:export');
+
+                            $group->post(
+                                '/clock-wheels/generate',
+                                Controller\Api\Stations\ClockWheels\GenerateAction::class
+                            )->setName('api:stations:clock-wheels:generate');
+
                             $group->post(
                                 '/clock-wheels/import',
                                 Controller\Api\Stations\ClockWheels\ImportAction::class
@@ -969,6 +984,11 @@ return static function (RouteCollectorProxy $group) {
                                 '/overview/dmca-compliance',
                                 Controller\Api\Stations\Reports\Overview\DmcaComplianceAction::class
                             )->setName('api:stations:reports:overview-dmca-compliance');
+
+                            $group->get(
+                                '/overview/sponsor-plays',
+                                Controller\Api\Stations\Reports\Overview\SponsorPlaysAction::class
+                            )->setName('api:stations:reports:overview-sponsor-plays');
 
                             $group->get(
                                 '/overview/best-and-worst',
@@ -1439,6 +1459,11 @@ return static function (RouteCollectorProxy $group) {
                             $group->post(
                                 '/delete-by-type',
                                 Controller\Api\Stations\AiDjContent\DeleteByTypeAction::class
+                            );
+
+                            $group->post(
+                                '/restore-type',
+                                Controller\Api\Stations\AiDjContent\RestoreTypeAction::class
                             );
                         }
                     )->add(new Middleware\Permissions(StationPermissions::AiDjContent, true));

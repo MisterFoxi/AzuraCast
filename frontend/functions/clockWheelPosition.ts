@@ -145,3 +145,87 @@ export function isClockWheelLayoutValid(entries: ClockWheelTimelineEntry[]): boo
     return getClockWheelTimelineWarnings(entries, (m) => m).length === 0;
 }
 
+export interface ClockWheelContentDensity {
+    musicPercent: number;
+    musicSeconds: number;
+    talkPercent: number;
+    talkSeconds: number;
+    idPercent: number;
+    idSeconds: number;
+    promoAdPercent: number;
+    promoAdSeconds: number;
+}
+
+/**
+ * Content-type density across the hour, broken out by category: Music, Talk,
+ * ID (station identification/legal ID), and a combined Promo/Ad bucket. Uses
+ * the same per-slot duration estimate as the loop time calculation, so the
+ * two stay consistent with each other.
+ */
+export function getClockWheelContentDensity(
+    entries: Array<ClockWheelTimelineEntry & {duration_seconds?: number | null; type?: string}>,
+): ClockWheelContentDensity {
+    const sorted = [...entries].sort((a, b) => a.position_seconds - b.position_seconds);
+
+    let musicSeconds = 0;
+    let talkSeconds = 0;
+    let idSeconds = 0;
+    let promoAdSeconds = 0;
+
+    for (let i = 0; i < sorted.length; i++) {
+        const entry = sorted[i];
+        const next = sorted[i + 1];
+        const window = next
+            ? Math.max(1, next.position_seconds - entry.position_seconds)
+            : CLOCK_WHEEL_HOUR_SECONDS - entry.position_seconds;
+
+        let duration: number;
+        if (entry.duration_seconds != null && entry.duration_seconds > 0) {
+            duration = Math.min(entry.duration_seconds, window);
+        } else if (entry.type === 'legal_id' || entry.type === 'id' || entry.type === 'sweeper') {
+            duration = Math.min(30, window);
+        } else {
+            duration = Math.min(210, window);
+        }
+
+        const entryType = (entry.type ?? 'music') as string;
+
+        switch (entryType) {
+            case 'talk':
+                talkSeconds += duration;
+                break;
+            case 'id':
+            case 'legal_id':
+            case 'sweeper':
+                idSeconds += duration;
+                break;
+            case 'promo':
+            case 'ad':
+                promoAdSeconds += duration;
+                break;
+            case 'music':
+            default:
+                musicSeconds += duration;
+                break;
+        }
+    }
+
+    const totalSeconds = musicSeconds + talkSeconds + idSeconds + promoAdSeconds;
+    if (totalSeconds === 0) {
+        return {
+            musicPercent: 0, musicSeconds: 0,
+            talkPercent: 0, talkSeconds: 0,
+            idPercent: 0, idSeconds: 0,
+            promoAdPercent: 0, promoAdSeconds: 0,
+        };
+    }
+
+    const pct = (s: number) => Math.round((s / totalSeconds) * 100);
+
+    return {
+        musicPercent: pct(musicSeconds), musicSeconds,
+        talkPercent: pct(talkSeconds), talkSeconds,
+        idPercent: pct(idSeconds), idSeconds,
+        promoAdPercent: pct(promoAdSeconds), promoAdSeconds,
+    };
+}

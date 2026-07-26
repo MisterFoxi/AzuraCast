@@ -31,23 +31,65 @@ final class AiDjGenerator
     // space = 461 < MAX_TTS_CHARS (500), so a combined clip never hits the cap.
     private const int COMBO_SEGMENT_CHARS = 230;
 
+    // Full Kokoro v1.0 voice set (all speakers in voices-v1.0.bin).
     public const array KOKORO_VOICES = [
-        ['name' => 'Adam (Morning Host)',     'id' => 'kokoro:am_adam',    'gender' => 'male',   'style' => 'calm-energetic'],
-        ['name' => 'Michael (Warm Male)',      'id' => 'kokoro:am_michael', 'gender' => 'male',   'style' => 'warm'],
-        ['name' => 'Eric (Relaxed Male)',      'id' => 'kokoro:am_eric',    'gender' => 'male',   'style' => 'relaxed'],
-        ['name' => 'Liam (Smooth Male)',       'id' => 'kokoro:am_liam',    'gender' => 'male',   'style' => 'smooth'],
-        ['name' => 'Onyx (Deep Male)',         'id' => 'kokoro:am_onyx',    'gender' => 'male',   'style' => 'deep-calm'],
-        ['name' => 'Fenrir (Mature Male)',     'id' => 'kokoro:am_fenrir',  'gender' => 'male',   'style' => 'mature'],
-        ['name' => 'Bella (Energetic Female)', 'id' => 'kokoro:af_bella',   'gender' => 'female', 'style' => 'energetic'],
-        ['name' => 'Sarah (Bright Female)',    'id' => 'kokoro:af_sarah',   'gender' => 'female', 'style' => 'bright'],
-        ['name' => 'Heart (Warm Female)',      'id' => 'kokoro:af_heart',   'gender' => 'female', 'style' => 'warm'],
-        ['name' => 'Nova (Dynamic Female)',    'id' => 'kokoro:af_nova',    'gender' => 'female', 'style' => 'dynamic'],
-        ['name' => 'Sky (Upbeat Female)',      'id' => 'kokoro:af_sky',     'gender' => 'female', 'style' => 'upbeat'],
-        ['name' => 'Nicole (Smooth Female)',   'id' => 'kokoro:af_nicole',  'gender' => 'female', 'style' => 'smooth'],
-        ['name' => 'Jessica (Clear Female)',   'id' => 'kokoro:af_jessica', 'gender' => 'female', 'style' => 'clear'],
-        ['name' => 'George (British Male)',    'id' => 'kokoro:bm_george',  'gender' => 'male',   'style' => 'british'],
-        ['name' => 'Daniel (British Male)',    'id' => 'kokoro:bm_daniel',  'gender' => 'male',   'style' => 'british'],
-        ['name' => 'Emma (British Female)',    'id' => 'kokoro:bf_emma',    'gender' => 'female', 'style' => 'british'],
+        // American English — female
+        ['name' => 'Alloy (American Female)', 'id' => 'kokoro:af_alloy', 'gender' => 'female', 'style' => 'neutral'],
+        ['name' => 'Aoede (American Female)', 'id' => 'kokoro:af_aoede', 'gender' => 'female', 'style' => 'expressive'],
+        ['name' => 'Bella (Energetic Female)', 'id' => 'kokoro:af_bella', 'gender' => 'female', 'style' => 'energetic'],
+        ['name' => 'Heart (Warm Female)', 'id' => 'kokoro:af_heart', 'gender' => 'female', 'style' => 'warm'],
+        ['name' => 'Jessica (Clear Female)', 'id' => 'kokoro:af_jessica', 'gender' => 'female', 'style' => 'clear'],
+        ['name' => 'Kore (American Female)', 'id' => 'kokoro:af_kore', 'gender' => 'female', 'style' => 'neutral'],
+        ['name' => 'Nicole (Smooth Female)', 'id' => 'kokoro:af_nicole', 'gender' => 'female', 'style' => 'smooth'],
+        ['name' => 'Nova (Dynamic Female)', 'id' => 'kokoro:af_nova', 'gender' => 'female', 'style' => 'dynamic'],
+        ['name' => 'River (American Female)', 'id' => 'kokoro:af_river', 'gender' => 'female', 'style' => 'soft'],
+        ['name' => 'Sarah (Bright Female)', 'id' => 'kokoro:af_sarah', 'gender' => 'female', 'style' => 'bright'],
+        ['name' => 'Sky (Upbeat Female)', 'id' => 'kokoro:af_sky', 'gender' => 'female', 'style' => 'upbeat'],
+        // American English — male
+        ['name' => 'Adam (Morning Host)', 'id' => 'kokoro:am_adam', 'gender' => 'male', 'style' => 'calm-energetic'],
+        ['name' => 'Echo (American Male)', 'id' => 'kokoro:am_echo', 'gender' => 'male', 'style' => 'neutral'],
+        ['name' => 'Eric (Relaxed Male)', 'id' => 'kokoro:am_eric', 'gender' => 'male', 'style' => 'relaxed'],
+        ['name' => 'Fenrir (Mature Male)', 'id' => 'kokoro:am_fenrir', 'gender' => 'male', 'style' => 'mature'],
+        ['name' => 'Liam (Smooth Male)', 'id' => 'kokoro:am_liam', 'gender' => 'male', 'style' => 'smooth'],
+        ['name' => 'Michael (Warm Male)', 'id' => 'kokoro:am_michael', 'gender' => 'male', 'style' => 'warm'],
+        ['name' => 'Onyx (Deep Male)', 'id' => 'kokoro:am_onyx', 'gender' => 'male', 'style' => 'deep-calm'],
+        ['name' => 'Puck (American Male)', 'id' => 'kokoro:am_puck', 'gender' => 'male', 'style' => 'playful'],
+        ['name' => 'Santa (American Male)', 'id' => 'kokoro:am_santa', 'gender' => 'male', 'style' => 'festive'],
+        // British English — female / male
+        ['name' => 'Alice (British Female)', 'id' => 'kokoro:bf_alice', 'gender' => 'female', 'style' => 'british'],
+        ['name' => 'Emma (British Female)', 'id' => 'kokoro:bf_emma', 'gender' => 'female', 'style' => 'british'],
+        ['name' => 'Isabella (British Female)', 'id' => 'kokoro:bf_isabella', 'gender' => 'female', 'style' => 'british'],
+        ['name' => 'Lily (British Female)', 'id' => 'kokoro:bf_lily', 'gender' => 'female', 'style' => 'british'],
+        ['name' => 'Daniel (British Male)', 'id' => 'kokoro:bm_daniel', 'gender' => 'male', 'style' => 'british'],
+        ['name' => 'Fable (British Male)', 'id' => 'kokoro:bm_fable', 'gender' => 'male', 'style' => 'british'],
+        ['name' => 'George (British Male)', 'id' => 'kokoro:bm_george', 'gender' => 'male', 'style' => 'british'],
+        ['name' => 'Lewis (British Male)', 'id' => 'kokoro:bm_lewis', 'gender' => 'male', 'style' => 'british'],
+        // Other languages shipped in voices-v1.0.bin
+        ['name' => 'Dora (Spanish Female)', 'id' => 'kokoro:ef_dora', 'gender' => 'female', 'style' => 'spanish'],
+        ['name' => 'Alex (Spanish Male)', 'id' => 'kokoro:em_alex', 'gender' => 'male', 'style' => 'spanish'],
+        ['name' => 'Siwis (French Female)', 'id' => 'kokoro:ff_siwis', 'gender' => 'female', 'style' => 'french'],
+        ['name' => 'Alpha (Hindi Female)', 'id' => 'kokoro:hf_alpha', 'gender' => 'female', 'style' => 'hindi'],
+        ['name' => 'Beta (Hindi Female)', 'id' => 'kokoro:hf_beta', 'gender' => 'female', 'style' => 'hindi'],
+        ['name' => 'Omega (Hindi Male)', 'id' => 'kokoro:hm_omega', 'gender' => 'male', 'style' => 'hindi'],
+        ['name' => 'Psi (Hindi Male)', 'id' => 'kokoro:hm_psi', 'gender' => 'male', 'style' => 'hindi'],
+        ['name' => 'Sara (Italian Female)', 'id' => 'kokoro:if_sara', 'gender' => 'female', 'style' => 'italian'],
+        ['name' => 'Nicola (Italian Male)', 'id' => 'kokoro:im_nicola', 'gender' => 'male', 'style' => 'italian'],
+        ['name' => 'Alpha (Japanese Female)', 'id' => 'kokoro:jf_alpha', 'gender' => 'female', 'style' => 'japanese'],
+        ['name' => 'Gongitsune (Japanese Female)', 'id' => 'kokoro:jf_gongitsune', 'gender' => 'female', 'style' => 'japanese'],
+        ['name' => 'Nezumi (Japanese Female)', 'id' => 'kokoro:jf_nezumi', 'gender' => 'female', 'style' => 'japanese'],
+        ['name' => 'Tebukuro (Japanese Female)', 'id' => 'kokoro:jf_tebukuro', 'gender' => 'female', 'style' => 'japanese'],
+        ['name' => 'Kumo (Japanese Male)', 'id' => 'kokoro:jm_kumo', 'gender' => 'male', 'style' => 'japanese'],
+        ['name' => 'Dora (Portuguese Female)', 'id' => 'kokoro:pf_dora', 'gender' => 'female', 'style' => 'portuguese'],
+        ['name' => 'Alex (Portuguese Male)', 'id' => 'kokoro:pm_alex', 'gender' => 'male', 'style' => 'portuguese'],
+        ['name' => 'Santa (Portuguese Male)', 'id' => 'kokoro:pm_santa', 'gender' => 'male', 'style' => 'portuguese'],
+        ['name' => 'Xiaobei (Chinese Female)', 'id' => 'kokoro:zf_xiaobei', 'gender' => 'female', 'style' => 'chinese'],
+        ['name' => 'Xiaoni (Chinese Female)', 'id' => 'kokoro:zf_xiaoni', 'gender' => 'female', 'style' => 'chinese'],
+        ['name' => 'Xiaoxiao (Chinese Female)', 'id' => 'kokoro:zf_xiaoxiao', 'gender' => 'female', 'style' => 'chinese'],
+        ['name' => 'Xiaoyi (Chinese Female)', 'id' => 'kokoro:zf_xiaoyi', 'gender' => 'female', 'style' => 'chinese'],
+        ['name' => 'Yunjian (Chinese Male)', 'id' => 'kokoro:zm_yunjian', 'gender' => 'male', 'style' => 'chinese'],
+        ['name' => 'Yunxi (Chinese Male)', 'id' => 'kokoro:zm_yunxi', 'gender' => 'male', 'style' => 'chinese'],
+        ['name' => 'Yunxia (Chinese Male)', 'id' => 'kokoro:zm_yunxia', 'gender' => 'male', 'style' => 'chinese'],
+        ['name' => 'Yunyang (Chinese Male)', 'id' => 'kokoro:zm_yunyang', 'gender' => 'male', 'style' => 'chinese'],
     ];
 
     public function __construct(
@@ -167,7 +209,8 @@ final class AiDjGenerator
         string $tempDir,
         float $voiceSpeed = 1.0
     ): ?string {
-        $modelPath = $voiceModelPath ?: AiNewsGenerator::AVAILABLE_VOICE_MODELS[0]['path'];
+        $modelPath = $voiceModelPath
+            ?: (AiNewsGenerator::getAvailableVoiceModels()[0]['path'] ?? null);
         $wavFile = $tempDir . '/audio_' . uniqid() . '.wav';
         $tmpMp3 = $tempDir . '/audio_' . uniqid() . '_tmp.mp3';
 

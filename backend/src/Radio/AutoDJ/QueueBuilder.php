@@ -22,9 +22,11 @@ use App\Entity\StationPlaylistMedia;
 use App\Entity\StationQueue;
 use App\Event\Radio\BuildQueue;
 use App\Radio\AutoDJ\ClockWheel\ClockWheelSeparationSettings;
+use App\Radio\AutoDJ\ClockWheel\ClockWheelStretchCalculator;
 use App\Radio\PlaylistParser;
 use App\Service\HolidayOverrideService;
 use DateTimeImmutable;
+use DateTimeZone;
 use Psr\SimpleCache\CacheInterface;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 
@@ -38,6 +40,7 @@ final class QueueBuilder implements EventSubscriberInterface
 
     public function __construct(
         private readonly Scheduler $scheduler,
+        private readonly SponsorGuaranteedPlayoutService $sponsorGuarantee,
         private readonly DuplicatePrevention $duplicatePrevention,
         private readonly HourBoundaryPlanner $hourBoundaryPlanner,
         private readonly CacheInterface $cache,
@@ -46,6 +49,7 @@ final class QueueBuilder implements EventSubscriberInterface
         private readonly StationQueueRepository $queueRepo,
         private readonly SongHistoryRepository $historyRepo,
         private readonly HolidayOverrideService $holidayOverrideService,
+        private readonly ClockWheelStretchCalculator $stretchCalculator,
     ) {
     }
 
@@ -69,15 +73,33 @@ final class QueueBuilder implements EventSubscriberInterface
      */
     public function calculateNextSong(BuildQueue $event): void
     {
+        if (!empty($event->getNextSongs())) {
+            return;
+        }
+
         $this->logger->info('AzuraCast AutoDJ is calculating the next song to play...');
 
         $station = $event->getStation();
         $expectedPlayTime = $event->getExpectedPlayTime();
 
+        $tz = $station->getTimezoneObject();
+
+        $sponsorPlaylistIdsBehindPace = [];
+        if ($event->isInterrupting()) {
+            foreach ($this->sponsorGuarantee->getPlaylistsBehindPace($station, $expectedPlayTime) as $sponsorPlaylist) {
+                $sponsorPlaylistIdsBehindPace[$sponsorPlaylist->id] = true;
+            }
+        }
+
         $activePlaylistsByType = [];
         foreach ($station->playlists as $playlist) {
             /** @var StationPlaylist $playlist */
-            if ($playlist->isPlayable($event->isInterrupting())) {
+            $isEligible = $playlist->isPlayable($event->isInterrupting())
+                || ($event->isInterrupting()
+                    && $this->scheduler->isPlaylistStrictStartDueNow($playlist, $tz, $expectedPlayTime))
+                || ($event->isInterrupting() && isset($sponsorPlaylistIdsBehindPace[$playlist->id]));
+
+            if ($isEligible) {
                 $type = $playlist->type->value;
 
                 $subType = ($playlist->schedule_items->count() > 0) ? 'scheduled' : 'unscheduled';
@@ -366,14 +388,62 @@ final class QueueBuilder implements EventSubscriberInterface
         $stationQueueEntry = StationQueue::fromMedia($playlist->station, $mediaToPlay);
         $stationQueueEntry->playlist = $playlist;
 
-        $maxDuration = $this->hourBoundaryPlanner->maxMusicDurationBeforeTopOfHour(
-            $playlist->station,
-            $expectedPlayTime,
-        );
+        // Soft-strict scheduling: the same "must finish before the next boundary"
+        // protection that guards the top-of-hour legal ID now applies to EVERY
+        // scheduled transition station-wide (e.g. a talk show starting at 5:01pm).
+        // Whichever boundary is sooner wins. Still never a hard cut -- the existing
+        // graceful cue_out fade (below) is the only enforcement mechanism.
+        //
+        // Defensively wrapped: if anything here throws for an edge case, queue
+        // building must never break station-wide because of it -- fall back to
+        // the original top-of-hour-only behavior instead.
+        $maxDuration = null;
+
+        try {
+            $topOfHourMaxDuration = $this->hourBoundaryPlanner->maxMusicDurationBeforeTopOfHour(
+                $playlist->station,
+                $expectedPlayTime,
+            );
+
+            $secondsToNextScheduledStart = $this->scheduler->secondsUntilNextScheduledStart(
+                $playlist->station,
+                $expectedPlayTime,
+            );
+
+            $maxDuration = $topOfHourMaxDuration;
+            if (null !== $secondsToNextScheduledStart
+                && (null === $maxDuration || $secondsToNextScheduledStart < $maxDuration)
+            ) {
+                $maxDuration = (float)$secondsToNextScheduledStart;
+            }
+        } catch (\Throwable $e) {
+            $this->logger->warning(
+                'Soft-strict boundary calculation failed; falling back to no boundary cap for this track.',
+                ['exception' => $e->getMessage()]
+            );
+            $maxDuration = null;
+        }
 
         if (null !== $maxDuration && $mediaToPlay->getCalculatedLength() > $maxDuration) {
             $stationQueueEntry->hour_boundary_enforce_cap = true;
             $stationQueueEntry->hour_boundary_max_play_seconds = (int)floor($maxDuration);
+        }
+
+        // Stretch target: same combined boundary as above.
+        $stretchTargetSeconds = (null !== $maxDuration) ? (int)floor($maxDuration) : null;
+
+        if (null !== $stretchTargetSeconds) {
+            try {
+                $stationQueueEntry->clock_wheel_stretch_ratio = $this->stretchCalculator->calculate(
+                    $mediaToPlay->getCalculatedLength(),
+                    $stretchTargetSeconds,
+                );
+            } catch (\Throwable $e) {
+                $this->logger->warning(
+                    'Stretch ratio calculation failed; leaving track unstretched.',
+                    ['exception' => $e->getMessage()]
+                );
+            }
         }
 
         $this->em->persist($stationQueueEntry);
@@ -616,8 +686,11 @@ final class QueueBuilder implements EventSubscriberInterface
      *
      * @return StationPlaylistQueue[]
      */
-    private function filterQueueByPlayability(array $mediaQueue, DateTimeImmutable $expectedPlayTime): array
-    {
+    private function filterQueueByPlayability(
+        array $mediaQueue,
+        DateTimeImmutable $expectedPlayTime,
+        ?DateTimeZone $tz = null,
+    ): array {
         $filtered = [];
 
         foreach ($mediaQueue as $item) {
@@ -627,9 +700,32 @@ final class QueueBuilder implements EventSubscriberInterface
             }
 
             $media = $this->em->find(StationMedia::class, $item->media_id);
-            if (!$media instanceof StationMedia || MediaPlayability::isEligibleForPlayback($media, $expectedPlayTime)) {
+
+            $isEligible = true;
+            if ($media instanceof StationMedia) {
+                try {
+                    $isEligible = MediaPlayability::isEligibleForPlayback($media, $expectedPlayTime, $tz);
+                } catch (\Throwable $e) {
+                    // Never let a single bad record's eligibility check break queue
+                    // building station-wide -- default to eligible and log it.
+                    $this->logger->warning(
+                        'Media eligibility check failed; defaulting to eligible.',
+                        ['media_id' => $item->media_id, 'exception' => $e->getMessage()]
+                    );
+                    $isEligible = true;
+                }
+            }
+
+            if ($isEligible) {
                 $filtered[] = $item;
             }
+        }
+
+        if ($filtered === [] && $mediaQueue !== []) {
+            $this->logger->warning(
+                'Playability filtering excluded every track in this queue pass; using full pool instead.'
+            );
+            return $mediaQueue;
         }
 
         return $filtered;
@@ -643,6 +739,7 @@ final class QueueBuilder implements EventSubscriberInterface
         return $this->filterQueueByPlayability(
             $this->filterQueueByRotationGoal($playlist, $mediaQueue),
             $expectedPlayTime,
+            $playlist->station->getTimezoneObject(),
         );
     }
 
@@ -725,7 +822,12 @@ final class QueueBuilder implements EventSubscriberInterface
             return array_shift($mediaQueue);
         }
 
-        $queueItem = $this->duplicatePrevention->preventDuplicates($mediaQueue, $recentSongHistory, $allowDuplicates);
+        $queueItem = $this->duplicatePrevention->preventDuplicates(
+            $mediaQueue,
+            $recentSongHistory,
+            $allowDuplicates,
+            $playlist->aging_threshold_days,
+        );
         if (null !== $queueItem || $allowDuplicates) {
             return $queueItem;
         }
@@ -742,7 +844,12 @@ final class QueueBuilder implements EventSubscriberInterface
             $expectedPlayTime,
         );
 
-        return $this->duplicatePrevention->preventDuplicates($mediaQueue, $recentSongHistory);
+        return $this->duplicatePrevention->preventDuplicates(
+            $mediaQueue,
+            $recentSongHistory,
+            false,
+            $playlist->aging_threshold_days,
+        );
     }
 
     /**
@@ -785,6 +892,10 @@ final class QueueBuilder implements EventSubscriberInterface
     {
         // Don't use this to cue requests.
         if ($event->isInterrupting()) {
+            return;
+        }
+
+        if (!empty($event->getNextSongs())) {
             return;
         }
 

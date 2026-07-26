@@ -25,7 +25,7 @@
                     class="cl-tab-count"
                 >{{ countByType(tab.type) }}</span>
                 <span
-                    v-if="!tab.is_builtin"
+                    v-if="!tab.is_required"
                     class="cl-tab-del"
                     :title="$gettext('Delete category')"
                     @click.stop="deleteCategory(tab)"
@@ -136,6 +136,7 @@
                         {{ isBulkDeleting ? $gettext('Deleting…') : $gettext('Delete Selected') }} ({{ selectedIds.size }})
                     </button>
                     <button
+                        v-if="!isActiveTabRequired"
                         type="button"
                         class="btn btn-sm btn-outline-danger"
                         :disabled="isBulkDeleting"
@@ -429,7 +430,19 @@ const {getStationApiUrl} = useApiRouter();
 
 const listUrl = getStationApiUrl('/ai-dj-content');
 const typesUrl = getStationApiUrl('/ai-dj-content/types');
+const deleteByTypeUrl = getStationApiUrl('/ai-dj-content/delete-by-type');
+const restoreTypeUrl = getStationApiUrl('/ai-dj-content/restore-type');
 const itemUrl = (id: number) => getStationApiUrl(`/ai-dj-content/${id}`);
+
+/** Optional system categories that can be removed and later restored by name/slug. */
+const BUILTIN_OPTIONAL_LABELS: Record<string, string> = {
+    bible_verse: $gettext('Bible Verses'),
+    joke: $gettext('Jokes'),
+    encouragement: $gettext('Encouragements'),
+    inspiration: $gettext('Inspiration'),
+    testimony: $gettext('Testimonies'),
+    story: $gettext('Stories'),
+};
 
 // --- Tabs (loaded dynamically from API) ---
 
@@ -437,24 +450,29 @@ interface ContentTab {
     type: string;
     label: string;
     is_builtin: boolean;
+    /** System categories essential to playback — cannot wipe/remove the category. */
+    is_required: boolean;
 }
 
 const tabs = ref<ContentTab[]>([
-    {type: 'song_intro_template',  label: $gettext('Song Intros'), is_builtin: true},
-    {type: 'post_song_template',   label: $gettext('Post-Song'), is_builtin: true},
-    {type: 'bible_verse',          label: $gettext('Bible Verses'), is_builtin: true},
-    {type: 'joke',                 label: $gettext('Jokes'), is_builtin: true},
-    {type: 'encouragement',        label: $gettext('Encouragements'), is_builtin: true},
-    {type: 'inspiration',          label: $gettext('Inspiration'), is_builtin: true},
-    {type: 'testimony',            label: $gettext('Testimonies'), is_builtin: true},
-    {type: 'story',                label: $gettext('Stories'), is_builtin: true},
+    {type: 'song_intro_template',  label: $gettext('Song Intros'), is_builtin: true, is_required: true},
+    {type: 'post_song_template',   label: $gettext('Post-Song'), is_builtin: true, is_required: true},
+    {type: 'bible_verse',          label: $gettext('Bible Verses'), is_builtin: true, is_required: false},
+    {type: 'joke',                 label: $gettext('Jokes'), is_builtin: true, is_required: false},
+    {type: 'encouragement',        label: $gettext('Encouragements'), is_builtin: true, is_required: false},
+    {type: 'inspiration',          label: $gettext('Inspiration'), is_builtin: true, is_required: false},
+    {type: 'testimony',            label: $gettext('Testimonies'), is_builtin: true, is_required: false},
+    {type: 'story',                label: $gettext('Stories'), is_builtin: true, is_required: false},
 ]);
 
 const loadTypes = async (): Promise<void> => {
     try {
         const resp = await axios.get<ContentTab[]>(typesUrl.value);
         if (Array.isArray(resp.data) && resp.data.length > 0) {
-            tabs.value = resp.data;
+            tabs.value = resp.data.map((tab) => ({
+                ...tab,
+                is_required: tab.is_required ?? ['song_intro_template', 'post_song_template'].includes(tab.type),
+            }));
         }
     } catch {
         // Fall back to default tabs on error
@@ -470,14 +488,23 @@ const nameToSlug = (name: string): string => {
     return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
 };
 
-const createCategory = (): void => {
+const createCategory = async (): Promise<void> => {
     const name = newCategoryName.value.trim();
     if (!name) return;
 
-    const slug = nameToSlug(name);
+    let slug = nameToSlug(name);
     if (!slug || slug.length < 2) {
         notifyError($gettext('Category name must be at least 2 characters.'));
         return;
+    }
+
+    // Prefer built-in optional slugs when the name matches a known label or slug
+    // (e.g. "Jokes" → joke, so restoring a removed system category works).
+    const builtinMatch = Object.entries(BUILTIN_OPTIONAL_LABELS).find(
+        ([type, label]) => type === slug || nameToSlug(label) === slug || label.toLowerCase() === name.toLowerCase()
+    );
+    if (builtinMatch) {
+        slug = builtinMatch[0];
     }
 
     // Check if already exists
@@ -486,8 +513,27 @@ const createCategory = (): void => {
         return;
     }
 
-    // Add to tabs and switch to it
-    tabs.value.push({type: slug, label: name, is_builtin: false});
+    const isBuiltinOptional = slug in BUILTIN_OPTIONAL_LABELS;
+
+    // Clear any prior "removed category" flag (built-in or custom).
+    try {
+        await axios.post(restoreTypeUrl.value, {type: slug});
+    } catch {
+        notifyError($gettext('Failed to create category.'));
+        return;
+    }
+
+    if (isBuiltinOptional) {
+        tabs.value.push({
+            type: slug,
+            label: BUILTIN_OPTIONAL_LABELS[slug],
+            is_builtin: true,
+            is_required: false,
+        });
+    } else {
+        tabs.value.push({type: slug, label: name, is_builtin: false, is_required: false});
+    }
+
     setTab(slug);
     cancelNewCategory();
     notifySuccess($gettext('Category created. Add content to start using it.'));
@@ -512,6 +558,9 @@ const bulkImportOpen = ref(false);
 const bulkText = ref('');
 const selectedIds = ref<Set<number>>(new Set());
 const activeTab = ref('song_intro_template');
+const isActiveTabRequired = computed(() =>
+    tabs.value.find((t) => t.type === activeTab.value)?.is_required === true
+);
 const items = ref<ContentItem[]>([]);
 const editorOpen = ref(false);
 const editingItem = ref<ContentItem | null>(null);
@@ -742,16 +791,17 @@ const bulkDelete = async (): Promise<void> => {
 
 // --- Delete all in a category / delete a category ---
 
-const deleteByTypeUrl = getStationApiUrl('/ai-dj-content/delete-by-type');
-
 const deleteAllInCategory = async (): Promise<void> => {
+    if (isActiveTabRequired.value) {
+        return;
+    }
     const label = activeTabLabel.value;
     const count = countByType(activeTab.value);
     if (count === 0) return;
     if (!confirm($gettext('Delete ALL ' + count + ' items in "' + label + '"? This cannot be undone.'))) return;
     isBulkDeleting.value = true;
     try {
-        await axios.post(deleteByTypeUrl.value, {type: activeTab.value});
+        await axios.post(deleteByTypeUrl.value, {type: activeTab.value, remove_category: false});
         notifySuccess($gettext('All items in ' + label + ' were deleted.'));
         selectedIds.value = new Set();
         currentPage.value = 1;
@@ -764,10 +814,10 @@ const deleteAllInCategory = async (): Promise<void> => {
 };
 
 const deleteCategory = async (tab: ContentTab): Promise<void> => {
-    if (tab.is_builtin) return;
+    if (tab.is_required) return;
     if (!confirm($gettext('Delete the "' + tab.label + '" category and all its content?'))) return;
     try {
-        await axios.post(deleteByTypeUrl.value, {type: tab.type});
+        await axios.post(deleteByTypeUrl.value, {type: tab.type, remove_category: true});
         notifySuccess($gettext('Category deleted.'));
         tabs.value = tabs.value.filter(t => t.type !== tab.type);
         if (activeTab.value === tab.type) {

@@ -16,12 +16,15 @@ export type StationPlaylistsRecord = Required<
         | 'id'
         | 'podcasts'
     >
->
+> & {
+    id: number | null
+}
 
 export const useStationsPlaylistsForm = defineStore(
     'form-stations-playlists',
     () => {
         const {record: form, reset} = useResettableRef<StationPlaylistsRecord>({
+            id: null,
             name: '',
             description: '',
             is_enabled: true,

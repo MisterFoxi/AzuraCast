@@ -58,23 +58,39 @@ final readonly class TypesAction implements SingleActionInterface
             $dbTypes[$item->type] = true;
         }
 
-        // Merge built-in types (always shown) with custom types from DB
+        $removedTypes = array_fill_keys(
+            $station->backend_config->ai_dj_removed_content_types,
+            true
+        );
+
+        // Required built-ins always; optional built-ins unless the station removed them.
         $types = [];
         foreach (self::BUILT_IN_LABELS as $slug => $label) {
+            $isRequired = AiDjContent::isRequiredType($slug);
+            if (!$isRequired && isset($removedTypes[$slug])) {
+                continue;
+            }
+
             $types[] = [
                 'type' => $slug,
                 'label' => $label,
                 'is_builtin' => true,
+                'is_required' => $isRequired,
             ];
         }
 
         // Add any custom types not in the built-in list
         foreach (array_keys($dbTypes) as $dbType) {
             if (!isset(self::BUILT_IN_LABELS[$dbType])) {
+                if (isset($removedTypes[$dbType])) {
+                    continue;
+                }
+
                 $types[] = [
                     'type' => $dbType,
                     'label' => self::slugToLabel($dbType),
                     'is_builtin' => false,
+                    'is_required' => false,
                 ];
             }
         }
