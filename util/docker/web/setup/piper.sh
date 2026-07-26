@@ -24,18 +24,30 @@ tar -xzf /tmp/piper.tar.gz -C /usr/local/share/piper/ --strip-components=1
 ln -sf /usr/local/share/piper/piper /usr/local/bin/piper
 chmod a+x /usr/local/share/piper/piper
 
-# US + British English Piper voices, medium quality only (skip low/high tiers).
-# Medium balances size vs quality for disk-constrained servers.
-# Used by AI Newscaster and as Piper fallback voices for AI DJ.
-# Inference assets only (.onnx + sidecars + catalog) — skip WAV samples.
+# Curated English Piper voices only (medium quality) — keeps image size small
+# for disk-constrained servers. Used by AI Newscaster and AI DJ Piper fallback.
+# danny/kathleen only ship as low-quality, so kristin + alan fill those slots.
+# Paths: en/{locale}/{name}/medium/{locale}-{name}-medium.onnx[.json]
 export HF_HOME=/tmp/hf_cache
 
 hf download rhasspy/piper-voices \
-  --include "en/en_US/**/medium/*.onnx" \
-  --include "en/en_US/**/medium/*.onnx.json" \
-  --include "en/en_GB/**/medium/*.onnx" \
-  --include "en/en_GB/**/medium/*.onnx.json" \
-  --include "voices.json" \
+  en/en_US/lessac/medium/en_US-lessac-medium.onnx \
+  en/en_US/lessac/medium/en_US-lessac-medium.onnx.json \
+  en/en_US/ryan/medium/en_US-ryan-medium.onnx \
+  en/en_US/ryan/medium/en_US-ryan-medium.onnx.json \
+  en/en_US/joe/medium/en_US-joe-medium.onnx \
+  en/en_US/joe/medium/en_US-joe-medium.onnx.json \
+  en/en_US/amy/medium/en_US-amy-medium.onnx \
+  en/en_US/amy/medium/en_US-amy-medium.onnx.json \
+  en/en_US/kristin/medium/en_US-kristin-medium.onnx \
+  en/en_US/kristin/medium/en_US-kristin-medium.onnx.json \
+  en/en_GB/alan/medium/en_GB-alan-medium.onnx \
+  en/en_GB/alan/medium/en_GB-alan-medium.onnx.json \
+  en/en_GB/jenny_dioco/medium/en_GB-jenny_dioco-medium.onnx \
+  en/en_GB/jenny_dioco/medium/en_GB-jenny_dioco-medium.onnx.json \
+  en/en_GB/alba/medium/en_GB-alba-medium.onnx \
+  en/en_GB/alba/medium/en_GB-alba-medium.onnx.json \
+  voices.json \
   --local-dir /usr/local/share/piper-voices
 
 rm -f /tmp/piper.tar.gz
