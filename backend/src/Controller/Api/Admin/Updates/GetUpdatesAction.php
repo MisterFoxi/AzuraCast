@@ -47,7 +47,7 @@ final class GetUpdatesAction implements SingleActionInterface
         $settings = $this->readSettings();
 
         $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, "https://api.github.com/repos/eternityready2/Azura-Cast-Custom/releases/latest");
+        curl_setopt($ch, CURLOPT_URL, "https://api.github.com/repos/eternityready2/AzuraCast/releases/latest");
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
         curl_setopt($ch, CURLOPT_USERAGENT, "AzuraCast-Custom-Updater"); 
         $githubResponse = curl_exec($ch);
