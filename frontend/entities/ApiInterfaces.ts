@@ -1913,6 +1913,11 @@ export interface Settings {
    */
   enable_liquidsoap_editing?: boolean;
   /**
+   * Allow stations to dispatch webhooks.
+   * @example "true"
+   */
+  enable_all_webhooks?: boolean;
+  /**
    * Whether to use high-performance static JSON for Now Playing data updates.
    * @example "false"
    */
