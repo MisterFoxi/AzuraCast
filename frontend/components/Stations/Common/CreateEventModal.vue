@@ -364,6 +364,35 @@
             />
         </div>
     </template>
+
+        <template
+            v-if="editingScheduleId !== null"
+            #modal-footer
+        >
+            <button
+                type="button"
+                class="btn btn-danger me-auto"
+                :disabled="loading"
+                @click="doDelete"
+            >
+                {{ $gettext('Delete') }}
+            </button>
+            <button
+                type="button"
+                class="btn btn-secondary"
+                @click="close"
+            >
+                {{ $gettext('Close') }}
+            </button>
+            <button
+                type="button"
+                class="btn btn-primary"
+                :disabled="loading || !isFormValid"
+                @click="doSave"
+            >
+                {{ $gettext('Save Changes') }}
+            </button>
+        </template>
     </modal-form>
 </template>
 
@@ -383,6 +412,7 @@ import {useTranslate} from '~/vendor/gettext';
 import {useAxios} from '~/vendor/axios';
 import {useApiRouter} from '~/functions/useApiRouter.ts';
 import {useNotify} from '~/components/Common/Toasts/useNotify.ts';
+import {useDialog} from '~/components/Common/Dialogs/useDialog.ts';
 import {
     type PlaylistScheduleRow,
     createScheduleItemDefaults,
@@ -394,6 +424,7 @@ const {$gettext} = useTranslate();
 const {axios} = useAxios();
 const {getStationApiUrl} = useApiRouter();
 const {notifySuccess} = useNotify();
+const {confirmDelete} = useDialog();
 
 const emit = defineEmits<{
     relist: [];
@@ -1053,5 +1084,57 @@ const doSave = async () => {
     }
 };
 
+const close = () => {
+    ($modal.value as any)?.hide();
+};
+
+const doDelete = async () => {
+    if (!form.value.entity_id || editingScheduleId.value === null) {
+        return;
+    }
+
+    // Capture these before closing the modal -- @hidden triggers clearForm(),
+    // which resets the reactive form/editingScheduleId back to blank.
+    const entityId = form.value.entity_id;
+    const source = form.value.source;
+    const scheduleId = editingScheduleId.value;
+
+    // Close first, matching the pattern used by MediaCategories/EditModal.vue --
+    // opening the confirm dialog while this modal is still open leaves it
+    // stacked behind the modal (same z-index, this modal painted later) until
+    // this modal is dismissed.
+    close();
+
+    const {value} = await confirmDelete({
+        title: $gettext('Delete this scheduled event?'),
+    });
+
+    if (!value) {
+        return;
+    }
+
+    try {
+        const entityType = source === 'playlist' ? 'playlist' : 'clock-wheel';
+        const entityApiUrl = getStationApiUrl(`/${entityType}/${entityId}`).value;
+
+        const {data: entityData} = await axios.get(entityApiUrl);
+        const existingScheduleItems = (entityData.schedule_items as unknown[]) ?? [];
+
+        const updatedScheduleItems = existingScheduleItems.filter(
+            (row: any) => row?.id !== scheduleId
+        );
+
+        await axios.put(entityApiUrl, {
+            schedule_items: updatedScheduleItems,
+        });
+
+        notifySuccess($gettext('Event deleted.'));
+        emit('relist');
+    } catch {
+        // Errors are already surfaced globally via the axios response interceptor.
+    }
+};
+
 defineExpose({open, openForEdit, openScopedForCreate, openScopedForEdit});
 </script>
+
