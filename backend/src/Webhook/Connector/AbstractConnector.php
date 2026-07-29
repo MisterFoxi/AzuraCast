@@ -12,7 +12,9 @@ use App\Utilities\Types;
 use App\Utilities\Urls;
 use GuzzleHttp\Client;
 use InvalidArgumentException;
+use PhpIP\IP;
 use Psr\Http\Message\ResponseInterface;
+use Throwable;
 
 abstract class AbstractConnector implements ConnectorInterface
 {
@@ -117,6 +119,27 @@ abstract class AbstractConnector implements ConnectorInterface
             return null;
         }
 
+        // Special protections for certain internal IPs.
+        try {
+            $ip = IP::create($uri->getHost());
+        } catch (Throwable) {
+            $ip = null;
+        }
+
+        if ($ip instanceof IP) {
+            // Prohibit link-local IP addresses.
+            if ($ip->isLinkLocal()) {
+                $this->logger->error(
+                    sprintf(
+                        'Webhook uses prohibited link-local IP: "%s"',
+                        $ip
+                    )
+                );
+
+                return null;
+            }
+        }
+
         return (string)$uri;
     }
 
@@ -162,4 +185,4 @@ abstract class AbstractConnector implements ConnectorInterface
             $debugLogInfo
         );
     }
-}
+
