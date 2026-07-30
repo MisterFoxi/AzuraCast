@@ -74,6 +74,21 @@ let settings.azuracast.crossfade_type = settings.make(
     "normal"
 )
 
+let settings.azuracast.crossfade_smart_high = settings.make(
+    description="Smart crossfade: the dB level above which a track is considered 'loud'.",
+    -15.0
+)
+
+let settings.azuracast.crossfade_smart_medium = settings.make(
+    description="Smart crossfade: the dB level below which a track is considered quiet ('medium').",
+    -32.0
+)
+
+let settings.azuracast.crossfade_smart_margin = settings.make(
+    description="Smart crossfade: the dB difference above which two tracks are considered too different to overlap.",
+    8.0
+)
+
 let settings.azuracast.request_timeout = settings.make(
     description="The timeout for requests (i.e. song requests and 'Next Song' resolution), in seconds.",
     20.0
@@ -571,7 +586,9 @@ def azuracast.live_aware_crossfade_impl(old, new) =
             cross.smart(
                 old,
                 new,
-                margin=8.,
+                high=settings.azuracast.crossfade_smart_high(),
+                medium=settings.azuracast.crossfade_smart_medium(),
+                margin=settings.azuracast.crossfade_smart_margin(),
                 fade_in=settings.azuracast.default_fade(),
                 fade_out=settings.azuracast.default_fade()
             )
