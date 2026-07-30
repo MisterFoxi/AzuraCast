@@ -186,3 +186,4 @@ abstract class AbstractConnector implements ConnectorInterface
         );
     }
 
+}
