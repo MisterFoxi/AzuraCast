@@ -37,7 +37,8 @@ enum StationFeatures
             self::HlsStreams => $backendEnabled && $station->enable_hls,
             self::Requests => $backendEnabled && $station->enable_requests,
             self::OnDemand => $station->enable_on_demand,
-            self::Webhooks, self::Podcasts, self::RemoteRelays => true,
+            self::Webhooks => $settings->enable_all_webhooks,
+            self::Podcasts, self::RemoteRelays => true,
         };
     }
 

@@ -8,10 +8,16 @@ use App\Entity\Station;
 use App\Event\Nginx\WriteNginxConfiguration;
 use App\Radio\Enums\BackendAdapters;
 use App\Radio\Enums\FrontendAdapters;
+use App\Radio\Frontend\Blocklist\BlocklistParser;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 
 final class ConfigWriter implements EventSubscriberInterface
 {
+    public function __construct(
+        private readonly BlocklistParser $blocklistParser
+    ) {
+    }
+
     /**
      * @return mixed[]
      */
@@ -99,6 +105,40 @@ final class ConfigWriter implements EventSubscriberInterface
         $hlsFolder = $station->getRadioHlsDir();
 
         $hlsLogPath = self::getHlsLogFile($station);
+
+        if ($this->blocklistParser->isEnabledForHls($station)) {
+            $stationId = $station->id;
+            $apiKey = $station->adapter_api_key;
+
+            $event->appendBlock(
+                <<<NGINX
+                # Reverse proxy the frontend broadcast.
+                location {$hlsBaseUrl} {
+                    location ~ \.m3u8$ {
+                        auth_request {$hlsBaseUrl}/auth;
+                        access_log {$hlsLogPath} hls_json;
+                    }
+
+                    add_header 'Access-Control-Allow-Origin' '*';
+                    add_header 'Cache-Control' 'no-cache';
+
+                    alias {$hlsFolder};
+                    try_files \$uri =404;
+                }
+
+                location = {$hlsBaseUrl}/auth {
+                    internal;
+                    proxy_pass http://127.0.0.1:6010/api/internal/{$stationId}/hls-listener-auth/{$apiKey};
+                    proxy_pass_request_body off;
+                    proxy_set_header Content-Length "";
+                    proxy_set_header X-Real-IP \$remote_addr;
+                    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                }
+                NGINX
+            );
+
+            return;
+        }
 
         $event->appendBlock(
             <<<NGINX
