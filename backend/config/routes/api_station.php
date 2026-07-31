@@ -669,6 +669,11 @@ return static function (RouteCollectorProxy $group) {
                                         Controller\Api\Stations\Playlists\PutOrderAction::class
                                     );
 
+                                    $group->put(
+                                        '/members',
+                                        Controller\Api\Stations\Playlists\PutMembersAction::class
+                                    )->setName('api:stations:playlist:members');
+
                                     $group->get(
                                         '/queue',
                                         Controller\Api\Stations\Playlists\GetQueueAction::class

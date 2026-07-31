@@ -22,6 +22,7 @@
 
         <div class="card-body">
             <tabs
+                v-model="activeTab"
                 content-class="mt-3"
                 destroy-on-hide
             >
@@ -52,9 +53,16 @@
                                     {{ row.item.description }}
                                 </p>
                                 <div class="badges">
-                                    <span class="badge text-bg-secondary">
+                                    <span class="badge text-bg-secondary d-inline-flex align-items-center gap-1">
+                                        <playlist-source-icon :source="row.item.source" />
                                         <template v-if="row.item.source === 'songs'">
                                             {{ $gettext('Song-based') }}
+                                        </template>
+                                        <template v-else-if="row.item.source === 'playlists'">
+                                            {{ $gettext('Playlist Group') }}
+                                        </template>
+                                        <template v-else-if="row.item.source === 'requests'">
+                                            {{ $gettext('Request Queue') }}
                                         </template>
                                         <template v-else>
                                             {{ $gettext('Remote URL') }}
@@ -96,7 +104,7 @@
                                 <template v-if="!item.is_enabled">
                                     {{ $gettext('Disabled') }}
                                 </template>
-                                <template v-else-if="item.source !== 'songs'">
+                                <template v-else-if="item.source === 'remote_url'">
                                     {{ $gettext('Remote URL') }}
                                 </template>
                                 <template v-else-if="item.type === 'default'">
@@ -150,6 +158,23 @@
                                     &nbsp;
                                 </template>
                             </template>
+                            <template #cell(groups)="{ item }">
+                                <template v-if="item.playlist_groups && item.playlist_groups.length > 0">
+                                    <router-link
+                                        :to="{
+                                            name: 'stations:playlists:index',
+                                            query: {tab: 'playlist_grouping', playlist: item.playlist_groups[0].id}
+                                        }"
+                                        class="badge text-bg-info text-decoration-none"
+                                        :title="item.playlist_groups.map((g) => g.name).join(', ')"
+                                    >
+                                        {{ item.playlist_groups.length }}
+                                    </router-link>
+                                </template>
+                                <template v-else>
+                                    &mdash;
+                                </template>
+                            </template>
                             <template #cell(actions)="{ item, isActive, toggleDetails }">
                                 <div class="btn-group btn-group-sm">
                                     <button
@@ -191,6 +216,14 @@
                                         @click="doReorder(item.links.order)"
                                     >
                                         {{ $gettext('Reorder') }}
+                                    </button>
+                                    <button
+                                        v-if="item.source === 'playlists'"
+                                        type="button"
+                                        class="btn btn-sm btn-primary"
+                                        @click="doReorderGroup(item)"
+                                    >
+                                        {{ $gettext('Reorder Group Members') }}
                                     </button>
                                     <button
                                         type="button"
@@ -267,6 +300,11 @@
                     </div>
                 </tab>
 
+                <playlist-grouping-tab
+                    :list-url="listUrl"
+                    :initial-playlist-id="initialGroupingPlaylistId"
+                />
+
             </tabs>
         </div>
     </section>
@@ -278,8 +316,11 @@
         @needs-restart="() => mayNeedRestart()"
     />
     <reorder-modal ref="$reorderModal" />
+    <playlist-group-reorder-modal
+        ref="$groupReorderModal"
+        @relist="() => relist()"
+    />
     <queue-modal ref="$queueModal" />
-    <reorder-modal ref="$reorderModal" />
     <import-modal
         ref="$importModal"
         @relist="() => relist()"
@@ -304,8 +345,12 @@ import ImportModal from "~/components/Stations/Playlists/ImportModal.vue";
 import QueueModal from "~/components/Stations/Playlists/QueueModal.vue";
 import CloneModal from "~/components/Stations/Playlists/CloneModal.vue";
 import ApplyToModal from "~/components/Stations/Playlists/ApplyToModal.vue";
+import PlaylistGroupingTab from "~/components/Stations/Playlists/PlaylistGroupingTab.vue";
+import PlaylistGroupReorderModal from "~/components/Stations/Playlists/PlaylistGroupReorderModal.vue";
+import PlaylistSourceIcon from "~/components/Stations/Common/PlaylistSourceIcon.vue";
 import {useTranslate} from "~/vendor/gettext";
-import {useTemplateRef} from "vue";
+import {ref, useTemplateRef, watch} from "vue";
+import {useRoute} from "vue-router";
 import useHasEditModal from "~/functions/useHasEditModal";
 import {useMayNeedRestart} from "~/functions/useMayNeedRestart";
 import {useNotify} from "~/components/Common/Toasts/useNotify.ts";
@@ -328,6 +373,31 @@ import {useApiRouter} from "~/functions/useApiRouter.ts";
 const {getStationApiUrl} = useApiRouter();
 const listUrl = getStationApiUrl('/playlists');
 
+const route = useRoute();
+const activeTab = ref<string>(
+    (route.query.tab as string) === 'playlist_grouping' ? 'playlist_grouping' : 'all_playlists'
+);
+const initialGroupingPlaylistId = ref<number | null>(
+    route.query.playlist ? Number(route.query.playlist) : null
+);
+
+// The "Manage this group's member playlists" links (from Basic Info / Memberships) point
+// back at this same route with a different query string. Vue Router doesn't remount this
+// component for a query-only change, so without this watcher the tab/selection would never
+// react to those links being clicked while already on this page.
+watch(
+    () => route.query,
+    (query) => {
+        activeTab.value = (query.tab as string) === 'playlist_grouping'
+            ? 'playlist_grouping'
+            : 'all_playlists';
+        initialGroupingPlaylistId.value = query.playlist ? Number(query.playlist) : null;
+
+        if (query.tab === 'playlist_grouping') {
+            $editModal.value?.close();
+        }
+    }
+);
 
 const {$gettext} = useTranslate();
 
@@ -335,6 +405,7 @@ const fields: DataTableField[] = [
     {key: 'name', isRowHeader: true, label: $gettext('Playlist'), sortable: true},
     {key: 'scheduling', label: $gettext('Scheduling'), sortable: false},
     {key: 'num_songs', label: $gettext('# Songs'), sortable: false},
+    {key: 'groups', label: $gettext('Groups'), sortable: false},
     {key: 'actions', label: $gettext('Actions'), sortable: false, class: 'shrink'}
 ];
 
@@ -366,6 +437,19 @@ const $reorderModal = useTemplateRef('$reorderModal');
 
 const doReorder = (url: string) => {
     $reorderModal.value?.open(url);
+};
+
+const $groupReorderModal = useTemplateRef('$groupReorderModal');
+
+const doReorderGroup = (item: Record<string, unknown>) => {
+    const links = item.links as Record<string, string> | undefined;
+    const membersUrl = links?.members ?? (links?.self ? `${links.self}/members` : undefined);
+
+    if (!membersUrl) {
+        return;
+    }
+
+    $groupReorderModal.value?.open(membersUrl, (item.playlists as never[] | undefined) ?? []);
 };
 
 const $queueModal = useTemplateRef('$queueModal');

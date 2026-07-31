@@ -87,25 +87,6 @@
                     </form-group-checkbox>
 
                     <form-group-multi-check
-                        id="edit_form_type"
-                        class="col-md-6"
-                        :field="r$.type"
-                        :options="typeOptions"
-                        stacked
-                        radio
-                        :label="$gettext('Playlist Type')"
-                    >
-                        <template #description>
-                            <a
-                                href="/docs/user-guide/playlists/#advanced-playlists"
-                                target="_blank"
-                            >
-                                {{ $gettext('Learn about Advanced Playlists') }}
-                            </a>
-                        </template>
-                    </form-group-multi-check>
-
-                    <form-group-multi-check
                         id="edit_form_order"
                         class="col-md-6"
                         :field="r$.order"
@@ -140,6 +121,88 @@
                         :label="$gettext('Crossfade profile')"
                         :description="$gettext('Optional named profile from Crossfade Profiles settings. Leave empty for station default matrix.')"
                     />
+                </div>
+            </div>
+        </section>
+
+        <section
+            v-show="form.source === 'playlists'"
+            class="card mb-3"
+            role="region"
+        >
+            <div class="card-header text-bg-primary">
+                <h2 class="card-title">
+                    {{ $gettext('Playlist Group') }}
+                </h2>
+            </div>
+            <div class="card-body">
+                <div class="row g-3 mb-3">
+                    <form-group-checkbox
+                        id="form_edit_avoid_duplicates_group"
+                        class="col-md-6"
+                        :field="r$.avoid_duplicates"
+                        :label="$gettext('Avoid Duplicate Artists/Titles')"
+                        :description="$gettext('Applies to all member playlists in this group unless a member overrides it.')"
+                    />
+
+                    <form-group-multi-check
+                        id="edit_form_order_group"
+                        class="col-md-6"
+                        :field="r$.order"
+                        :options="groupOrderOptions"
+                        stacked
+                        radio
+                        :label="$gettext('Member Playback Order')"
+                    />
+                </div>
+
+                <p
+                    v-if="isExistingRecord"
+                    class="mb-0"
+                >
+                    <router-link :to="{name: 'stations:playlists:index', query: {tab: 'playlist_grouping', playlist: form.id}}">
+                        {{ $gettext('Manage this group\'s member playlists →') }}
+                    </router-link>
+                </p>
+                <p
+                    v-else
+                    class="mb-0 text-muted"
+                >
+                    {{ $gettext('Save this playlist first, then use the "Playlist Grouping" tab to add member playlists.') }}
+                </p>
+            </div>
+        </section>
+
+        <section
+            v-show="form.source === 'songs' || form.source === 'playlists' || form.source === 'requests'"
+            class="card mb-3"
+            role="region"
+        >
+            <div class="card-header text-bg-primary">
+                <h2 class="card-title">
+                    {{ $gettext('Scheduling') }}
+                </h2>
+            </div>
+            <div class="card-body">
+                <div class="row g-3 mb-3">
+                    <form-group-multi-check
+                        id="edit_form_type"
+                        class="col-md-6"
+                        :field="r$.type"
+                        :options="typeOptions"
+                        stacked
+                        radio
+                        :label="$gettext('Playlist Type')"
+                    >
+                        <template #description>
+                            <a
+                                href="/docs/user-guide/playlists/#advanced-playlists"
+                                target="_blank"
+                            >
+                                {{ $gettext('Learn about Advanced Playlists') }}
+                            </a>
+                        </template>
+                    </form-group-multi-check>
                 </div>
 
                 <form-fieldset v-show="form.type === 'default'">
@@ -287,6 +350,16 @@ const sourceOptions = [
         description: $gettext('A playlist containing media files hosted on this server.')
     },
     {
+        value: 'playlists',
+        text: $gettext('Playlist Group'),
+        description: $gettext('A "clock wheel" playlist made up of other playlists, played in sequence, shuffled, or by weight.')
+    },
+    {
+        value: 'requests',
+        text: $gettext('Request Queue'),
+        description: $gettext('Pulls the next pending listener request when this playlist\'s rotation slot comes up.')
+    },
+    {
         value: 'remote_url',
         text: $gettext('Remote URL'),
         description: $gettext('A playlist that instructs the station to play from a remote URL.')
@@ -338,6 +411,26 @@ const orderOptions = [
         description: $gettext('The order of the playlist is manually specified and followed by the AutoDJ.')
     }
 ];
+
+const groupOrderOptions = [
+    {
+        value: 'sequential',
+        text: $gettext('Sequential'),
+        description: $gettext('Members play in the order they were added (weight), one turn each.')
+    },
+    {
+        value: 'shuffle',
+        text: $gettext('Shuffled'),
+        description: $gettext('All members are shuffled into an order, then played through in that order before reshuffling.')
+    },
+    {
+        value: 'random',
+        text: $gettext('Random'),
+        description: $gettext('A completely random member is picked every time this group\'s turn comes up.')
+    }
+];
+
+const isExistingRecord = computed(() => !!form.value.id);
 
 const remoteTypeOptions = [
     {

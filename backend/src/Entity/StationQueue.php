@@ -141,6 +141,15 @@ final class StationQueue implements
     #[ORM\Column(nullable: true)]
     public ?int $hour_boundary_max_play_seconds = null;
 
+    /**
+     * Ordered list of Playlist Group names (outermost to innermost) this track was played
+     * through, e.g. ["Simple Group", "Sub Group 1"]. Null if played directly (not via a group).
+     *
+     * @var string[]|null
+     */
+    #[ORM\Column(type: 'json', nullable: true)]
+    public ?array $playlist_chain = null;
+
     public function __construct(Station $station, Interfaces\SongInterface $song)
     {
         $this->setSong($song);
@@ -178,3 +187,4 @@ final class StationQueue implements
         return $sq;
     }
 }
+

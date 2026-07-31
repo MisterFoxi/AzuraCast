@@ -76,14 +76,15 @@
         </div>
 
         <div class="card-body">
-            <schedule-calendar
-                v-show="activeTab === 'calendar'"
-                ref="$scheduleTab"
-                :schedule-url="[scheduleUrl, clockWheelsScheduleUrl]"
-                :show-create-button="true"
-                @click="doCalendarClick"
-                @create="doCreateEvent"
-            />
+            <div v-show="activeTab === 'calendar'">
+                <schedule-calendar
+                    ref="$scheduleTab"
+                    :schedule-url="[scheduleUrl, clockWheelsScheduleUrl]"
+                    :show-create-button="true"
+                    @click="doCalendarClick"
+                    @create="doCreateEvent"
+                />
+            </div>
 
             <clock-wheel-live-tab
                 v-show="activeTab === 'live'"

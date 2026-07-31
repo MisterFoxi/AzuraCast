@@ -200,6 +200,14 @@ export enum PlaylistTypes {
 export enum PlaylistSources {
   Songs = "songs",
   RemoteUrl = "remote_url",
+  Playlists = "playlists",
+  Requests = "requests",
+}
+
+export enum PlaylistGroupAllowedRequests {
+  Any = "any",
+  Playlist = "playlist",
+  None = "none",
 }
 
 export enum PlaylistRemoteTypes {
@@ -2473,6 +2481,19 @@ export type StationPlaylist = HasAutoIncrementId & {
   schedule_items?: any[];
   /** Podcast> */
   podcasts?: any[];
+  /** If this is a Playlist Group, its ordered member playlists. */
+  playlists?: StationPlaylistGroupMember[];
+  /** The Playlist Groups (if any) this playlist is currently a member of. */
+  playlist_groups?: StationPlaylistGroupMember[];
+};
+
+export type StationPlaylistGroupMember = {
+  id?: number;
+  name?: string;
+  weight?: number;
+  consecutive_plays?: number;
+  play_full_cycle?: boolean;
+  allowed_requests?: PlaylistGroupAllowedRequests;
 };
 
 export type StationRemote = HasAutoIncrementId & {

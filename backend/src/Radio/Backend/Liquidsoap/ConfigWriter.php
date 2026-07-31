@@ -222,6 +222,25 @@ final class ConfigWriter implements EventSubscriberInterface
                 continue;
             }
 
+            // Playlists that are members of a Playlist Group are not scheduled directly by
+            // Liquidsoap -- their airtime comes entirely from their parent group's own slot.
+            if (count($playlist->playlist_groups) > 0) {
+                continue;
+            }
+
+            // Playlist Groups (source = playlists) and Request Queue playlists (source =
+            // requests) have no static content Liquidsoap can read natively (which member/
+            // request plays next is a runtime decision made by QueueBuilder), so they can't be
+            // represented as a `playlist()` object the way Songs/Remote URL playlists are.
+            //
+            // NOTE: these currently do NOT receive live airtime through the native rotation
+            // switch below. Wiring them into actual playback requires a dynamic Liquidsoap
+            // source (e.g. request.dynamic) that calls back into the API per-track -- see
+            // PLAYLIST_GROUPS_INTEGRATION.md for the specifics and current status.
+            if (PlaylistSources::Playlists === $playlist->source || PlaylistSources::Requests === $playlist->source) {
+                continue;
+            }
+
             $playlistVarName = self::getPlaylistVariableName($playlist);
 
             if (in_array($playlistVarName, $playlistVarNames, true)) {

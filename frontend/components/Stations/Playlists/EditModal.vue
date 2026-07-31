@@ -11,6 +11,7 @@
         <tabs>
             <form-basic-info/>
             <form-schedule v-model:schedule-items="form.schedule_items" />
+            <form-memberships v-if="isEditMode" />
             <form-advanced/>
         </tabs>
     </modal-form>
@@ -19,6 +20,7 @@
 <script setup lang="ts">
 import FormBasicInfo from "~/components/Stations/Playlists/Form/BasicInfo.vue";
 import FormSchedule from "~/components/Stations/Playlists/Form/Schedule.vue";
+import FormMemberships from "~/components/Stations/Playlists/Form/Memberships.vue";
 import FormAdvanced from "~/components/Stations/Playlists/Form/Advanced.vue";
 import {BaseEditModalEmits, BaseEditModalProps, useBaseEditModal} from "~/functions/useBaseEditModal";
 import {computed, toRef, useTemplateRef} from "vue";
@@ -106,6 +108,11 @@ const {
         if (data.id == null) {
             delete data.id;
         }
+
+        // These are read-only relations managed via the Playlist Grouping tab / members API,
+        // not writable fields on the playlist record itself.
+        delete data.playlists;
+        delete data.playlist_groups;
 
         if (Array.isArray(data.schedule_items) && data.schedule_items.length) {
             data.schedule_items = data.schedule_items.map((item: Record<string, unknown>) => {

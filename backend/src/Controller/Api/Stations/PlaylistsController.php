@@ -11,6 +11,7 @@ use App\Entity\Enums\PlaylistSources;
 use App\Entity\Station;
 use App\Entity\StationPlaylist;
 use App\Entity\StationSchedule;
+use Carbon\CarbonImmutable;
 use App\Http\Response;
 use App\Http\ServerRequest;
 use App\OpenApi;
@@ -222,6 +223,36 @@ final class PlaylistsController extends AbstractScheduledEntityController
                         'api:stations:playlist',
                         ['station_id' => $station->id, 'id' => $playlist->id]
                     ),
+                    // Playlist detail fields for the hover overlay panel
+                    'source' => $playlist->source->value,
+                    'order' => $playlist->order->value,
+                    'playlist_type' => $playlist->type->value,
+                    'weight' => $playlist->weight,
+                    'play_per_songs' => $playlist->play_per_songs,
+                    'play_per_minutes' => $playlist->play_per_minutes,
+                    'play_per_hour_minute' => $playlist->play_per_hour_minute,
+                    'avoid_duplicates' => $playlist->avoid_duplicates,
+                    'is_jingle' => $playlist->is_jingle,
+                    'num_songs' => $playlist->media_items->count(),
+                    'total_length' => array_sum(
+                        $playlist->media_items->map(
+                            fn ($spm) => $spm->media?->length ?? 0
+                        )->toArray()
+                    ),
+                    'members' => $playlist->playlists->map(
+                        fn ($spg) => [
+                            'id' => $spg->playlist->id,
+                            'name' => $spg->playlist->name,
+                            'source' => $spg->playlist->source->value,
+                            'consecutive_plays' => $spg->consecutive_plays,
+                            'play_full_cycle' => $spg->play_full_cycle,
+                        ]
+                    )->toArray(),
+                    'is_member_of_group' => $playlist->playlistGroupMemberships->count() > 0,
+                    'group_schedule_warning' => $this->hasGroupScheduleConflict(
+                        $playlist,
+                        $dateRange
+                    ),
                 ];
             }
         );
@@ -230,6 +261,49 @@ final class PlaylistsController extends AbstractScheduledEntityController
     /**
      * @return mixed[]
      */
+    /**
+     * Check whether a playlist's schedule window falls outside all of its parent group's
+     * schedule windows. If so, the playlist would show on the calendar but never actually
+     * play (since group members only play when their parent group is also scheduled/active).
+     */
+    private function hasGroupScheduleConflict(
+        StationPlaylist $playlist,
+        DateRange $memberDateRange
+    ): bool {
+        if ($playlist->playlistGroupMemberships->count() === 0) {
+            return false;
+        }
+
+        $tz = $playlist->station->getTimezoneObject();
+        $memberStart = CarbonImmutable::instance($memberDateRange->start)->setTimezone($tz);
+        $memberEnd = CarbonImmutable::instance($memberDateRange->end)->setTimezone($tz);
+
+        foreach ($playlist->playlistGroupMemberships as $membership) {
+            $group = $membership->playlist_group;
+
+            // No schedule on the parent group = it runs continuously, no conflict possible.
+            if ($group->schedule_items->count() === 0) {
+                return false;
+            }
+
+            foreach ($group->schedule_items as $groupScheduleItem) {
+                $groupStart = StationSchedule::getDateTime($groupScheduleItem->start_time, $tz, $memberStart);
+                $groupEnd = StationSchedule::getDateTime($groupScheduleItem->end_time, $tz, $memberStart);
+
+                if ($groupEnd->lte($groupStart)) {
+                    $groupEnd = $groupEnd->addDay();
+                }
+
+                // Check if this group schedule covers the member's event window.
+                if ($memberStart->gte($groupStart) && $memberEnd->lte($groupEnd)) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
     protected function viewRecord(object $record, ServerRequest $request): array
     {
         /** @var StationPlaylist $record */
@@ -272,6 +346,14 @@ final class PlaylistsController extends AbstractScheduledEntityController
                 absolute: !$isInternal
             ),
         ];
+
+        if (PlaylistSources::Playlists === $record->source) {
+            $return['links']['members'] = $router->fromHere(
+                routeName: 'api:stations:playlist:members',
+                routeParams: ['id' => $record->id],
+                absolute: !$isInternal
+            );
+        }
 
         if (PlaylistSources::Songs === $record->source) {
             if (PlaylistOrders::Sequential === $record->order) {

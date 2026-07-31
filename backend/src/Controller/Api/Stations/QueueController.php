@@ -127,6 +127,24 @@ final class QueueController extends AbstractStationApiCrudController
                 ->setParameter('query', '%' . $searchPhrase . '%');
         }
 
+        // Playlist Groups filtering: a specific playlist (by id), a specific group (by name,
+        // matched against the recorded playlist_chain), or "any track queued via a group".
+        $filterPlaylistId = Types::intOrNull($request->getQueryParam('filter_playlist_id'));
+        if (null !== $filterPlaylistId) {
+            $qb->andWhere('sp.id = :filterPlaylistId')
+                ->setParameter('filterPlaylistId', $filterPlaylistId);
+        }
+
+        $filterGroup = Types::stringOrNull($request->getQueryParam('filter_group'), true);
+        if (null !== $filterGroup) {
+            $qb->andWhere('sq.playlist_chain LIKE :filterGroup')
+                ->setParameter('filterGroup', '%"' . $filterGroup . '"%');
+        }
+
+        if (Types::bool($request->getQueryParam('filter_via_group'))) {
+            $qb->andWhere('sq.playlist_chain IS NOT NULL');
+        }
+
         return $this->listPaginatedFromQuery(
             $request,
             $response,
@@ -172,3 +190,4 @@ final class QueueController extends AbstractStationApiCrudController
         return $response->withJson(Status::deleted());
     }
 }
+

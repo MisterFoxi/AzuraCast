@@ -9,28 +9,29 @@ use App\OpenApi;
 use OpenApi\Attributes as OA;
 
 #[OA\Schema(
-    schema: 'Api_NowPlaying_SongHistory',
+    schema: 'Api_NowPlaying_StationQueue',
     required: ['*'],
     type: 'object'
 )]
-class SongHistory
+class StationQueue
 {
     #[OA\Property(
-        description: 'Song history unique identifier'
-    )]
-    public int $sh_id;
-
-    #[OA\Property(
-        description: 'UNIX timestamp when playback started.',
+        description: 'UNIX timestamp when the AutoDJ is expected to queue the song for playback.',
         example: OpenApi::SAMPLE_TIMESTAMP
     )]
-    public int $played_at = 0;
+    public int $cued_at = 0;
+
+    #[OA\Property(
+        description: 'UNIX timestamp when playback is expected to start.',
+        example: OpenApi::SAMPLE_TIMESTAMP
+    )]
+    public ?int $played_at = null;
 
     #[OA\Property(
         description: 'Duration of the song in seconds',
         example: 180
     )]
-    public int $duration = 0;
+    public float $duration = 0.0;
 
     #[OA\Property(
         description: 'Indicates the playlist that the song was played from, if available, or empty string if not.',
@@ -39,16 +40,25 @@ class SongHistory
     public ?string $playlist = null;
 
     #[OA\Property(
-        description: 'Indicates the clock wheel that played the song, if available, or empty string if not.',
+        description: 'Ordered list of Playlist Group names (outermost to innermost) this track '
+            . 'was played through, if it was played via a Playlist Group. Null otherwise.',
+        type: 'array',
+        items: new OA\Items(type: 'string'),
+        example: ['Simple Group', 'Sub Group 1']
+    )]
+    public ?array $playlist_chain = null;
+
+
+    #[OA\Property(
+        description: 'Indicates the clock wheel that queued the song, if available, or empty string if not.',
         example: 'Morning Drive'
     )]
     public ?string $clock_wheel = null;
 
     #[OA\Property(
-        description: 'Indicates the current streamer that was connected, if available, or empty string if not.',
-        example: 'Test DJ'
+        description: 'Indicates this queue row is a station-wide top-of-hour legal ID.',
     )]
-    public ?string $streamer = null;
+    public bool $top_of_hour_legal_id = false;
 
     #[OA\Property(
         description: 'Indicates whether the song is a listener request.',
