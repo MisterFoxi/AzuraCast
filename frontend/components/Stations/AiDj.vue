@@ -1,167 +1,170 @@
 <template>
-    <div class="ai-dj-page">
+    <div class="d-flex flex-column gap-4">
         <section
-            class="ai-dj-shell"
+            class="card"
             role="region"
             aria-labelledby="hdr_ai_dj"
         >
-            <header class="ai-dj-topbar">
-                <div class="ai-dj-branding">
-                    <span class="logo-dot" />
-                    <div>
-                        <h2
-                            id="hdr_ai_dj"
-                            class="ai-dj-title"
-                        >
-                            {{ $gettext('AI DJ') }}
-                        </h2>
-                        <p class="ai-dj-subtitle mb-0">
-                            {{ $gettext('Manage your AI DJ personalities') }}
-                        </p>
-                    </div>
+            <div class="card-header text-bg-primary">
+                <div class="d-flex align-items-center">
+                    <h2
+                        id="hdr_ai_dj"
+                        class="card-title flex-fill my-0"
+                    >
+                        {{ $gettext('AI DJ') }}
+                    </h2>
                 </div>
-            </header>
+            </div>
 
             <loading
                 :loading="isLoading"
                 lazy
             >
-                <div class="ai-dj-container">
-                    <!-- DJ List -->
-                    <section class="dashboard-card">
-                        <div class="dj-list-header">
-                            <div class="dashboard-card-title mb-0">
-                                {{ $gettext('DJ Personalities') }}
-                            </div>
-                            <button
-                                type="button"
-                                class="btn btn-primary btn-sm"
-                                @click="openCreate"
-                            >
-                                + {{ $gettext('Create DJ') }}
-                            </button>
-                        </div>
-
-                        <div
-                            v-if="djs.length === 0"
-                            class="dj-empty"
+                <div class="card-body">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <h3 class="h6 mb-0">
+                            {{ $gettext('DJ Personalities') }}
+                        </h3>
+                        <button
+                            type="button"
+                            class="btn btn-primary btn-sm"
+                            @click="openCreate"
                         >
-                            {{ $gettext('No DJ personalities configured yet. Create one to get started.') }}
-                        </div>
+                            <icon-ic-baseline-add />
+                            {{ $gettext('Create DJ') }}
+                        </button>
+                    </div>
 
-                        <div
-                            v-else
-                            class="dj-table-wrap"
-                        >
-                            <table class="dj-table">
-                                <thead>
-                                    <tr>
-                                        <th>{{ $gettext('Name') }}</th>
-                                        <th>{{ $gettext('Voice Model') }}</th>
-                                        <th>{{ $gettext('Status') }}</th>
-                                        <th>{{ $gettext('Schedule') }}</th>
-                                        <th class="dj-actions-col">
-                                            {{ $gettext('Actions') }}
-                                        </th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr
-                                        v-for="dj in djs"
-                                        :key="dj.id"
-                                    >
-                                        <td class="dj-name">
-                                            {{ dj.name }}
-                                            <span
-                                                v-if="activeDjId === dj.id"
-                                                class="live-badge"
-                                            >
-                                                <span class="live-dot" />
-                                                LIVE
-                                            </span>
-                                        </td>
-                                        <td class="dj-voice">
-                                            <span
-                                                v-if="dj.voice_model_path"
-                                                class="voice-badge"
-                                            >
-                                                {{ voiceLabel(dj.voice_model_path) }}
-                                            </span>
-                                            <span
-                                                v-else
-                                                class="text-muted"
-                                            >—</span>
-                                        </td>
-                                        <td>
-                                            <span
-                                                class="status-badge"
-                                                :class="dj.is_enabled ? 'status-on' : 'status-off'"
-                                            >
-                                                {{ dj.is_enabled ? $gettext('Enabled') : $gettext('Disabled') }}
-                                            </span>
-                                        </td>
-                                        <td class="dj-schedule">
-                                            <span
-                                                v-if="dj.schedules && dj.schedules.length > 0"
-                                                class="schedule-summary"
-                                            >
-                                                {{ scheduleSummary(dj.schedules) }}
-                                            </span>
-                                            <span
-                                                v-else
-                                                class="text-muted"
-                                            >{{ $gettext('No schedule') }}</span>
-                                        </td>
-                                        <td class="dj-actions">
-                                            <button
-                                                type="button"
-                                                class="btn btn-secondary btn-sm me-1"
-                                                :disabled="isTesting === dj.id"
-                                                @click="runTest(dj)"
-                                            >
-                                                <span
-                                                    v-if="isTesting === dj.id"
-                                                    class="spinner"
-                                                />
-                                                <span v-else>▶</span>
-                                                {{ $gettext('Test') }}
-                                            </button>
-                                            <button
-                                                type="button"
-                                                class="btn btn-secondary btn-sm me-1"
-                                                @click="openEdit(dj)"
-                                            >
-                                                {{ $gettext('Edit') }}
-                                            </button>
-                                            <button
-                                                type="button"
-                                                class="btn btn-info btn-sm me-1"
-                                                @click="openSchedules(dj)"
-                                            >
-                                                {{ $gettext('Schedules') }}
-                                            </button>
-                                            <button
-                                                type="button"
-                                                class="btn btn-danger btn-sm"
-                                                @click="confirmDelete(dj)"
-                                            >
-                                                {{ $gettext('Delete') }}
-                                            </button>
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </section>
-
-                    <!-- DJ Editor -->
-                    <section
-                        v-if="editorOpen"
-                        class="dashboard-card editor-card"
+                    <p
+                        v-if="djs.length === 0"
+                        class="text-muted text-center py-4 mb-0"
                     >
-                        <div class="dashboard-card-title">
+                        {{ $gettext('No DJ personalities configured yet. Create one to get started.') }}
+                    </p>
+
+                    <div
+                        v-else
+                        class="table-responsive"
+                    >
+                        <table class="table table-striped align-middle mb-0">
+                            <thead>
+                                <tr>
+                                    <th scope="col">
+                                        {{ $gettext('Name') }}
+                                    </th>
+                                    <th scope="col">
+                                        {{ $gettext('Voice Model') }}
+                                    </th>
+                                    <th scope="col">
+                                        {{ $gettext('Status') }}
+                                    </th>
+                                    <th scope="col">
+                                        {{ $gettext('Schedule') }}
+                                    </th>
+                                    <th
+                                        scope="col"
+                                        class="text-end"
+                                    >
+                                        {{ $gettext('Actions') }}
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr
+                                    v-for="dj in djs"
+                                    :key="dj.id"
+                                >
+                                    <td class="fw-semibold">
+                                        {{ dj.name }}
+                                        <span
+                                            v-if="activeDjId === dj.id"
+                                            class="badge text-bg-success ms-1"
+                                        >
+                                            {{ $gettext('Live') }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span
+                                            v-if="dj.voice_model_path"
+                                            class="badge text-bg-secondary font-monospace fw-normal"
+                                        >
+                                            {{ voiceLabel(dj.voice_model_path) }}
+                                        </span>
+                                        <span
+                                            v-else
+                                            class="text-muted"
+                                        >—</span>
+                                    </td>
+                                    <td>
+                                        <span
+                                            class="badge"
+                                            :class="dj.is_enabled ? 'text-bg-success' : 'text-bg-secondary'"
+                                        >
+                                            {{ dj.is_enabled ? $gettext('Enabled') : $gettext('Disabled') }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span
+                                            v-if="dj.schedules && dj.schedules.length > 0"
+                                            class="small"
+                                        >
+                                            {{ scheduleSummary(dj.schedules) }}
+                                        </span>
+                                        <span
+                                            v-else
+                                            class="text-muted"
+                                        >{{ $gettext('No schedule') }}</span>
+                                    </td>
+                                    <td class="text-end text-nowrap">
+                                        <button
+                                            type="button"
+                                            class="btn btn-secondary btn-sm me-1"
+                                            :disabled="isTesting === dj.id"
+                                            @click="runTest(dj)"
+                                        >
+                                            <span
+                                                v-if="isTesting === dj.id"
+                                                class="spinner-border spinner-border-sm"
+                                                role="status"
+                                                aria-hidden="true"
+                                            />
+                                            <icon-ic-baseline-play-arrow v-else />
+                                            {{ $gettext('Test') }}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="btn btn-secondary btn-sm me-1"
+                                            @click="openEdit(dj)"
+                                        >
+                                            {{ $gettext('Edit') }}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="btn btn-info btn-sm me-1"
+                                            @click="openSchedules(dj)"
+                                        >
+                                            {{ $gettext('Schedules') }}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="btn btn-danger btn-sm"
+                                            @click="confirmDelete(dj)"
+                                        >
+                                            {{ $gettext('Delete') }}
+                                        </button>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div
+                        v-if="editorOpen"
+                        class="card card-body bg-body-tertiary mt-4"
+                    >
+                        <h3 class="h6">
                             {{ editingDj ? $gettext('Edit DJ') : $gettext('Create DJ') }}
-                        </div>
+                        </h3>
 
                         <form @submit.prevent="saveForm">
                             <form-group-field
@@ -176,7 +179,7 @@
                                     <input
                                         :id="id"
                                         v-model="model.$model"
-                                        class="form-control form-control-dark"
+                                        class="form-control"
                                         type="text"
                                         :placeholder="$gettext('e.g. Morning Mix Mike')"
                                         required
@@ -194,7 +197,6 @@
                                 <template #default="{model}">
                                     <form-select
                                         v-model="model.$model"
-                                        class="form-control-dark"
                                         :options="voiceSelectOptions"
                                     />
                                 </template>
@@ -203,22 +205,23 @@
                                 </template>
                             </form-group-field>
 
-                            <div class="toggle-row mb-3">
-                                <div>
-                                    <div class="toggle-label">
-                                        {{ $gettext('Enabled') }}
-                                    </div>
-                                    <div class="toggle-helper">
-                                        {{ $gettext('Allow this DJ to be scheduled and inject intros.') }}
-                                    </div>
-                                </div>
-                                <label class="toggle">
-                                    <input
-                                        v-model="form.is_enabled"
-                                        type="checkbox"
-                                    >
-                                    <span class="slider" />
+                            <div class="form-check form-switch mb-3">
+                                <input
+                                    id="dj_is_enabled"
+                                    v-model="form.is_enabled"
+                                    class="form-check-input"
+                                    type="checkbox"
+                                    role="switch"
+                                >
+                                <label
+                                    class="form-check-label"
+                                    for="dj_is_enabled"
+                                >
+                                    {{ $gettext('Enabled') }}
                                 </label>
+                                <div class="form-text">
+                                    {{ $gettext('Allow this DJ to be scheduled and inject intros.') }}
+                                </div>
                             </div>
 
                             <div class="mb-3">
@@ -265,21 +268,20 @@
                                 </div>
                             </div>
 
-                            <div class="mb-3">
-                                <div class="form-check form-switch">
-                                    <input
-                                        id="dj_use_background_audio"
-                                        v-model="form.use_background_audio"
-                                        type="checkbox"
-                                        class="form-check-input"
-                                    >
-                                    <label
-                                        for="dj_use_background_audio"
-                                        class="form-check-label"
-                                    >
-                                        {{ $gettext('Background Audio') }}
-                                    </label>
-                                </div>
+                            <div class="form-check form-switch mb-3">
+                                <input
+                                    id="dj_use_background_audio"
+                                    v-model="form.use_background_audio"
+                                    type="checkbox"
+                                    class="form-check-input"
+                                    role="switch"
+                                >
+                                <label
+                                    for="dj_use_background_audio"
+                                    class="form-check-label"
+                                >
+                                    {{ $gettext('Background Audio') }}
+                                </label>
                                 <div class="form-text">
                                     {{ $gettext('Adds a soft ambient music bed underneath DJ voice clips. Great for overnight shifts.') }}
                                 </div>
@@ -296,7 +298,7 @@
                                     <textarea
                                         :id="id"
                                         v-model="model.$model"
-                                        class="form-control form-control-dark"
+                                        class="form-control"
                                         rows="3"
                                         :placeholder="defaultIntroTemplate"
                                     />
@@ -317,7 +319,7 @@
                                     <textarea
                                         :id="id"
                                         v-model="model.$model"
-                                        class="form-control form-control-dark"
+                                        class="form-control"
                                         rows="3"
                                         :placeholder="defaultOutroTemplate"
                                     />
@@ -327,7 +329,7 @@
                                 </template>
                             </form-group-field>
 
-                            <div class="btn-row">
+                            <div class="d-flex gap-2">
                                 <button
                                     type="submit"
                                     class="btn btn-primary"
@@ -344,20 +346,19 @@
                                 </button>
                             </div>
                         </form>
-                    </section>
+                    </div>
 
-                    <!-- Delete Confirm -->
-                    <section
+                    <div
                         v-if="deleteTarget"
-                        class="dashboard-card delete-card"
+                        class="card card-body border-danger mt-4"
                     >
-                        <div class="dashboard-card-title">
+                        <h3 class="h6">
                             {{ $gettext('Confirm Delete') }}
-                        </div>
+                        </h3>
                         <p>
                             {{ $gettext('Delete DJ "%{name}"? This cannot be undone.', { name: deleteTarget.name }) }}
                         </p>
-                        <div class="btn-row">
+                        <div class="d-flex gap-2">
                             <button
                                 type="button"
                                 class="btn btn-danger"
@@ -374,21 +375,19 @@
                                 {{ $gettext('Cancel') }}
                             </button>
                         </div>
-                    </section>
+                    </div>
                 </div>
             </loading>
 
             <ai-dj-schedule-modal ref="scheduleModalRef" />
         </section>
 
-        <!-- Content Library -->
         <section
-            class="ai-dj-shell"
-            style="margin-top: 1.5rem;"
+            class="card"
             role="region"
             aria-labelledby="hdr_content_library"
         >
-            <div class="dashboard-card">
+            <div class="card-body">
                 <ai-dj-content-library />
             </div>
         </section>
@@ -408,8 +407,6 @@ import {useNotify} from "~/components/Common/Toasts/useNotify.ts";
 import {useApiRouter} from "~/functions/useApiRouter.ts";
 import {useAppRegle} from "~/vendor/regle.ts";
 import {useResettableRef} from "~/functions/useResettableRef.ts";
-
-// --- Types ---
 
 interface AiDjSchedule {
     id?: number;
@@ -447,8 +444,6 @@ interface VoiceOption {
     path: string;
 }
 
-// --- Setup ---
-
 const {$gettext} = useGettext();
 const {axios} = useAxios();
 const {notifySuccess, notifyError} = useNotify();
@@ -461,8 +456,6 @@ const djTestUrl = (id: number) => getStationApiUrl(`/ai-dj/${id}/test`);
 
 const defaultIntroTemplate = 'This is {{dj_name}} on {{station_name}}';
 const defaultOutroTemplate = 'This has been {{dj_name}} on {{station_name}}. Thanks for listening!';
-
-// --- State ---
 
 const isLoading = ref(true);
 const isSaving = ref(false);
@@ -488,8 +481,6 @@ const {record: form, reset: resetForm} = useResettableRef<AiDjForm>(() => ({
 }));
 
 const {r$: v$} = useAppRegle(form, {}, {});
-
-// --- Computed ---
 
 const voiceSelectOptions = computed(() => {
     const base = [{text: $gettext('— Select a voice —'), value: null as string | null}];
@@ -523,8 +514,6 @@ const voiceSelectOptions = computed(() => {
     return all;
 });
 
-// --- Helpers ---
-
 const voiceLabel = (path: string | null): string => {
     if (!path) return '—';
     const match = voiceOptions.value.find((v) => v.path === path);
@@ -544,7 +533,6 @@ const dayNames: string[] = [
     $gettext('Sun'),
 ];
 
-// Convert a 24-hour "HH:MM" time string to 12-hour "h:MM AM/PM".
 const to12Hour = (t: string): string => {
     const parts = t.split(':');
     let h = parseInt(parts[0] ?? '0', 10);
@@ -572,8 +560,6 @@ const scheduleSummary = (schedules: AiDjSchedule[]): string => {
     }).join(' | ');
 };
 
-// --- API ---
-
 const loadDjs = async (): Promise<void> => {
     isLoading.value = true;
     try {
@@ -594,8 +580,6 @@ const loadDjs = async (): Promise<void> => {
         isLoading.value = false;
     }
 };
-
-// --- Editor ---
 
 const openCreate = (): void => {
     editingDj.value = null;
@@ -645,8 +629,6 @@ const saveForm = async (): Promise<void> => {
     }
 };
 
-// --- Delete ---
-
 const openSchedules = (dj: AiDj): void => {
     scheduleModalRef.value?.open(dj.id, dj.name);
 };
@@ -671,8 +653,6 @@ const doDelete = async (): Promise<void> => {
     }
 };
 
-// --- Test Generation ---
-
 const runTest = async (dj: AiDj): Promise<void> => {
     isTesting.value = dj.id;
     try {
@@ -685,383 +665,26 @@ const runTest = async (dj: AiDj): Promise<void> => {
     }
 };
 
-// --- Init ---
-
+/** Polls for the currently-live DJ so the "Live" badge stays in sync without a full page reload. */
+const LIVE_STATUS_POLL_INTERVAL_MS = 30_000;
 let liveRefreshTimer: ReturnType<typeof setInterval> | null = null;
 
 onMounted(async () => {
-    await Promise.all([loadDjs()]);
-    // Refresh every 30s to update LIVE indicator
+    await loadDjs();
+
     liveRefreshTimer = setInterval(async () => {
         try {
             const resp = await axios.get<{active_dj_id?: number | null}>(listUrl.value);
             if (!Array.isArray(resp.data) && resp.data.active_dj_id !== undefined) {
                 activeDjId.value = resp.data.active_dj_id;
             }
-        } catch { /* silent */ }
-    }, 30000);
+        } catch {
+            // Non-fatal: the live badge simply won't update until the next successful poll.
+        }
+    }, LIVE_STATUS_POLL_INTERVAL_MS);
 });
 
 onUnmounted(() => {
     if (liveRefreshTimer) clearInterval(liveRefreshTimer);
 });
 </script>
-
-<style scoped lang="scss">
-.ai-dj-page {
-    padding: 1rem;
-}
-
-.ai-dj-shell {
-    max-width: 1100px;
-    margin: 0 auto;
-}
-
-.ai-dj-topbar {
-    display: flex;
-    align-items: center;
-    margin-bottom: 1.5rem;
-}
-
-.ai-dj-branding {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-}
-
-.logo-dot {
-    display: inline-block;
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    background: var(--bs-primary, #5a7fd4);
-    flex-shrink: 0;
-}
-
-.ai-dj-title {
-    font-size: 1.4rem;
-    font-weight: 700;
-    margin: 0;
-}
-
-.ai-dj-subtitle {
-    font-size: 0.85rem;
-    color: var(--bs-secondary-color, #888);
-}
-
-.ai-dj-container {
-    display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
-}
-
-.dashboard-card {
-    background: var(--bs-body-bg, #1a1d23);
-    border: 1px solid var(--bs-border-color, #2d3140);
-    border-radius: 8px;
-    padding: 1.25rem;
-}
-
-.dashboard-card-title {
-    font-size: 1rem;
-    font-weight: 600;
-    margin-bottom: 1rem;
-    color: var(--bs-body-color, #e0e0e0);
-}
-
-.dj-list-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 1rem;
-}
-
-.dj-empty {
-    color: var(--bs-secondary-color, #888);
-    text-align: center;
-    padding: 2rem 0;
-}
-
-.dj-table-wrap {
-    overflow-x: auto;
-}
-
-.dj-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.9rem;
-
-    th,
-    td {
-        padding: 0.6rem 0.75rem;
-        text-align: left;
-        border-bottom: 1px solid var(--bs-border-color, #2d3140);
-    }
-
-    th {
-        font-weight: 600;
-        color: var(--bs-secondary-color, #888);
-        font-size: 0.8rem;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-    }
-
-    tr:last-child td {
-        border-bottom: none;
-    }
-
-    tr:hover td {
-        background: var(--bs-tertiary-bg, #22252e);
-    }
-}
-
-.dj-name {
-    font-weight: 600;
-}
-
-.live-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    background: rgba(40, 167, 69, 0.18);
-    color: #5cb85c;
-    border-radius: 12px;
-    padding: 0.1rem 0.5rem;
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    margin-left: 0.5rem;
-    vertical-align: middle;
-}
-
-.live-dot {
-    display: inline-block;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: #5cb85c;
-    animation: pulse-live 1.5s ease-in-out infinite;
-}
-
-@keyframes pulse-live {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
-}
-
-.voice-badge {
-    display: inline-block;
-    background: var(--bs-tertiary-bg, #22252e);
-    border-radius: 4px;
-    padding: 0.15rem 0.5rem;
-    font-size: 0.8rem;
-    font-family: monospace;
-}
-
-.status-badge {
-    display: inline-block;
-    border-radius: 12px;
-    padding: 0.15rem 0.6rem;
-    font-size: 0.78rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-
-    &.status-on {
-        background: rgba(40, 167, 69, 0.18);
-        color: #5cb85c;
-    }
-
-    &.status-off {
-        background: rgba(108, 117, 125, 0.18);
-        color: var(--bs-secondary-color, #888);
-    }
-}
-
-.schedule-summary {
-    font-size: 0.8rem;
-    color: var(--bs-secondary-color, #aaa);
-}
-
-.dj-actions-col {
-    width: 1%;
-    white-space: nowrap;
-}
-
-.dj-actions {
-    white-space: nowrap;
-}
-
-.editor-card {
-    border-color: var(--bs-primary, #5a7fd4);
-}
-
-.delete-card {
-    border-color: var(--bs-danger, #dc3545);
-}
-
-.toggle-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-}
-
-.toggle-label {
-    font-weight: 600;
-    font-size: 0.9rem;
-}
-
-.toggle-helper {
-    font-size: 0.8rem;
-    color: var(--bs-secondary-color, #888);
-    margin-top: 0.2rem;
-}
-
-.toggle {
-    position: relative;
-    display: inline-block;
-    width: 44px;
-    height: 24px;
-    flex-shrink: 0;
-
-    input {
-        opacity: 0;
-        width: 0;
-        height: 0;
-    }
-
-    .slider {
-        position: absolute;
-        inset: 0;
-        background: var(--bs-secondary, #6c757d);
-        border-radius: 24px;
-        cursor: pointer;
-        transition: background 0.2s;
-
-        &::before {
-            content: '';
-            position: absolute;
-            width: 18px;
-            height: 18px;
-            left: 3px;
-            top: 3px;
-            border-radius: 50%;
-            background: #fff;
-            transition: transform 0.2s;
-        }
-    }
-
-    input:checked + .slider {
-        background: var(--bs-primary, #5a7fd4);
-    }
-
-    input:checked + .slider::before {
-        transform: translateX(20px);
-    }
-}
-
-.spinner {
-    display: inline-block;
-    width: 12px;
-    height: 12px;
-    border: 2px solid currentColor;
-    border-top-color: transparent;
-    border-radius: 50%;
-    animation: spin 0.6s linear infinite;
-    vertical-align: middle;
-    margin-right: 4px;
-}
-
-@keyframes spin {
-    to {
-        transform: rotate(360deg);
-    }
-}
-
-.btn-row {
-    display: flex;
-    gap: 0.5rem;
-    margin-top: 1rem;
-}
-
-@media (max-width: 768px) {
-    .ai-dj-page {
-        padding: 0.5rem;
-    }
-
-    .ai-dj-title {
-        font-size: 1.1rem;
-    }
-
-    .dashboard-card {
-        padding: 0.75rem;
-    }
-
-    .dj-list-header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 0.5rem;
-    }
-
-    .dj-table-wrap {
-        overflow-x: visible;
-    }
-
-    .dj-table {
-        display: block;
-
-        thead {
-            display: none;
-        }
-
-        tbody {
-            display: flex;
-            flex-direction: column;
-            gap: 0.75rem;
-        }
-
-        tr {
-            display: flex;
-            flex-direction: column;
-            gap: 0.3rem;
-            padding: 0.75rem;
-            background: var(--bs-tertiary-bg, #16181f);
-            border: 1px solid var(--bs-border-color, #2d3140);
-            border-radius: 8px;
-
-            &:hover td {
-                background: transparent;
-            }
-        }
-
-        td {
-            display: flex;
-            align-items: center;
-            padding: 0.2rem 0;
-            border-bottom: none;
-        }
-    }
-
-    .dj-name {
-        font-size: 1rem;
-    }
-
-    .dj-actions-col {
-        width: auto;
-    }
-
-    .dj-actions {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 0.3rem;
-        white-space: normal;
-        padding-top: 0.3rem;
-    }
-
-    .dj-schedule {
-        .schedule-summary {
-            font-size: 0.75rem;
-        }
-    }
-}
-</style>

@@ -4,6 +4,7 @@
             ref="$badge"
             class="playlist-source-badge badge text-bg-secondary d-inline-flex align-items-center gap-1"
             :aria-label="ariaLabel"
+            :title="titleText"
             @mouseenter="onBadgeEnter"
             @mouseleave="scheduleHide()"
         >
@@ -90,6 +91,13 @@ const ariaLabel = computed<string>(() =>
         : (directName.value ?? ""),
 );
 
+// Only show the native browser tooltip for non-grouped badges: grouped
+// (chain) playlists already get the richer Teleport overlay on hover, and
+// showing both at once would be redundant/cluttered.
+const titleText = computed<string | null>(() =>
+    isGrouped.value ? null : directName.value,
+);
+
 const overlayVisible = ref<boolean>(false);
 
 const {start: scheduleHide, stop: clearHideTimer} = useTimeoutFn(
@@ -149,7 +157,12 @@ watch(overlayVisible, async (visible) => {
 
 <style lang="scss" scoped>
 .playlist-source-badge {
+    min-width: 0;
     max-width: 100%;
+}
+
+.playlist-source-badge .text-truncate {
+    min-width: 0;
 }
 
 .playlist-source-overlay {

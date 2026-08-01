@@ -9,29 +9,28 @@ use App\OpenApi;
 use OpenApi\Attributes as OA;
 
 #[OA\Schema(
-    schema: 'Api_NowPlaying_StationQueue',
+    schema: 'Api_NowPlaying_SongHistory',
     required: ['*'],
     type: 'object'
 )]
-class StationQueue
+class SongHistory
 {
     #[OA\Property(
-        description: 'UNIX timestamp when the AutoDJ is expected to queue the song for playback.',
-        example: OpenApi::SAMPLE_TIMESTAMP
+        description: 'Song history unique identifier'
     )]
-    public int $cued_at = 0;
+    public int $sh_id;
 
     #[OA\Property(
-        description: 'UNIX timestamp when playback is expected to start.',
+        description: 'UNIX timestamp when playback started.',
         example: OpenApi::SAMPLE_TIMESTAMP
     )]
-    public ?int $played_at = null;
+    public int $played_at = 0;
 
     #[OA\Property(
         description: 'Duration of the song in seconds',
         example: 180
     )]
-    public float $duration = 0.0;
+    public int $duration = 0;
 
     #[OA\Property(
         description: 'Indicates the playlist that the song was played from, if available, or empty string if not.',
@@ -48,7 +47,6 @@ class StationQueue
     )]
     public ?array $playlist_chain = null;
 
-
     #[OA\Property(
         description: 'Indicates the clock wheel that queued the song, if available, or empty string if not.',
         example: 'Morning Drive'
@@ -56,9 +54,10 @@ class StationQueue
     public ?string $clock_wheel = null;
 
     #[OA\Property(
-        description: 'Indicates this queue row is a station-wide top-of-hour legal ID.',
+        description: 'Indicates the current streamer that was connected, if available, or empty string if not.',
+        example: 'Test DJ'
     )]
-    public bool $top_of_hour_legal_id = false;
+    public ?string $streamer = null;
 
     #[OA\Property(
         description: 'Indicates whether the song is a listener request.',

@@ -1,3 +1,4 @@
+
 <?php
 
 declare(strict_types=1);
@@ -5,6 +6,7 @@ declare(strict_types=1);
 namespace App\Console\Command;
 
 use App\Container\EntityManagerAwareTrait;
+use App\Entity\Station;
 use App\Service\AiNewsGenerator;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Input\InputArgument;
@@ -21,7 +23,6 @@ use Throwable;
 final class GenerateAiNewsCommand extends CommandAbstract
 {
     use EntityManagerAwareTrait;
-    use ResolvesStationArgumentTrait;
 
     public function __construct(
         private readonly AiNewsGenerator $generator,
@@ -79,9 +80,11 @@ final class GenerateAiNewsCommand extends CommandAbstract
                 continue;
             }
 
-            if ($force && !$backendConfig->ai_news_enabled) {
-                $io->text('<comment>Force mode: ignoring disabled state.</comment>');
-            }
+            $io->text(
+                $force && !$backendConfig->ai_news_enabled
+                    ? '<comment>Force mode: ignoring disabled state.</comment>'
+                    : ''
+            );
 
             try {
                 $this->generator->generate($station, $force);
@@ -103,5 +106,22 @@ final class GenerateAiNewsCommand extends CommandAbstract
         );
 
         return 0;
+    }
+
+    /**
+     * @return Station[]
+     */
+    private function resolveStations(?string $stationName): array
+    {
+        $repo = $this->em->getRepository(Station::class);
+
+        if (null !== $stationName) {
+            $station = $repo->findOneBy(['short_name' => $stationName])
+                ?? $repo->find($stationName);
+
+            return (null !== $station) ? [$station] : [];
+        }
+
+        return $repo->findAll();
     }
 }

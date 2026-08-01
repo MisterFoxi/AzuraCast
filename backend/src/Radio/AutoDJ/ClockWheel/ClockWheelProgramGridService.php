@@ -144,8 +144,13 @@ final class ClockWheelProgramGridService
 
                 $cursor = $rowStart->copy();
                 while ($cursor->lessThan($rowEnd)) {
+                    // Use the cursor's own day, not the schedule's start day: a
+                    // schedule crossing midnight (rowEnd->addDay() above) walks
+                    // into the next calendar day, and hours after midnight
+                    // belong to that day's column, not the start day's.
+                    $cursorDayOfWeek = $cursor->dayOfWeekIso;
                     $hour = (int)$cursor->format('G');
-                    $key = $dayOfWeek . '_' . $hour;
+                    $key = $cursorDayOfWeek . '_' . $hour;
 
                     if (isset($cellMap[$key])) {
                         $cell = $cellMap[$key];

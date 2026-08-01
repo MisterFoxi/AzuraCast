@@ -116,6 +116,7 @@ final class ClockWheelPlaybackPlanner
                 $station,
                 $expectedPlayTime,
                 $secondsIntoHour,
+                $availableSeconds,
             );
         }
 
@@ -566,6 +567,7 @@ final class ClockWheelPlaybackPlanner
         Station $station,
         DateTimeImmutable $expectedPlayTime,
         int $secondsIntoHour,
+        int $availableSeconds,
     ): ?StationQueue {
         $legalIdExpectedAt = $this->resolveTopOfHourExpectedPlayAt($station, $expectedPlayTime);
         $usedSubstitute = false;
@@ -597,7 +599,12 @@ final class ClockWheelPlaybackPlanner
             return null;
         }
 
-        $maxDuration = $this->resolveMaxDuration($slot, max(1, 120));
+        // A mandatory legal ID/promo still must not overrun into the next anchor
+        // slot. Use the real window before the next anchor (with a small floor
+        // so a very tight window doesn't reject every candidate outright); was
+        // previously hardcoded to 120s regardless of actual available time,
+        // which could let a >availableSeconds clip bleed into the next slot.
+        $maxDuration = $this->resolveMaxDuration($slot, max(self::MIN_SHORT_FORM_WINDOW_SECONDS, $availableSeconds));
         $allCandidates = $candidates;
         $candidates = $this->filterByDuration($allCandidates, $maxDuration, $slot, true, false);
 

@@ -237,4 +237,23 @@ final class AiDj implements Stringable, IdentifiableEntityInterface
     {
         return $this->name;
     }
+
+    public function api(): array
+    {
+        return [
+            'id' => $this->id,
+            'name' => $this->name,
+            'is_enabled' => $this->is_enabled,
+            'voice_model_path' => $this->voice_model_path,
+            'shift_intro_template' => $this->shift_intro_template,
+            'shift_outro_template' => $this->shift_outro_template,
+            'talk_frequency' => $this->talk_frequency,
+            'voice_speed' => $this->voice_speed,
+            'use_background_audio' => $this->use_background_audio,
+            'schedules' => array_map(
+                static fn(AiDjSchedule $schedule): array => $schedule->api(),
+                $this->schedules->toArray()
+            ),
+        ];
+    }
 }

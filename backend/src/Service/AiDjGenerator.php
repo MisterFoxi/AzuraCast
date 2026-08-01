@@ -13,7 +13,6 @@ use Doctrine\Common\Collections\Collection;
 use RuntimeException;
 use Symfony\Component\Process\Process;
 use Throwable;
-use App\Service\AiNewsGenerator;
 
 final class AiDjGenerator
 {
@@ -97,11 +96,45 @@ final class AiDjGenerator
         private readonly AiDjContentRepository $contentRepo,
     ) {
     }
+
     /**
-     * Generate TTS audio from text using Piper.
+     * True if the station's AI DJ clip storage is over its quota and generation
+     * should be skipped.
+     */
+    private function isOverDiskQuota(Station $station, bool $logWarning = true): bool
+    {
+        $usedMb = $this->cleanup->checkDiskUsage($station->id);
+        if ($usedMb <= self::DISK_LIMIT_MB) {
+            return false;
+        }
+
+        if ($logWarning) {
+            $this->logger->warning(sprintf(
+                'AI DJ generation skipped: disk usage %dMB exceeds limit of %dMB',
+                $usedMb,
+                self::DISK_LIMIT_MB
+            ));
+        }
+
+        return true;
+    }
+
+    private function getClipDirectory(Station $station): string
+    {
+        return '/var/azuracast/stations/' . $station->id . '/ai_dj';
+    }
+
+    private function buildClipOutputPath(Station $station, string $filenamePrefix): string
+    {
+        return $this->getClipDirectory($station) . '/' . $filenamePrefix . '_' . uniqid() . '.mp3';
+    }
+
+    /**
+     * Generate TTS audio from text using Piper or Kokoro, depending on the voice model.
      *
      * @return string|null MP3 path on success, null on failure/timeout
      */
+
     public function generateAudio(
         string $text,
         ?string $voiceModelPath,
@@ -165,34 +198,7 @@ final class AiDjGenerator
                 return null;
             }
 
-            // Add 2.5s of silence at BOTH ends (regardless of clip length) so the
-            // station's crossfade overlaps silence, not speech. Without leading
-            // silence the previous song's fade-out buried her first words, and
-            // long clips (>6s) previously got no trailing pad, so the next song's
-            // fade-in clipped her last words. This keeps the whole clip audible
-            // and still exceeds the crossfade analysis window (avoids cross() errors).
-            $ffmpeg = new Process([
-                self::FFMPEG_BIN,
-                '-y',
-                '-i', $wavFile,
-                '-af', 'acompressor=threshold=-20dB:ratio=4:attack=5:release=120,loudnorm=I=-12:TP=-1.5:LRA=8,adelay=delays=800:all=1,apad=pad_dur=2.0',
-                '-c:a', 'libmp3lame',
-                '-b:a', '192k',
-                $tmpMp3,
-            ]);
-            $ffmpeg->setTimeout(10);
-            $ffmpeg->run();
-
-            if (!$ffmpeg->isSuccessful()) {
-                $this->logger->warning('FFmpeg conversion failed.');
-                return null;
-            }
-
-            if (!@rename($tmpMp3, $outputPath)) {
-                throw new RuntimeException(sprintf('Failed to move audio to "%s".', $outputPath));
-            }
-
-            return $outputPath;
+            return $this->finalizeAudioClip($wavFile, $tmpMp3, $outputPath, '192k');
         } catch (Throwable $e) {
             $this->logger->error(sprintf('Kokoro AI DJ audio generation failed: %s', $e->getMessage()));
             return null;
@@ -222,7 +228,7 @@ final class AiDjGenerator
             ];
             if ($voiceSpeed !== 1.0) {
                 $piperArgs[] = '--length_scale';
-                $piperArgs[] = (string) (1.0 / $voiceSpeed); // Piper: lower = faster
+                $piperArgs[] = (string) (1.0 / $voiceSpeed); // Piper: lower length_scale = faster speech
             }
             $piper = new Process($piperArgs);
             $piper->setInput($text);
@@ -237,29 +243,7 @@ final class AiDjGenerator
                 return null;
             }
 
-            // Pad to minimum 6s total to exceed station crossfade duration (3s).
-            $ffmpeg = new Process([
-                self::FFMPEG_BIN,
-                '-y',
-                '-i', $wavFile,
-                '-af', 'acompressor=threshold=-20dB:ratio=4:attack=5:release=120,loudnorm=I=-12:TP=-1.5:LRA=8,adelay=delays=800:all=1,apad=pad_dur=2.0',
-                '-c:a', 'libmp3lame',
-                '-b:a', '128k',
-                $tmpMp3,
-            ]);
-            $ffmpeg->setTimeout(10);
-            $ffmpeg->run();
-
-            if (!$ffmpeg->isSuccessful()) {
-                $this->logger->warning('FFmpeg conversion failed.');
-                return null;
-            }
-
-            if (!@rename($tmpMp3, $outputPath)) {
-                throw new RuntimeException(sprintf('Failed to move audio to "%s".', $outputPath));
-            }
-
-            return $outputPath;
+            return $this->finalizeAudioClip($wavFile, $tmpMp3, $outputPath, '128k');
         } catch (Throwable $e) {
             $this->logger->error(sprintf('AI DJ audio generation failed: %s', $e->getMessage()));
             return null;
@@ -267,6 +251,39 @@ final class AiDjGenerator
             @unlink($wavFile);
             @unlink($tmpMp3);
         }
+    }
+
+    /**
+     * Normalize, pad, and encode a raw TTS wav file into the final mp3 clip.
+     *
+     * Silence is added at both ends so the station's crossfade overlaps silence
+     * rather than speech, and loudness is normalized so DJ clips sit at a
+     * consistent volume relative to music. Shared by both TTS engines.
+     */
+    private function finalizeAudioClip(string $wavFile, string $tmpMp3, string $outputPath, string $bitrate): ?string
+    {
+        $ffmpeg = new Process([
+            self::FFMPEG_BIN,
+            '-y',
+            '-i', $wavFile,
+            '-af', 'acompressor=threshold=-20dB:ratio=4:attack=5:release=120,loudnorm=I=-12:TP=-1.5:LRA=8,adelay=delays=800:all=1,apad=pad_dur=2.0',
+            '-c:a', 'libmp3lame',
+            '-b:a', $bitrate,
+            $tmpMp3,
+        ]);
+        $ffmpeg->setTimeout(10);
+        $ffmpeg->run();
+
+        if (!$ffmpeg->isSuccessful()) {
+            $this->logger->warning('FFmpeg conversion failed.');
+            return null;
+        }
+
+        if (!@rename($tmpMp3, $outputPath)) {
+            throw new RuntimeException(sprintf('Failed to move audio to "%s".', $outputPath));
+        }
+
+        return $outputPath;
     }
 
     /**
@@ -280,14 +297,7 @@ final class AiDjGenerator
         ?string $songTitle,
         Station $station
     ): ?string {
-        // Check disk usage before generating
-        $usedMb = $this->cleanup->checkDiskUsage($station->id);
-        if ($usedMb > self::DISK_LIMIT_MB) {
-            $this->logger->warning(sprintf(
-                'AI DJ generation skipped: disk usage %dMB exceeds limit of %dMB',
-                $usedMb,
-                self::DISK_LIMIT_MB
-            ));
+        if ($this->isOverDiskQuota($station)) {
             return null;
         }
 
@@ -312,8 +322,7 @@ final class AiDjGenerator
             ]
         );
 
-        $outputDir = '/var/azuracast/stations/' . $station->id . '/ai_dj';
-        $outputPath = $outputDir . '/song_intro_' . uniqid() . '.mp3';
+        $outputPath = $this->buildClipOutputPath($station, 'song_intro');
 
         return $this->generateAudio($text, $dj->getVoiceModelPath(), $outputPath, $dj->getVoiceSpeed(), $dj->useBackgroundAudio());
     }
@@ -332,15 +341,13 @@ final class AiDjGenerator
         ?string $nextTitle,
         Station $station
     ): ?string {
-        $usedMb = $this->cleanup->checkDiskUsage($station->id);
-        if ($usedMb > self::DISK_LIMIT_MB) {
+        if ($this->isOverDiskQuota($station, logWarning: false)) {
             return null;
         }
 
         $text = $this->buildPostSongText($dj, $prevArtist, $prevTitle, $nextArtist, $nextTitle, $station);
 
-        $outputDir = '/var/azuracast/stations/' . $station->id . '/ai_dj';
-        $outputPath = $outputDir . '/post_song_' . uniqid() . '.mp3';
+        $outputPath = $this->buildClipOutputPath($station, 'post_song');
 
         return $this->generateAudio($text, $dj->getVoiceModelPath(), $outputPath, $dj->getVoiceSpeed(), $dj->useBackgroundAudio());
     }
@@ -394,14 +401,7 @@ final class AiDjGenerator
         AiDj $dj,
         Station $station
     ): ?string {
-        // Check disk usage before generating
-        $usedMb = $this->cleanup->checkDiskUsage($station->id);
-        if ($usedMb > self::DISK_LIMIT_MB) {
-            $this->logger->warning(sprintf(
-                'AI DJ generation skipped: disk usage %dMB exceeds limit of %dMB',
-                $usedMb,
-                self::DISK_LIMIT_MB
-            ));
+        if ($this->isOverDiskQuota($station)) {
             return null;
         }
 
@@ -417,8 +417,7 @@ final class AiDjGenerator
             ]
         );
 
-        $outputDir = '/var/azuracast/stations/' . $station->id . '/ai_dj';
-        $outputPath = $outputDir . '/shift_outro_' . uniqid() . '.mp3';
+        $outputPath = $this->buildClipOutputPath($station, 'shift_outro');
 
         return $this->generateAudio($text, $dj->getVoiceModelPath(), $outputPath, $dj->getVoiceSpeed(), $dj->useBackgroundAudio());
     }
@@ -432,13 +431,7 @@ final class AiDjGenerator
         AiDj $dj,
         Station $station
     ): ?string {
-        $usedMb = $this->cleanup->checkDiskUsage($station->id);
-        if ($usedMb > self::DISK_LIMIT_MB) {
-            $this->logger->warning(sprintf(
-                'AI DJ generation skipped: disk usage %dMB exceeds limit of %dMB',
-                $usedMb,
-                self::DISK_LIMIT_MB
-            ));
+        if ($this->isOverDiskQuota($station)) {
             return null;
         }
 
@@ -454,8 +447,7 @@ final class AiDjGenerator
             ]
         );
 
-        $outputDir = '/var/azuracast/stations/' . $station->id . '/ai_dj';
-        $outputPath = $outputDir . '/shift_intro_' . uniqid() . '.mp3';
+        $outputPath = $this->buildClipOutputPath($station, 'shift_intro');
 
         return $this->generateAudio($text, $dj->getVoiceModelPath(), $outputPath, $dj->getVoiceSpeed(), $dj->useBackgroundAudio());
     }
@@ -470,34 +462,26 @@ final class AiDjGenerator
         AiDjContent $content,
         Station $station
     ): ?string {
-        $usedMb = $this->cleanup->checkDiskUsage($station->id);
-        if ($usedMb > self::DISK_LIMIT_MB) {
-            $this->logger->warning(sprintf(
-                'AI DJ generation skipped: disk usage %dMB exceeds limit of %dMB',
-                $usedMb,
-                self::DISK_LIMIT_MB
-            ));
+        if ($this->isOverDiskQuota($station)) {
             return null;
         }
 
         $text = $this->buildLinerText($dj, $content, $station);
 
-        $outputDir = '/var/azuracast/stations/' . $station->id . '/ai_dj';
-        $outputPath = $outputDir . '/liner_' . uniqid() . '.mp3';
+        $outputPath = $this->buildClipOutputPath($station, 'liner');
 
         return $this->generateAudio($text, $dj->getVoiceModelPath(), $outputPath, $dj->getVoiceSpeed(), $dj->useBackgroundAudio());
     }
 
     /**
-     * Render a "combo break": two already-built text segments joined into ONE
-     * TTS clip. Segment 1 carries the single self-intro; segment 2 is intro-free.
-     * One render, one mp3 (no ffmpeg concat -> no mid-clip dead air). An empty
-     * payload degrades cleanly to a valid single-segment clip.
+     * Render a "combo break": two already-built text segments joined into one TTS
+     * clip. Segment 1 carries the single self-intro; segment 2 is intro-free. One
+     * render, one mp3 (no ffmpeg concat, so no mid-clip dead air). An empty payload
+     * degrades cleanly to a valid single-segment clip.
      */
     public function generateComboBreak(AiDj $dj, string $introText, string $payloadText, Station $station): ?string
     {
-        $usedMb = $this->cleanup->checkDiskUsage($station->id);
-        if ($usedMb > self::DISK_LIMIT_MB) {
+        if ($this->isOverDiskQuota($station, logWarning: false)) {
             return null;
         }
 
@@ -511,8 +495,7 @@ final class AiDjGenerator
             return null;
         }
 
-        $outputDir = '/var/azuracast/stations/' . $station->id . '/ai_dj';
-        $outputPath = $outputDir . '/combo_' . uniqid() . '.mp3';
+        $outputPath = $this->buildClipOutputPath($station, 'combo');
 
         return $this->generateAudio($combined, $dj->getVoiceModelPath(), $outputPath, $dj->getVoiceSpeed(), $dj->useBackgroundAudio());
     }
@@ -528,8 +511,8 @@ final class AiDjGenerator
         $reference = $content->reference;
 
         if (!$includeIntro) {
-            // Intro-free variant for the SECOND segment of a combo break. Payload
-            // only, with a light connector — NO "This is <dj> on <station>" prefix —
+            // Intro-free variant for the second segment of a combo break: payload
+            // only, with a light connector and no "This is <dj> on <station>" prefix,
             // so the DJ never re-introduces herself mid-conversation.
             return match ($content->type) {
                 AiDjContent::TYPE_BIBLE_VERSE => $reference

@@ -36,7 +36,7 @@ final class DmcaComplianceListener implements EventSubscriberInterface
 {
     use LoggerAwareTrait;
 
-    // Default DMCA statutory limits â€” overridden by station settings if configured.
+    // Default DMCA statutory limits — overridden by station settings if configured.
     public const int DEFAULT_WINDOW_MINUTES               = 180;
     public const int DEFAULT_MAX_SONG_PLAYS               = 3;
     public const int DEFAULT_MAX_CONSECUTIVE_SONG_PLAYS   = 2;

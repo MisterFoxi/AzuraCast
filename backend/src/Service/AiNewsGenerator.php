@@ -9,10 +9,6 @@ use App\Entity\Station;
 use App\Podcast\RssAtomFeedItems;
 use DateTimeImmutable;
 use Doctrine\ORM\EntityManagerInterface;
-use DOMDocument;
-use DOMElement;
-use DOMNode;
-use DOMXPath;
 use GuzzleHttp\Client;
 use GuzzleHttp\RequestOptions;
 use Psr\Http\Message\ResponseInterface;
@@ -111,9 +107,6 @@ final class AiNewsGenerator
     ];
     private const int MAX_STORY_COUNT = 25;
     private const int HTTP_TIMEOUT = 30;
-    private const int MAX_HTML_CANDIDATES = 80;
-    private const string RAPTURE_READY_NEWS_URL = 'https://www.raptureready.com/category/rapture-ready-news/';
-    private const string JINA_FETCH_PREFIX = 'https://r.jina.ai/http://';
 
     public function __construct(
         private readonly Client $httpClient,
@@ -124,10 +117,10 @@ final class AiNewsGenerator
     /**
      * Generate an AI news bulletin for a given station.
      *
-     * Validates config (enabled + active-hours), fetches website/feed sources,
-     * extracts headlines, builds a deterministic script, runs local Piper TTS,
-     * converts WAV→MP3 via ffmpeg, writes atomically to the Liquidsoap path,
-     * and persists ai_news_last_generation_status/time/error.
+     * Validates config (enabled + active-hours), fetches headlines from the
+     * configured RSS/Atom feed sources, builds a deterministic script, runs local
+     * Piper TTS, converts WAV→MP3 via ffmpeg, writes atomically to the Liquidsoap
+     * path, and persists ai_news_last_generation_status/time/error.
      *
      * @return bool True if generation succeeded or was intentionally skipped.
      */
@@ -396,22 +389,9 @@ final class AiNewsGenerator
      */
     private function fetchAndParseUrl(string $url, int $maxHeadlines): array
     {
-        $scraperTargetUrl = $this->getWebsiteScraperTargetUrl($url);
-        $requestUrl = $scraperTargetUrl ?? $url;
-        $isSupportedWebsite = null !== $scraperTargetUrl;
-
-        try {
-            $response = $this->fetchUrl($requestUrl);
-            $body = (string) $response->getBody();
-            $contentType = strtolower($response->getHeaderLine('Content-Type'));
-        } catch (Throwable $e) {
-            if ($isSupportedWebsite && $this->shouldUseJinaFallback($requestUrl, $e)) {
-                $body = $this->fetchJinaMirror($requestUrl);
-                $contentType = 'text/markdown';
-            } else {
-                throw $e;
-            }
-        }
+        $response = $this->fetchUrl($url);
+        $body = (string) $response->getBody();
+        $contentType = strtolower($response->getHeaderLine('Content-Type'));
 
         $feedHeadlines = $this->extractFeedHeadlines($body, $maxHeadlines);
         if ([] !== $feedHeadlines) {
@@ -422,10 +402,10 @@ final class AiNewsGenerator
         }
 
         if ($this->isLikelyHtmlDocument($body, $contentType)) {
-            throw new RuntimeException('No website scraper is available for this source URL. Try an RSS/Atom feed instead.');
+            throw new RuntimeException('This source is not an RSS/Atom feed. Only RSS/Atom feed URLs are supported.');
         }
 
-        throw new RuntimeException('No usable headlines could be extracted from the source URL.');
+        throw new RuntimeException('No usable RSS/Atom headlines could be found at this source URL.');
     }
 
     private function fetchUrl(string $url): ResponseInterface
@@ -441,24 +421,6 @@ final class AiNewsGenerator
                 'User-Agent' => 'AzuraCast/1.0 (AI News Generator)',
             ],
         ]);
-    }
-
-    private function shouldUseJinaFallback(string $url, Throwable $e): bool
-    {
-        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
-        if (!str_ends_with($host, 'raptureready.com')) {
-            return false;
-        }
-
-        return str_contains($e->getMessage(), 'Could not resolve host');
-    }
-
-    private function fetchJinaMirror(string $url): string
-    {
-        $jinaUrl = self::JINA_FETCH_PREFIX . $url;
-        $response = $this->fetchUrl($jinaUrl);
-
-        return (string) $response->getBody();
     }
 
     /**
@@ -493,12 +455,6 @@ final class AiNewsGenerator
         return $headlines;
     }
 
-    private function getWebsiteScraperTargetUrl(string $url): ?string
-    {
-        // All URLs pass through - RSS feeds get XML parsing, others get feed parsing fallback
-        return null;
-    }
-
     private function isLikelyHtmlDocument(string $body, string $contentType): bool
     {
         if (str_contains($contentType, 'text/html')) {
@@ -510,220 +466,6 @@ final class AiNewsGenerator
         }
 
         return (bool) preg_match('/<(html|body|article|main)\b/i', $body);
-    }
-
-    /**
-     * Extract article content from a URL (used by HTML scraper, now unused for RSS-only mode).
-     * @deprecated RSS-only mode - this function is no longer called
-     */
-    private function extractArticleContentByUrl(string $articleUrl): string
-    {
-        // Dead code - RSS feeds don't need article content extraction
-        return '';
-    }
-
-    /**
-     * @param list<string> $candidateQueries
-     * @param callable(string): bool $hrefFilter
-     * @return list<array{title: string, description: string}>
-     */
-    private function extractHeadlinesFromHtml(
-        string $body,
-        array $candidateQueries,
-        int $maxHeadlines,
-        callable $hrefFilter,
-        string $fallbackDomain
-    ): array {
-        if (!preg_match('/<(html|body|article|main|h1|h2|h3|a)\b/i', $body)) {
-            return [];
-        }
-
-        $previousUseInternalErrors = libxml_use_internal_errors(true);
-        $dom = new DOMDocument('1.0', 'UTF-8');
-        $loaded = $dom->loadHTML('<?xml encoding="utf-8" ?>' . $body, LIBXML_NOWARNING | LIBXML_NOERROR);
-        libxml_clear_errors();
-        libxml_use_internal_errors($previousUseInternalErrors);
-
-        if (!$loaded) {
-            return [];
-        }
-
-        $xpath = new DOMXPath($dom);
-        $headlines = [];
-        $seenTitles = [];
-
-        foreach ($candidateQueries as $query) {
-            $candidates = $xpath->query($query);
-            if (false === $candidates) {
-                continue;
-            }
-
-            foreach ($candidates as $candidate) {
-                if (!$candidate instanceof DOMElement) {
-                    continue;
-                }
-
-                $headline = $this->buildHeadlineFromWebsiteNode($candidate, $xpath, $hrefFilter, $fallbackDomain);
-                if (null === $headline) {
-                    continue;
-                }
-
-                $dedupeKey = mb_strtolower($headline['title']);
-                if (isset($seenTitles[$dedupeKey])) {
-                    continue;
-                }
-
-                $seenTitles[$dedupeKey] = true;
-                $headlines[] = $headline;
-
-                if (count($headlines) >= $maxHeadlines || count($seenTitles) >= self::MAX_HTML_CANDIDATES) {
-                    return $headlines;
-                }
-            }
-        }
-
-        return $headlines;
-    }
-
-    /**
-     * @param callable(string): bool $hrefFilter
-     * @return array{title: string, description: string}|null
-     */
-    private function buildHeadlineFromWebsiteNode(
-        DOMElement $node,
-        DOMXPath $xpath,
-        callable $hrefFilter,
-        string $fallbackDomain
-    ): ?array {
-        $titleNode = $this->resolveHeadlineTitleNode($node, $xpath);
-        if (null === $titleNode) {
-            return null;
-        }
-
-        $href = $titleNode instanceof DOMElement ? (string) $titleNode->getAttribute('href') : '';
-        if ('' === $href) {
-            $linkNode = $xpath->query('.//a[@href][normalize-space()]', $node)?->item(0);
-            if ($linkNode instanceof DOMElement) {
-                $href = (string) $linkNode->getAttribute('href');
-            }
-        }
-
-        if ('' !== $href && !$hrefFilter($href)) {
-            return null;
-        }
-
-        $title = $this->normalizeHtmlText($titleNode->textContent ?? '');
-        if (!$this->isUsableHeadline($title)) {
-            return null;
-        }
-
-        $summary = '';
-        $summaryNode = $xpath->query('.//p[normalize-space()]', $node)?->item(0);
-        if ($summaryNode instanceof DOMNode) {
-            $summary = $this->normalizeHtmlText($summaryNode->textContent ?? '');
-        }
-
-        $shouldFetchArticleContent = '' !== $href
-            && ($summary === '' || !$this->isUsableSummary($summary) || $summary === $title);
-
-        if ($shouldFetchArticleContent) {
-            $summary = $this->extractArticleContentByUrl($href);
-        }
-
-        if ($summary !== '' && (!$this->isUsableSummary($summary) || $summary === $title)) {
-            $summary = '';
-        }
-
-        return [
-            'title' => $title,
-            'description' => $summary,
-        ];
-    }
-
-    private function resolveHeadlineTitleNode(DOMElement $node, DOMXPath $xpath): ?DOMNode
-    {
-        if (in_array(strtolower($node->tagName), ['h1', 'h2', 'h3', 'a'], true)) {
-            return $node;
-        }
-
-        $headlineNode = $xpath->query('.//*[self::h1 or self::h2 or self::h3][normalize-space()]', $node)?->item(0);
-        if ($headlineNode instanceof DOMNode) {
-            return $headlineNode;
-        }
-
-        $linkNode = $xpath->query('.//a[normalize-space()]', $node)?->item(0);
-        return $linkNode instanceof DOMNode ? $linkNode : null;
-    }
-
-    private function normalizeHtmlText(string $text): string
-    {
-        $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-        // Strip or replace any bytes that are not valid UTF-8 (e.g. Windows-1252
-        // smart quotes / em-dashes scraped via DOMDocument::loadHTML).
-        $text = mb_convert_encoding($text, 'UTF-8', 'UTF-8');
-        // Remove Unicode replacement characters that DOMDocument inserts for
-        // unrecognised bytes — these corrupt regex patterns downstream.
-        $text = str_replace("\u{FFFD}", '', $text);
-        $text = preg_replace('/\s+/u', ' ', trim($text)) ?? trim($text);
-
-        return $this->stripNewsLeadIn($text);
-    }
-
-    private function stripNewsLeadIn(string $text): string
-    {
-        $patterns = [
-            '/^by\s+emmitt\s+barry,\s+worthy\s+news\s+washington\s+d\.c\.\s+bureau\s+chief\s*/iu',
-            '/^\(Worthy News\)\s*[–—-]\s*/u',
-            '/^[A-Z][A-Z\s.()\-]+\(Worthy News\)\s+[–—-]\s+/u',
-        ];
-
-        foreach ($patterns as $pattern) {
-            $text = preg_replace($pattern, '', $text, 1) ?? $text;
-        }
-
-        return trim($text, " \t\n\r\0\x0B-–—");
-    }
-
-    private function isUsableHeadline(string $title): bool
-    {
-        if ('' === $title) {
-            return false;
-        }
-
-        if (mb_strlen($title) < 12 || mb_strlen($title) > 220) {
-            return false;
-        }
-
-        $lowerTitle = mb_strtolower($title);
-        $blockedFragments = ['subscribe', 'newsletter', 'cookie', 'privacy policy', 'sign in', 'all rights reserved'];
-        foreach ($blockedFragments as $blockedFragment) {
-            if (str_contains($lowerTitle, $blockedFragment)) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private function isUsableSummary(string $summary): bool
-    {
-        if ('' === $summary) {
-            return false;
-        }
-
-        if (mb_strlen($summary) < 40) {
-            return false;
-        }
-
-        $lowerSummary = mb_strtolower($summary);
-        $blockedFragments = ['read more', 'click here', 'continue reading', 'headline scraped from'];
-        foreach ($blockedFragments as $blockedFragment) {
-            if (str_contains($lowerSummary, $blockedFragment)) {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     private function extractTextField(SimpleXMLElement $item, string $field): string
