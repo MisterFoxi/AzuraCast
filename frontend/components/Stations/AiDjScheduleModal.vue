@@ -163,7 +163,7 @@
                                     @change="toggleDay(idx + 1)"
                                 >
                                 <label
-                                    class="btn btn-outline-secondary btn-sm"
+                                    class="btn btn-outline-primary btn-sm"
                                     :for="`sched_day_${activeDjId}_${idx}`"
                                 >
                                     {{ dayLabel }}

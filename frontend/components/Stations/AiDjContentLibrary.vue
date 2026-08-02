@@ -1,51 +1,121 @@
 <template>
     <div>
-        <div class="mb-3">
-            <h3 class="h6 mb-1">
-                {{ $gettext('Content Library') }}
-            </h3>
-            <p class="text-muted small mb-0">
-                {{ $gettext('Manage reusable content for your AI DJ personalities') }}
-            </p>
-        </div>
+        <p class="text-muted small mb-3">
+            {{ $gettext('Manage reusable content for your AI DJ personalities.') }}
+        </p>
 
-        <ul class="nav nav-pills flex-wrap gap-1 mb-3">
-            <li
-                v-for="tab in tabs"
-                :key="tab.type"
-                class="nav-item"
-            >
-                <button
-                    type="button"
-                    class="nav-link d-inline-flex align-items-center gap-1"
-                    :class="{active: activeTab === tab.type}"
-                    @click="setTab(tab.type)"
+        <div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mb-3">
+            <ul class="nav nav-pills flex-wrap gap-1 mb-0">
+                <li
+                    v-for="tab in tabs"
+                    :key="tab.type"
+                    class="nav-item"
                 >
-                    {{ tab.label }}
-                    <span
-                        v-if="countByType(tab.type) > 0"
-                        class="badge text-bg-secondary"
-                    >{{ countByType(tab.type) }}</span>
-                    <icon-ic-baseline-close
-                        v-if="!tab.is_required"
-                        class="content-library-tab-remove"
-                        :title="$gettext('Delete category')"
-                        @click.stop="deleteCategory(tab)"
-                    />
-                </button>
-            </li>
-            <li class="nav-item">
+                    <button
+                        type="button"
+                        class="nav-link d-inline-flex align-items-center gap-1"
+                        :class="{active: activeTab === tab.type}"
+                        @click="setTab(tab.type)"
+                    >
+                        {{ tab.label }}
+                        <span
+                            v-if="countByType(tab.type) > 0"
+                            class="badge text-bg-secondary"
+                        >{{ countByType(tab.type) }}</span>
+                    </button>
+                </li>
+            </ul>
+
+            <div class="d-flex gap-2 flex-shrink-0">
                 <button
                     v-if="!showNewCategoryInput"
                     type="button"
-                    class="nav-link d-inline-flex align-items-center gap-1"
+                    class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1"
                     @click="showNewCategoryInput = true"
                 >
                     <icon-ic-baseline-add />
                     {{ $gettext('New Category') }}
                 </button>
-            </li>
-        </ul>
+                <button
+                    type="button"
+                    class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1"
+                    @click="manageCategoriesOpen = !manageCategoriesOpen"
+                >
+                    <icon-ic-baseline-settings />
+                    {{ $gettext('Manage Categories') }}
+                </button>
+            </div>
+        </div>
+
+        <div
+            v-if="manageCategoriesOpen"
+            class="card card-body bg-body-tertiary mb-3"
+        >
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <h4 class="h6 mb-0">
+                    {{ $gettext('Manage Categories') }}
+                </h4>
+                <button
+                    type="button"
+                    class="btn-close"
+                    :aria-label="$gettext('Close')"
+                    @click="manageCategoriesOpen = false"
+                />
+            </div>
+            <p class="text-muted small mb-3">
+                {{ $gettext("Song Intros and Post-Song are required by the AI DJ engine and can't be removed, but you can still clear their content. Other categories can be deleted entirely.") }}
+            </p>
+            <ul class="list-group">
+                <li
+                    v-for="tab in tabs"
+                    :key="tab.type"
+                    class="list-group-item d-flex align-items-center justify-content-between gap-2"
+                >
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="fw-semibold">{{ tab.label }}</span>
+                        <span class="badge text-bg-secondary">
+                            {{ $gettext('%{count} items', {count: countByType(tab.type)}) }}
+                        </span>
+                    </div>
+
+                    <span
+                        v-if="tab.is_required"
+                        class="badge text-bg-secondary d-inline-flex align-items-center gap-1"
+                    >
+                        <icon-ic-baseline-lock />
+                        {{ $gettext('System') }}
+                    </span>
+                    <button
+                        v-else-if="categoryDeleteTarget?.type !== tab.type"
+                        type="button"
+                        class="btn btn-sm btn-outline-danger d-inline-flex align-items-center gap-1"
+                        @click="categoryDeleteTarget = tab"
+                    >
+                        <icon-ic-baseline-delete />
+                        {{ $gettext('Delete') }}
+                    </button>
+                    <div
+                        v-else
+                        class="d-flex gap-1"
+                    >
+                        <button
+                            type="button"
+                            class="btn btn-sm btn-danger"
+                            @click="deleteCategory(tab)"
+                        >
+                            {{ $gettext('Confirm') }}
+                        </button>
+                        <button
+                            type="button"
+                            class="btn btn-sm btn-secondary"
+                            @click="categoryDeleteTarget = null"
+                        >
+                            {{ $gettext('Cancel') }}
+                        </button>
+                    </div>
+                </li>
+            </ul>
+        </div>
 
         <div
             v-if="showNewCategoryInput"
@@ -78,6 +148,7 @@
         </div>
 
         <loading
+            v-if="!manageCategoriesOpen"
             :loading="isLoading"
             lazy
         >
@@ -500,6 +571,8 @@ const loadTypes = async (): Promise<void> => {
 
 const showNewCategoryInput = ref(false);
 const newCategoryName = ref('');
+const manageCategoriesOpen = ref(false);
+const categoryDeleteTarget = ref<ContentTab | null>(null);
 
 const nameToSlug = (name: string): string => {
     return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
@@ -804,7 +877,6 @@ const deleteAllInCategory = async (): Promise<void> => {
 
 const deleteCategory = async (tab: ContentTab): Promise<void> => {
     if (tab.is_required) return;
-    if (!confirm($gettext('Delete the "%{label}" category and all its content?', {label: tab.label}))) return;
 
     try {
         await axios.post(deleteByTypeUrl.value, {type: tab.type, remove_category: true});
@@ -813,6 +885,7 @@ const deleteCategory = async (tab: ContentTab): Promise<void> => {
         if (activeTab.value === tab.type) {
             setTab(tabs.value[0]?.type ?? 'song_intro_template');
         }
+        categoryDeleteTarget.value = null;
         await loadItems();
     } catch {
         notifyError($gettext('Failed to delete category.'));
@@ -858,12 +931,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.content-library-tab-remove {
-    opacity: 0.6;
-    cursor: pointer;
-}
-
-.content-library-tab-remove:hover {
-    opacity: 1;
+.list-group-item .btn-outline-danger:hover {
+    color: var(--bs-white);
 }
 </style>

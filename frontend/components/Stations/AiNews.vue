@@ -1,5 +1,8 @@
 <template>
-    <form @submit.prevent="saveChanges">
+    <form
+        class="form"
+        @submit.prevent="saveChanges"
+    >
         <section
             class="card"
             role="region"
@@ -9,15 +12,30 @@
                 <div class="d-flex align-items-center flex-wrap gap-2">
                     <h2
                         id="hdr_ai_news"
-                        class="card-title flex-fill my-0"
+                        class="card-title flex-fill my-0 d-flex align-items-center gap-2"
                     >
+                        <icon-ic-baseline-campaign />
                         {{ $gettext('AI News Bulletin') }}
                     </h2>
                     <span
-                        class="badge"
-                        :class="form.ai_news_enabled ? 'text-bg-success' : 'text-bg-secondary'"
+                        v-if="form.ai_news_enabled"
+                        class="ai-news-live-badge"
                     >
-                        {{ liveBadgeText }}
+                        <span
+                            class="ai-news-live-dot"
+                            aria-hidden="true"
+                        />
+                        {{ $gettext('Streaming Live') }}
+                    </span>
+                    <span
+                        v-else
+                        class="ai-news-disabled-badge"
+                    >
+                        <span
+                            class="ai-news-disabled-dot"
+                            aria-hidden="true"
+                        />
+                        {{ $gettext('Bulletin Disabled') }}
                     </span>
                 </div>
             </div>
@@ -27,13 +45,13 @@
                 lazy
             >
                 <div class="card-body">
-                    <div class="alert alert-info small">
+                    <div class="alert alert-info small mb-4">
                         <p class="mb-0">
                             {{ $gettext('Active hours format: start and end times use 12-hour text like 01:00 AM. Leave both blank to run all day. Source URLs should be one per line, and each must be a valid RSS or Atom feed URL.') }}
                         </p>
                     </div>
 
-                    <h3 class="text-muted text-uppercase small fw-bold mb-2">
+                    <h3 class="text-muted text-uppercase small fw-bold mb-3">
                         {{ $gettext('System Status') }}
                     </h3>
                     <div class="row row-cols-2 row-cols-md-3 g-2 mb-4">
@@ -63,98 +81,124 @@
                         </div>
                     </div>
 
-                    <div class="row g-3">
-                        <div class="col-lg-6 d-flex flex-column gap-3">
-                            <div class="card card-body">
-                                <h3 class="text-muted text-uppercase small fw-bold mb-3">
-                                    {{ $gettext('Generate Bulletin') }}
-                                </h3>
+                    <div class="row g-4 align-items-start">
+                        <div class="col-lg-6 d-flex flex-column gap-4">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h3 class="text-muted text-uppercase small fw-bold mb-3">
+                                        {{ $gettext('Generate Bulletin') }}
+                                    </h3>
 
-                                <div class="text-center py-2">
-                                    <button
-                                        type="button"
-                                        class="btn btn-primary btn-lg"
-                                        :disabled="isGenerateDisabled"
-                                        @click="runTest"
-                                    >
-                                        <span
-                                            v-if="isTesting"
-                                            class="spinner-border spinner-border-sm"
-                                            role="status"
-                                            aria-hidden="true"
-                                        />
-                                        <icon-ic-baseline-play-arrow v-else-if="form.ai_news_enabled" />
-                                        <icon-ic-baseline-stop v-else />
-                                        {{ generateButtonText }}
-                                    </button>
-                                    <div
-                                        v-if="generateHelpText"
-                                        class="text-danger small mt-2"
-                                    >
-                                        {{ generateHelpText }}
-                                    </div>
-                                </div>
-
-                                <div class="card card-body bg-body-tertiary mt-3">
-                                    <div class="text-muted small mb-2">
-                                        {{ $gettext('Latest Bulletin') }}
-                                    </div>
-                                    <div class="small">
-                                        {{ latestBulletinText }}
-                                    </div>
-                                    <audio
-                                        v-if="audioAvailable && bulletinPlaybackUrl"
-                                        :key="bulletinPlaybackUrl"
-                                        class="w-100 mt-2"
-                                        controls
-                                        preload="metadata"
-                                        :src="bulletinPlaybackUrl"
-                                    />
-                                    <div
-                                        v-if="audioAvailable && bulletinPlaybackUrl"
-                                        class="d-flex flex-wrap gap-2 mt-2"
-                                    >
-                                        <a
-                                            :href="bulletinPlaybackUrl"
-                                            class="btn btn-secondary btn-sm"
-                                            target="_blank"
-                                            rel="noopener noreferrer"
+                                    <div class="text-center py-2">
+                                        <button
+                                            type="button"
+                                            class="btn btn-primary btn-lg"
+                                            :disabled="isGenerateDisabled"
+                                            @click="runTest"
                                         >
-                                            {{ $gettext('Open Audio') }}
-                                        </a>
-                                        <a
-                                            :href="bulletinPlaybackUrl"
-                                            class="btn btn-secondary btn-sm"
-                                            download="news_bulletin.mp3"
-                                        >
-                                            {{ $gettext('Download MP3') }}
-                                        </a>
-                                    </div>
-                                    <div class="d-flex flex-wrap gap-3 text-muted small mt-2">
-                                        <div>{{ metaStoriesText }}</div>
-                                        <div>{{ metaSourcesText }}</div>
-                                        <div>{{ metaTimeText }}</div>
-                                    </div>
-                                </div>
-
-                                <div class="mt-3">
-                                    <div class="text-muted text-uppercase small fw-bold mb-2">
-                                        {{ $gettext('Generation Log') }}
-                                    </div>
-                                    <div class="card card-body bg-body-tertiary log-panel">
+                                            <span
+                                                v-if="isTesting"
+                                                class="spinner-border spinner-border-sm"
+                                                role="status"
+                                                aria-hidden="true"
+                                            />
+                                            <icon-ic-baseline-play-arrow v-else-if="form.ai_news_enabled" />
+                                            <icon-ic-baseline-stop v-else />
+                                            {{ generateButtonText }}
+                                        </button>
                                         <div
-                                            v-for="entry in logEntries"
-                                            :key="entry.id"
-                                            class="small font-monospace"
-                                            :class="entry.tone"
+                                            v-if="generateHelpText"
+                                            class="text-danger small mt-2"
                                         >
-                                            [{{ entry.time }}] {{ entry.message }}
+                                            {{ generateHelpText }}
+                                        </div>
+                                    </div>
+
+                                    <div class="ai-news-summary-box mt-3">
+                                        <div class="text-muted small mb-2">
+                                            {{ $gettext('Latest Bulletin') }}
+                                        </div>
+
+                                        <div
+                                            v-if="audioAvailable && bulletinPlaybackUrl"
+                                            class="ai-news-status-callout ai-news-status-success small"
+                                        >
+                                            <icon-ic-baseline-check />
+                                            <span>{{ latestBulletinText }}</span>
+                                        </div>
+                                        <div
+                                            v-else-if="lastStatus === 'error'"
+                                            class="ai-news-status-callout ai-news-status-danger small"
+                                        >
+                                            <icon-ic-baseline-warning />
+                                            <span>{{ latestBulletinText }}</span>
+                                        </div>
+                                        <div
+                                            v-else
+                                            class="small text-muted"
+                                        >
+                                            {{ latestBulletinText }}
+                                        </div>
+
+                                        <div
+                                            v-if="audioAvailable && bulletinPlaybackUrl"
+                                            class="ai-news-player mt-3"
+                                        >
+                                            <audio
+                                                :key="bulletinPlaybackUrl"
+                                                class="w-100"
+                                                controls
+                                                preload="metadata"
+                                                :src="bulletinPlaybackUrl"
+                                            />
+                                            <div class="d-flex flex-wrap gap-2 mt-3">
+                                                <a
+                                                    :href="bulletinPlaybackUrl"
+                                                    class="btn btn-secondary btn-sm d-inline-flex align-items-center gap-1"
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                >
+                                                    <icon-ic-baseline-open-in-new />
+                                                    {{ $gettext('Open Audio') }}
+                                                </a>
+                                                <a
+                                                    :href="bulletinPlaybackUrl"
+                                                    class="btn btn-secondary btn-sm d-inline-flex align-items-center gap-1"
+                                                    download="news_bulletin.mp3"
+                                                >
+                                                    <icon-ic-baseline-cloud-download />
+                                                    {{ $gettext('Download MP3') }}
+                                                </a>
+                                            </div>
+                                        </div>
+
+                                        <div class="d-flex flex-wrap gap-3 text-muted small mt-3 pt-3 border-top">
+                                            <div>{{ metaStoriesText }}</div>
+                                            <div>{{ metaSourcesText }}</div>
+                                            <div>{{ metaTimeText }}</div>
+                                        </div>
+                                    </div>
+
+                                    <div class="mt-3">
+                                        <div class="text-muted text-uppercase small fw-bold mb-2">
+                                            {{ $gettext('Generation Log') }}
+                                        </div>
+                                        <div class="ai-news-summary-box log-panel">
+                                            <div
+                                                v-for="entry in logEntries"
+                                                :key="entry.id"
+                                                class="small font-monospace"
+                                                :class="entry.tone"
+                                            >
+                                                [{{ entry.time }}] {{ entry.message }}
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
                             </div>
 
-                            <div class="card card-body">
+                            <div class="card">
+                                <div class="card-body">
                                 <div class="d-flex align-items-center justify-content-between mb-3">
                                     <h3 class="text-muted text-uppercase small fw-bold mb-0">
                                         {{ $gettext('Live Headlines Preview') }}
@@ -191,29 +235,33 @@
                                         </div>
                                     </li>
                                 </ul>
+                                </div>
                             </div>
                         </div>
 
                         <div class="col-lg-6">
-                            <div class="card card-body">
+                            <div class="card">
+                                <div class="card-body">
                                 <h3 class="text-muted text-uppercase small fw-bold mb-3">
                                     {{ $gettext('Settings') }}
                                 </h3>
 
-                                <div class="form-check form-switch mb-3">
-                                    <input
-                                        id="ai_news_enabled"
-                                        v-model="form.ai_news_enabled"
-                                        class="form-check-input"
-                                        type="checkbox"
-                                        role="switch"
-                                    >
-                                    <label
-                                        class="form-check-label fw-semibold"
-                                        for="ai_news_enabled"
-                                    >
-                                        {{ $gettext('Bulletin Enabled') }}
-                                    </label>
+                                <div class="mb-4">
+                                    <div class="form-check form-switch">
+                                        <input
+                                            id="ai_news_enabled"
+                                            v-model="form.ai_news_enabled"
+                                            class="form-check-input"
+                                            type="checkbox"
+                                            role="switch"
+                                        >
+                                        <label
+                                            class="form-check-label fw-semibold"
+                                            for="ai_news_enabled"
+                                        >
+                                            {{ $gettext('Bulletin Enabled') }}
+                                        </label>
+                                    </div>
                                     <div class="form-text">
                                         {{ enabledDescription }}
                                     </div>
@@ -222,7 +270,9 @@
                                 <form-group-field
                                     id="edit_ai_news_reporter_name"
                                     :field="r$.ai_news_reporter_name"
-                                >
+                                
+                                    class="mb-4"
+>
                                     <template #label>
                                         {{ $gettext('AI Reporter Name') }}
                                     </template>
@@ -243,7 +293,9 @@
                                 <form-group-field
                                     id="edit_ai_news_intro"
                                     :field="r$.ai_news_intro"
-                                >
+                                
+                                    class="mb-4"
+>
                                     <template #label>
                                         {{ $gettext('Intro Script') }}
                                         <span class="text-muted fw-normal">{{ $gettext('(read at start of every bulletin)') }}</span>
@@ -261,7 +313,9 @@
                                 <form-group-field
                                     id="edit_ai_news_outro"
                                     :field="r$.ai_news_outro"
-                                >
+                                
+                                    class="mb-4"
+>
                                     <template #label>
                                         {{ $gettext('Outro Script') }}
                                         <span class="text-muted fw-normal">{{ $gettext('(read at end of every bulletin)') }}</span>
@@ -279,7 +333,9 @@
                                 <form-group-field
                                     id="edit_ai_news_voice_model_path"
                                     :field="r$.ai_news_voice_model_path"
-                                >
+                                
+                                    class="mb-4"
+>
                                     <template #label>
                                         {{ $gettext('AI Voice') }}
                                     </template>
@@ -297,7 +353,9 @@
                                 <form-group-field
                                     id="edit_ai_news_story_count"
                                     :field="r$.ai_news_story_count"
-                                >
+                                
+                                    class="mb-4"
+>
                                     <template #label>
                                         {{ $gettext('Stories Per Bulletin') }}
                                     </template>
@@ -316,7 +374,7 @@
                                     </template>
                                 </form-group-field>
 
-                                <div class="mb-3">
+                                <div class="mb-4">
                                     <label class="form-label">{{ $gettext('Broadcast Window') }}</label>
                                     <div class="row g-2">
                                         <div class="col-sm-6">
@@ -420,6 +478,7 @@
                                 <form-group-field
                                     id="edit_ai_news_source_urls"
                                     :field="r$.ai_news_source_urls"
+                                    class="mb-4"
                                 >
                                     <template #label>
                                         {{ $gettext('RSS/Atom Feed Sources') }}
@@ -491,6 +550,7 @@
                                     class="text-success small mt-2"
                                 >
                                     {{ saveStatusText }}
+                                </div>
                                 </div>
                             </div>
                         </div>
@@ -902,12 +962,6 @@ const activeDayLabels = computed(() => {
         .filter((option) => days.includes(option.value))
         .map((option) => option.text)
         .join(', ');
-});
-
-const liveBadgeText = computed(() => {
-    return form.value.ai_news_enabled
-        ? $gettext('Enabled')
-        : $gettext('Disabled');
 });
 
 const enabledDescription = computed(() => {
@@ -1357,5 +1411,130 @@ const refreshHeadlinePreview = () => {
 .headline-list {
     max-height: 26rem;
     overflow-y: auto;
+}
+
+.ai-news-summary-box {
+    padding: 1rem;
+    border-radius: var(--bs-border-radius);
+    background-color: var(--bs-tertiary-bg);
+    border: 1px solid var(--bs-border-color);
+}
+
+.ai-news-status-callout {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.65rem 0.85rem;
+    border-radius: var(--bs-border-radius);
+    border: 1px solid transparent;
+}
+
+.ai-news-status-success {
+    background-color: rgba(var(--bs-success-rgb), 0.12);
+    border-color: rgba(var(--bs-success-rgb), 0.35);
+    color: var(--bs-success);
+}
+
+.ai-news-status-danger {
+    background-color: rgba(var(--bs-danger-rgb), 0.12);
+    border-color: rgba(var(--bs-danger-rgb), 0.35);
+    color: var(--bs-danger);
+}
+
+.ai-news-player {
+    padding: 0.85rem 1rem;
+    border-radius: var(--bs-border-radius);
+    background-color: var(--bs-body-bg);
+    border: 1px solid var(--bs-border-color);
+}
+
+.ai-news-disabled-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.25rem 0.7rem;
+    border-radius: 50rem;
+    background-color: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(220, 53, 69, 0.55);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.ai-news-disabled-dot {
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background-color: var(--bs-danger);
+}
+
+.ai-news-live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.25rem 0.7rem;
+    border-radius: 50rem;
+    background-color: rgba(255, 255, 255, 0.18);
+    color: #fff;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.ai-news-live-dot {
+    position: relative;
+    display: inline-block;
+    width: 0.55rem;
+    height: 0.55rem;
+}
+
+.ai-news-live-dot::before,
+.ai-news-live-dot::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background-color: #fff;
+}
+
+.ai-news-live-dot::before {
+    z-index: 1;
+    animation: ai-news-live-glow 1.3s ease-in-out infinite;
+}
+
+.ai-news-live-dot::after {
+    z-index: 0;
+    animation: ai-news-live-ping 1.3s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ai-news-live-dot::before,
+    .ai-news-live-dot::after {
+        animation: none;
+    }
+}
+
+@keyframes ai-news-live-glow {
+    0%, 100% {
+        transform: scale(1);
+        box-shadow: 0 0 0.35rem 0.05rem rgba(255, 255, 255, 0.9);
+    }
+    50% {
+        transform: scale(1.25);
+        box-shadow: 0 0 0.6rem 0.15rem rgba(255, 255, 255, 1);
+    }
+}
+
+@keyframes ai-news-live-ping {
+    0% {
+        transform: scale(1);
+        opacity: 0.7;
+    }
+    75%, 100% {
+        transform: scale(2.6);
+        opacity: 0;
+    }
 }
 </style>

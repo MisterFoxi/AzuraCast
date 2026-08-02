@@ -9,8 +9,9 @@
                 <div class="d-flex align-items-center">
                     <h2
                         id="hdr_ai_dj"
-                        class="card-title flex-fill my-0"
+                        class="card-title flex-fill my-0 d-flex align-items-center gap-2"
                     >
+                        <icon-ic-baseline-mic />
                         {{ $gettext('AI DJ') }}
                     </h2>
                 </div>
@@ -63,7 +64,7 @@
                                     </th>
                                     <th
                                         scope="col"
-                                        class="text-end"
+                                        class="shrink"
                                     >
                                         {{ $gettext('Actions') }}
                                     </th>
@@ -73,14 +74,19 @@
                                 <tr
                                     v-for="dj in djs"
                                     :key="dj.id"
+                                    class="ai-dj-personality-row"
                                 >
                                     <td class="fw-semibold">
                                         {{ dj.name }}
                                         <span
                                             v-if="activeDjId === dj.id"
-                                            class="badge text-bg-success ms-1"
+                                            class="ai-dj-live-badge ms-1"
                                         >
-                                            {{ $gettext('Live') }}
+                                            <span
+                                                class="ai-dj-live-dot"
+                                                aria-hidden="true"
+                                            />
+                                            {{ $gettext('LIVE') }}
                                         </span>
                                     </td>
                                     <td>
@@ -115,43 +121,49 @@
                                             class="text-muted"
                                         >{{ $gettext('No schedule') }}</span>
                                     </td>
-                                    <td class="text-end text-nowrap">
-                                        <button
-                                            type="button"
-                                            class="btn btn-secondary btn-sm me-1"
-                                            :disabled="isTesting === dj.id"
-                                            @click="runTest(dj)"
+                                    <td class="shrink">
+                                        <div
+                                            class="btn-group btn-group-sm"
+                                            role="group"
+                                            :aria-label="$gettext('DJ Actions')"
                                         >
-                                            <span
-                                                v-if="isTesting === dj.id"
-                                                class="spinner-border spinner-border-sm"
-                                                role="status"
-                                                aria-hidden="true"
-                                            />
-                                            <icon-ic-baseline-play-arrow v-else />
-                                            {{ $gettext('Test') }}
-                                        </button>
-                                        <button
-                                            type="button"
-                                            class="btn btn-secondary btn-sm me-1"
-                                            @click="openEdit(dj)"
-                                        >
-                                            {{ $gettext('Edit') }}
-                                        </button>
-                                        <button
-                                            type="button"
-                                            class="btn btn-info btn-sm me-1"
-                                            @click="openSchedules(dj)"
-                                        >
-                                            {{ $gettext('Schedules') }}
-                                        </button>
-                                        <button
-                                            type="button"
-                                            class="btn btn-danger btn-sm"
-                                            @click="confirmDelete(dj)"
-                                        >
-                                            {{ $gettext('Delete') }}
-                                        </button>
+                                            <button
+                                                type="button"
+                                                class="btn btn-secondary"
+                                                :disabled="isTesting === dj.id"
+                                                @click="runTest(dj)"
+                                            >
+                                                <span
+                                                    v-if="isTesting === dj.id"
+                                                    class="spinner-border spinner-border-sm"
+                                                    role="status"
+                                                    aria-hidden="true"
+                                                />
+                                                <icon-ic-baseline-play-arrow v-else />
+                                                {{ $gettext('Test') }}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="btn btn-secondary"
+                                                @click="openEdit(dj)"
+                                            >
+                                                {{ $gettext('Edit') }}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="btn btn-info"
+                                                @click="openSchedules(dj)"
+                                            >
+                                                {{ $gettext('Schedules') }}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="btn btn-danger"
+                                                @click="confirmDelete(dj)"
+                                            >
+                                                {{ $gettext('Delete') }}
+                                            </button>
+                                        </div>
                                     </td>
                                 </tr>
                             </tbody>
@@ -167,6 +179,10 @@
                         </h3>
 
                         <form @submit.prevent="saveForm">
+                            <h4 class="ai-dj-form-section">
+                                {{ $gettext('Basic Info') }}
+                            </h4>
+
                             <form-group-field
                                 id="dj_name"
                                 :field="v$.name"
@@ -223,6 +239,10 @@
                                     {{ $gettext('Allow this DJ to be scheduled and inject intros.') }}
                                 </div>
                             </div>
+
+                            <h4 class="ai-dj-form-section">
+                                {{ $gettext('Voice & Delivery') }}
+                            </h4>
 
                             <div class="mb-3">
                                 <label
@@ -286,6 +306,10 @@
                                     {{ $gettext('Adds a soft ambient music bed underneath DJ voice clips. Great for overnight shifts.') }}
                                 </div>
                             </div>
+
+                            <h4 class="ai-dj-form-section">
+                                {{ $gettext('Shift Announcements') }}
+                            </h4>
 
                             <form-group-field
                                 id="dj_shift_intro_template"
@@ -387,6 +411,18 @@
             role="region"
             aria-labelledby="hdr_content_library"
         >
+            <div class="card-header text-bg-primary">
+                <div class="d-flex align-items-center">
+                    <h2
+                        id="hdr_content_library"
+                        class="card-title flex-fill my-0 d-flex align-items-center gap-2"
+                    >
+                        <icon-ic-baseline-library-music />
+                        {{ $gettext('Content Library') }}
+                    </h2>
+                </div>
+            </div>
+
             <div class="card-body">
                 <ai-dj-content-library />
             </div>
@@ -688,3 +724,99 @@ onUnmounted(() => {
     if (liveRefreshTimer) clearInterval(liveRefreshTimer);
 });
 </script>
+
+<style scoped>
+.ai-dj-live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.15rem 0.6rem;
+    border-radius: 50rem;
+    background-color: rgba(var(--bs-success-rgb), 0.15);
+    color: var(--bs-success);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    vertical-align: middle;
+}
+
+.ai-dj-live-dot {
+    position: relative;
+    display: inline-block;
+    width: 0.55rem;
+    height: 0.55rem;
+}
+
+.ai-dj-live-dot::before,
+.ai-dj-live-dot::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background-color: var(--bs-success);
+}
+
+.ai-dj-live-dot::before {
+    z-index: 1;
+    animation: ai-dj-live-glow 1.3s ease-in-out infinite;
+}
+
+.ai-dj-live-dot::after {
+    z-index: 0;
+    animation: ai-dj-live-ping 1.3s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ai-dj-live-dot::before,
+    .ai-dj-live-dot::after {
+        animation: none;
+    }
+}
+
+@keyframes ai-dj-live-glow {
+    0%, 100% {
+        transform: scale(1);
+        box-shadow: 0 0 0.35rem 0.05rem rgba(var(--bs-success-rgb), 0.9);
+    }
+    50% {
+        transform: scale(1.25);
+        box-shadow: 0 0 0.6rem 0.15rem rgba(var(--bs-success-rgb), 1);
+    }
+}
+
+@keyframes ai-dj-live-ping {
+    0% {
+        transform: scale(1);
+        opacity: 0.7;
+    }
+    75%, 100% {
+        transform: scale(2.6);
+        opacity: 0;
+    }
+}
+
+.ai-dj-personality-row:hover {
+    background-color: var(--bs-tertiary-bg);
+}
+
+th.shrink,
+td.shrink {
+    width: 0.1%;
+    white-space: nowrap;
+}
+
+.ai-dj-form-section {
+    margin: 1.5rem 0 1rem;
+    padding-bottom: 0.35rem;
+    border-bottom: 1px solid var(--bs-border-color);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--bs-secondary-color);
+}
+
+.ai-dj-form-section:first-child {
+    margin-top: 0;
+}
+</style>
