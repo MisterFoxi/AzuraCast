@@ -450,13 +450,23 @@ onMounted(async () => {
         axios.get(getStationApiUrl('/clock-wheels').value),
     ]);
 
-    playlists.value = (plResp.data as Array<Record<string, unknown>>).map((p) => ({
+    // Les endpoints liste peuvent renvoyer un tableau nu OU une enveloppe paginee ({ rows: [...] }).
+    // On normalise avant .map pour qu'une reponse non-tableau ne casse pas le composant
+    // (cette modale est desormais montee aussi sur la page Playlists, pas seulement l'agenda).
+    const toRows = (data: unknown): Array<Record<string, unknown>> =>
+        Array.isArray(data)
+            ? data as Array<Record<string, unknown>>
+            : Array.isArray((data as {rows?: unknown} | null)?.rows)
+                ? (data as {rows: Array<Record<string, unknown>>}).rows
+                : [];
+
+    playlists.value = toRows(plResp.data).map((p) => ({
         id: p.id as number,
         name: p.name as string,
         self_url: (p.links as Record<string, string>).self,
     }));
 
-    clockWheels.value = (cwResp.data as Array<Record<string, unknown>>).map((cw) => ({
+    clockWheels.value = toRows(cwResp.data).map((cw) => ({
         id: cw.id as number,
         name: cw.name as string,
         self_url: (cw.links as Record<string, string>).self,

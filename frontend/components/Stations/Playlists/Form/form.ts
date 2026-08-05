@@ -15,6 +15,7 @@ export type StationPlaylistsRecord = Required<
         StationPlaylist,
         | 'id'
         | 'podcasts'
+        | 'schedule_items'
     >
 > & {
     id: number | null
@@ -44,8 +45,7 @@ export const useStationsPlaylistsForm = defineStore(
             avoid_duplicates: true,
             rotation_goal_days: null as number | null,
             crossfade_profile: null as string | null,
-            backend_options: [],
-            schedule_items: []
+            backend_options: []
         });
 
         const {r$} = useAppScopedRegle(

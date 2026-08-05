@@ -186,6 +186,13 @@
                                     </button>
                                     <button
                                         type="button"
+                                        class="btn btn-info"
+                                        @click="doSchedule(item)"
+                                    >
+                                        {{ $gettext('Schedule') }}
+                                    </button>
+                                    <button
+                                        type="button"
                                         class="btn btn-danger"
                                         @click="doDelete(item.links.self)"
                                     >
@@ -334,6 +341,10 @@
         ref="$applyToModal"
         @relist="() => relist()"
     />
+    <create-event-modal
+        ref="$scheduleModal"
+        @relist="() => relist()"
+    />
 
 </template>
 
@@ -348,6 +359,7 @@ import ApplyToModal from "~/components/Stations/Playlists/ApplyToModal.vue";
 import PlaylistGroupingTab from "~/components/Stations/Playlists/PlaylistGroupingTab.vue";
 import PlaylistGroupReorderModal from "~/components/Stations/Playlists/PlaylistGroupReorderModal.vue";
 import PlaylistSourceIcon from "~/components/Stations/Common/PlaylistSourceIcon.vue";
+import CreateEventModal from "~/components/Stations/Common/CreateEventModal.vue";
 import {useTranslate} from "~/vendor/gettext";
 import {ref, useTemplateRef, watch} from "vue";
 import {useRoute} from "vue-router";
@@ -475,6 +487,12 @@ const $applyToModal = useTemplateRef('$applyToModal');
 const doApplyTo = (url: string) => {
     $applyToModal.value?.open(url);
 }
+
+const $scheduleModal = useTemplateRef('$scheduleModal');
+
+const doSchedule = (item: Record<string, unknown>) => {
+    $scheduleModal.value?.openScopedForCreate('playlist', Number(item.id));
+};
 
 const {mayNeedRestart: originalMayNeedRestart} = useMayNeedRestart();
 

@@ -10,7 +10,6 @@
     >
         <tabs>
             <form-basic-info/>
-            <form-schedule v-model:schedule-items="form.schedule_items" />
             <form-memberships v-if="isEditMode" />
             <form-advanced/>
         </tabs>
@@ -19,7 +18,6 @@
 
 <script setup lang="ts">
 import FormBasicInfo from "~/components/Stations/Playlists/Form/BasicInfo.vue";
-import FormSchedule from "~/components/Stations/Playlists/Form/Schedule.vue";
 import FormMemberships from "~/components/Stations/Playlists/Form/Memberships.vue";
 import FormAdvanced from "~/components/Stations/Playlists/Form/Advanced.vue";
 import {BaseEditModalEmits, BaseEditModalProps, useBaseEditModal} from "~/functions/useBaseEditModal";
@@ -32,7 +30,6 @@ import {storeToRefs} from "pinia";
 import {useAppCollectScope} from "~/vendor/regle.ts";
 import {useStationsPlaylistsForm} from "~/components/Stations/Playlists/Form/form.ts";
 import mergeExisting from "~/functions/mergeExisting.ts";
-import normalizeStationScheduleDays from "~/functions/normalizeStationScheduleDays";
 
 const props = defineProps<BaseEditModalProps>();
 
@@ -68,34 +65,6 @@ const {
         if (data.order === 'smart_shuffle') {
             data.order = 'shuffle';
         }
-        if (data.schedule_items?.length) {
-            data.schedule_items = data.schedule_items.map((item: Record<string, unknown>) => {
-                const endType = item.recurrence_end_type ?? 'never';
-                const merged: Record<string, unknown> = {
-                    ...item,
-                    loop_once: Boolean(item.loop_once),
-                    strict_start: Boolean(item.strict_start),
-                    recurrence_type: item.recurrence_type ?? 'weekly',
-                    recurrence_interval: item.recurrence_interval ?? 1,
-                    recurrence_end_type: (endType === 'on_date' ? 'never' : endType) as string,
-                    recurrence_end_after: endType === 'after' ? (item.recurrence_end_after ?? null) : null,
-                    recurrence_end_date: null
-                };
-                if (endType === 'after') {
-                    merged.end_date = null;
-                }
-                if (merged.recurrence_type === 'monthly' && merged.recurrence_monthly_pattern === 'day_of_week' && merged.recurrence_monthly_day_of_week != null && (!merged.days || (merged.days as number[]).length === 0)) {
-                    merged.days = [Number(merged.recurrence_monthly_day_of_week)];
-                }
-                if (merged.id == null) {
-                    delete merged.id;
-                }
-                delete merged.playlist;
-                delete merged.streamer;
-                delete merged.clock_wheel;
-                return merged;
-            });
-        }
         r$.value.$reset({
             toState: mergeExisting(r$.value.$value, data)
         })
@@ -114,40 +83,10 @@ const {
         delete data.playlists;
         delete data.playlist_groups;
 
-        if (Array.isArray(data.schedule_items) && data.schedule_items.length) {
-            data.schedule_items = data.schedule_items.map((item: Record<string, unknown>) => {
-                const out: Record<string, unknown> = { ...item };
-                out.recurrence_type = item.recurrence_type ?? 'weekly';
-                out.recurrence_interval = (item.recurrence_type === 'biweekly' ? 2 : Number(item.recurrence_interval)) || 1;
-                out.recurrence_end_type = item.recurrence_end_type ?? 'never';
-                out.recurrence_end_after = (item.recurrence_end_type === 'after' && item.recurrence_end_after != null)
-                    ? Number(item.recurrence_end_after) : null;
-                out.recurrence_end_date = null;
-                if (item.recurrence_end_type === 'after') {
-                    out.end_date = null;
-                }
-                const normalizedDays = normalizeStationScheduleDays(item.days);
-                if (out.recurrence_type === 'monthly' && out.recurrence_monthly_pattern === 'date') {
-                    out.days = [];
-                } else {
-                    out.days = normalizedDays;
-                }
-                if (out.recurrence_type === 'monthly' && out.recurrence_monthly_pattern === 'day_of_week' && normalizedDays.length > 0) {
-                    out.recurrence_monthly_day_of_week = normalizedDays[0];
-                }
-
-                // New/unsaved rows must omit id entirely (not send id: null).
-                if (out.id == null) {
-                    delete out.id;
-                }
-                // API GET may embed relation shortcuts; never post them back.
-                delete out.playlist;
-                delete out.streamer;
-                delete out.clock_wheel;
-
-                return out;
-            });
-        }
+        // Phase 0 - data guard: the playlist PUT is PARTIAL.
+        // Omit the key => schedules untouched; sending [] => ALL schedules wiped.
+        // Scheduling is edited exclusively via the agenda (CreateEventModal).
+        delete data.schedule_items;
         return { valid, data };
     },
     {
