@@ -240,7 +240,7 @@ const {axios} = useAxios();
 
 const loadFilterOptions = async () => {
     try {
-        const {data} = await axios.get(getStationApiUrl('/playlists'), {
+        const {data} = await axios.get(getStationApiUrl('/playlists').value, {
             params: {rowCount: -1},
         });
 
