@@ -222,10 +222,6 @@ final class HourBoundaryPlanner
         }
 
         $tz = $station->getTimezoneObject();
-        $local = CarbonImmutable::instance($expectedPlayTime)->setTimezone($tz);
-        $targetHourStart = $this->resolveTopOfHourExpectedPlayAt($station, $expectedPlayTime);
-        $targetLocal = CarbonImmutable::instance($targetHourStart)->setTimezone($tz);
-
         $secondsUntil = $this->secondsUntilNextTopOfHour($expectedPlayTime, $tz);
         $buffer = $this->getFinishBufferSeconds($station) + $this->getIdMaxSeconds($station);
 
@@ -236,7 +232,7 @@ final class HourBoundaryPlanner
             return false;
         }
 
-        return !$this->hasTopOfHourIdQueued($station, $targetLocal, $tz);
+        return !$this->hasTopOfHourIdQueued($station);
     }
 
     /**
@@ -253,31 +249,20 @@ final class HourBoundaryPlanner
             && $playlist->play_per_hour_minute === 0;
     }
 
-    public function hasTopOfHourIdQueued(
-        Station $station,
-        CarbonImmutable $hourStart,
-        ?DateTimeZone $tz = null,
-    ): bool {
-        $tz ??= $station->getTimezoneObject();
-        $hourEnd = $hourStart->addHour();
-
+    /**
+     * True when a mandatory top-of-hour ID is already queued and not yet aired.
+     *
+     * Deliberately narrow: only rows carrying the top-of-hour markers count. We do
+     * NOT treat ordinary station-ID media (type 'id'/'legal_id') coming from normal
+     * rotation as "already satisfied" -- doing so let any rotation jingle sitting in
+     * the queue suppress the mandatory ID entirely. No timestamp/hour bucketing is
+     * needed either: at most one mandatory ID is ever pending unplayed at a time, so
+     * the flag alone is the correct, drift-free dedup guard.
+     */
+    public function hasTopOfHourIdQueued(Station $station): bool
+    {
         foreach ($this->queueRepo->getUnplayedQueue($station) as $row) {
-            $playedAt = $row->timestamp_played;
-            if ($playedAt === null) {
-                continue;
-            }
-
-            $queuedLocal = CarbonImmutable::instance($playedAt)->setTimezone($tz);
-            if ($queuedLocal->lessThan($hourStart) || $queuedLocal->greaterThanOrEqualTo($hourEnd)) {
-                continue;
-            }
-
             if ($row->top_of_hour_legal_id || $row->clock_wheel_legal_id_substitute) {
-                return true;
-            }
-
-            $media = $row->media;
-            if ($media !== null && StationMediaTypes::isStationId($media->type)) {
                 return true;
             }
         }
