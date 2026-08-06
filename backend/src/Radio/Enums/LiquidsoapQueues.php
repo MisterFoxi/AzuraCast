@@ -8,6 +8,7 @@ enum LiquidsoapQueues: string
 {
     case Requests = 'requests';
     case Interrupting = 'interrupting_requests';
+    case TopOfHour = 'toth_requests';
 
     public static function default(): self
     {

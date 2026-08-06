@@ -172,6 +172,35 @@ final class StationQueueRepository extends AbstractStationBasedRepository
         return $this->getUnplayedBaseQuery($station)->getQuery()->execute();
     }
 
+    /**
+     * True when a mandatory top-of-hour legal ID has already been recorded for a given
+     * boundary window, whether it is still queued or has already aired. Keyed on
+     * timestamp_cued (set when the row is created) so the guard survives the ID leaving
+     * the unplayed queue after playback -- this is what prevents a train of IDs across
+     * the pre-:00 window.
+     */
+    public function hasTopOfHourLegalIdCuedBetween(
+        Station $station,
+        DateTimeImmutable $from,
+        DateTimeImmutable $to
+    ): bool {
+        $count = (int)$this->em->createQuery(
+            <<<'DQL'
+                SELECT COUNT(sq.id)
+                FROM App\Entity\StationQueue sq
+                WHERE sq.station = :station
+                AND (sq.top_of_hour_legal_id = 1 OR sq.clock_wheel_legal_id_substitute = 1)
+                AND sq.timestamp_cued > :from
+                AND sq.timestamp_cued <= :to
+            DQL
+        )->setParameter('station', $station)
+            ->setParameter('from', $from)
+            ->setParameter('to', $to)
+            ->getSingleScalarResult();
+
+        return $count > 0;
+    }
+
     public function clearUpcomingQueue(Station $station): void
     {
         $this->em->createQuery(

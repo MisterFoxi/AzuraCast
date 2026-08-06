@@ -486,6 +486,7 @@ final class ConfigWriter implements EventSubscriberInterface
 
         $requestsQueueName = LiquidsoapQueues::Requests->value;
         $interruptingQueueName = LiquidsoapQueues::Interrupting->value;
+        $topOfHourQueueName = LiquidsoapQueues::TopOfHour->value;
 
         $event->appendBlock(
             <<< LIQ
@@ -494,6 +495,9 @@ final class ConfigWriter implements EventSubscriberInterface
 
             interrupting_queue = request.queue(id="{$interruptingQueueName}", timeout=settings.azuracast.request_timeout())
             radio = fallback(id="interrupting_fallback", track_sensitive = false, [interrupting_queue, radio])
+
+            toth_queue = request.queue(id="{$topOfHourQueueName}", timeout=settings.azuracast.request_timeout())
+            radio = fallback(id="toth_fallback", track_sensitive = false, [toth_queue, radio])
             LIQ
         );
 

@@ -39,6 +39,19 @@ final class TopOfHourIdScheduler implements EventSubscriberInterface
 
     public static function getSubscribedEvents(): array
     {
+        // Enqueuing moved to the real-time interrupt path (QueueInterruptingTracks).
+        // The look-ahead BuildQueue flow enqueues at the MAIN queue tail (a future
+        // expected play time), which cannot interrupt at :00 -- and, sharing the
+        // boundary dedup, it would "claim" the hour and starve the interrupt path.
+        // buildTopOfHourId() is kept (unsubscribed) so its clock-wheel/emergency
+        // guards can be reused when they are mirrored into the interrupt path.
+        // NOTE: those guards are NOT yet enforced by the interrupt path -- wire them
+        // there before enabling TOTH on clock-wheel stations.
+        return [];
+    }
+
+    public static function getSubscribedEventsLegacy(): array
+    {
         return [
             BuildQueue::class => [
                 ['buildTopOfHourId', 2],
