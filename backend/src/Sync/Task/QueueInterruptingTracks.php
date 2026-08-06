@@ -78,7 +78,7 @@ final class QueueInterruptingTracks extends AbstractTask
         // here, in wall-clock time, as an interruption.
         $topOfHourId = null;
         if ($this->hourBoundaryPlanner->isTopOfHourInterruptDue($station, $now)) {
-            $this->logger->info('[TOTH-DEBUG] Interrupt due -> resolving legal ID.', [
+            $this->logger->debug('[TOTH-DEBUG] Interrupt due -> resolving legal ID.', [
                 'station_id' => $station->id,
                 'now' => $now->format(DATE_ATOM),
             ]);
@@ -97,13 +97,13 @@ final class QueueInterruptingTracks extends AbstractTask
 
             if (null !== $topOfHourId) {
                 $this->em->flush();
-                $this->logger->info('[TOTH-DEBUG] Legal ID resolved and persisted.', [
+                $this->logger->debug('[TOTH-DEBUG] Legal ID resolved and persisted.', [
                     'station_id' => $station->id,
                     'queue_id' => $topOfHourId->id,
                     'media_id' => $topOfHourId->media?->id,
                 ]);
             } else {
-                $this->logger->warning('[TOTH-DEBUG] Interrupt due but resolver returned null.', [
+                $this->logger->debug('[TOTH-DEBUG] Interrupt due but resolver returned null.', [
                     'station_id' => $station->id,
                 ]);
             }
@@ -120,7 +120,7 @@ final class QueueInterruptingTracks extends AbstractTask
                 $byStrict = $this->scheduler->isPlaylistStrictStartDueNow($playlist, $tz);
                 if ($byPlayable || $byStrict) {
                     $hasInterruptingPlaylist = true;
-                    $this->logger->info('[TOTH-DEBUG] Interrupting gate tripped by playlist.', [
+                    $this->logger->debug('[TOTH-DEBUG] Interrupting gate tripped by playlist.', [
                         'station_id' => $station->id,
                         'playlist_id' => $playlist->id,
                         'playlist_name' => $playlist->name,
@@ -136,7 +136,7 @@ final class QueueInterruptingTracks extends AbstractTask
             $behindPace = $this->sponsorGuarantee->getPlaylistsBehindPace($station);
             if (!empty($behindPace)) {
                 $hasInterruptingPlaylist = true;
-                $this->logger->info('[TOTH-DEBUG] Interrupting gate tripped by sponsor-guarantee.', [
+                $this->logger->debug('[TOTH-DEBUG] Interrupting gate tripped by sponsor-guarantee.', [
                     'station_id' => $station->id,
                     'behind_pace_count' => count($behindPace),
                 ]);
@@ -165,7 +165,7 @@ final class QueueInterruptingTracks extends AbstractTask
 
             $response = $backend->enqueue($station, LiquidsoapQueues::TopOfHour, $track);
 
-            $this->logger->info('[TOTH-DEBUG] Legal ID enqueued to priority (TopOfHour) queue.', [
+            $this->logger->debug('[TOTH-DEBUG] Legal ID enqueued to priority (TopOfHour) queue.', [
                 'station_id' => $station->id,
                 'queue_id' => $topOfHourId->id,
                 'media_id' => $topOfHourId->media?->id,
