@@ -319,8 +319,6 @@ import AddButton from "~/components/Common/AddButton.vue";
 
 import {useApiItemProvider} from "~/functions/dataTable/useApiItemProvider.ts";
 import {QueryKeys, queryKeyWithStation} from "~/entities/Queries.ts";
-import {useStationData} from "~/functions/useStationQuery.ts";
-import {toRefs} from "@vueuse/core";
 import IconBiContract from "~icons/bi/chevron-contract";
 import IconBiExpand from "~icons/bi/chevron-expand";
 import {useApiRouter} from "~/functions/useApiRouter.ts";
@@ -392,18 +390,11 @@ const doApplyTo = (url: string) => {
     $applyToModal.value?.open(url);
 }
 
-const {mayNeedRestart: originalMayNeedRestart} = useMayNeedRestart();
-
-const stationData = useStationData();
-const {useManualAutoDj} = toRefs(stationData);
-
-const mayNeedRestart = () => {
-    if (!useManualAutoDj.value) {
-        return;
-    }
-
-    originalMayNeedRestart();
-};
+// Remote Stream playlists require a Liquidsoap reload even under normal AutoDJ,
+// so the restart signal must not be suppressed based on useManualAutoDj here.
+// The backend (StationRequiresRestart) is authoritative for the needs_restart
+// flag; this only refreshes station data so the sidebar banner reflects it.
+const {mayNeedRestart} = useMayNeedRestart();
 
 const {notifySuccess} = useNotify();
 const {axios} = useAxios();

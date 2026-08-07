@@ -91,12 +91,11 @@ Livrables : `toph-dedup-1b.patch` + `HourBoundaryPlanner.php` (fichier complet e
 - Placement correct : la queue a inséré l'ID à la suite de la piste finissant à :59
   (le `timestamp_cued` à :50 = moment d'insertion en file, PAS l'heure de diffusion).
 - L'ID a bien été **joué à l'antenne** au passage d'heure.
-- Reste (résiduel, non bloquant) : `getPlannedSecondsIntoHour()` a le même défaut de garde
-  inerte — à corriger dans un second temps.
+
+(NB : le point `getPlannedSecondsIntoHour()` n'est PAS un résiduel TOPH — voir section Clock Wheel.)
 
 Fichiers concernés :
-- `backend/src/Radio/AutoDJ/HourBoundaryPlanner.php` (`hasTopOfHourIdQueued` — MODIFIÉ ;
-  `getPlannedSecondsIntoHour` — même défaut, à traiter ensuite)
+- `backend/src/Radio/AutoDJ/HourBoundaryPlanner.php` (`hasTopOfHourIdQueued` — MODIFIÉ)
 - `backend/src/Radio/AutoDJ/TopOfHourIdScheduler.php` (déclencheur, sur event `BuildQueue`)
 - `backend/src/Radio/AutoDJ/HourBoundaryLegalIdResolver.php` (pose la ligne de queue,
   `top_of_hour_legal_id = true`)
@@ -120,6 +119,39 @@ Investigation menée. Conclusion : la bannière n'est PAS causée par le TOPH.
 
 ---
 
+## Observations — PL normale (baseline `.liq`)
+
+But : comprendre ce qui déclenche (ou non) une (re)génération du `.liq`, avant de
+s'attaquer au point « Schedule dans le formulaire playlist ». Image du `.liq` prise
+avant manipulation comme référence.
+
+| Action sur PL normale (`playlistTest`) | Effet sur `.liq` |
+|---|---|
+| Création d'une PL vide | ❌ aucune modification |
+| Ajout d'un dossier mp3 | ❌ pas de création / MAJ |
+| Changement de priorité | ❌ pas de MAJ |
+
+> À suivre : quelles actions déclenchent effectivement une régénération du `.liq`
+> (hypothèse de travail : le scheduling / `needs_restart`, à confirmer par la suite).
+
+### Mécanique confirmée (investigation)
+
+Comportement normal, pas de bug.
+
+- **Création d'une PL** = écriture en BDD. L'AutoDJ l'exploite **directement depuis la
+  base** à chaque build de queue. `PlaylistController.php` ne régénère PAS le `.liq`
+  → explique les 3 observations baseline ci-dessus.
+- **Écriture dans le `.liq`** = via `ConfigWriter.php`, **uniquement si** l'option
+  **« Always Write Playlists to Liquidsoap »** est vraie. Sinon l'AutoDJ gère en base.
+- **EXCEPTION** : une playlist avec **flux externe** (remote/stream) **DOIT** être écrite
+  dans le `.liq`, indépendamment de l'option — l'AutoDJ ne sait pas router un flux externe
+  depuis la base, il faut le câblage Liquidsoap.
+
+> Lien avec le point ouvert `strict_start` / interruption de flux distant : le seul chemin
+> pour qu'un flux externe passe à l'antenne, c'est le `.liq` (via `ConfigWriter`).
+
+---
+
 ## Environnement git
 
 - **origin** = `MisterFoxi/AzuraCast` (repo lc, cible des push).
@@ -132,9 +164,74 @@ Investigation menée. Conclusion : la bannière n'est PAS causée par le TOPH.
 
 ## À traiter
 
+### 2. Reload to apply changes — Remote Stream (fork, lié `strict_start`) — ✅ CORRIGÉ & VALIDÉ
+
+**Contexte.** Une PL de type **Remote URL → Stream** est gérée **directement par Liquidsoap**,
+pas par l'AutoDJ PHP. Elle **exige** donc d'être présente dans le `.liq` (via `ConfigWriter`)
+pour passer à l'antenne — y compris son **horaire de diffusion**.
+
+**Fait établi — seul un force reload synchronise le `.liq` avec la base.** Aucune opération
+CRUD sur une PL Remote Stream ne déclenchait de régénération ni ne levait `needs_restart`
+(AutoDJ normal) → aucune bannière « reload to apply changes ».
+
+| Opération | Régénération `.liq` | `needs_restart` (avant) |
+|---|---|---|
+| Création / modification de la PL | ❌ non | ❌ non |
+| Ajout d'un horaire de diffusion | ❌ non | ❌ non |
+| Effacement d'un horaire de diffusion | ❌ non | ❌ non |
+| **Force reload de la conf** | ✅ oui | — |
+
+**Le `.liq` lui-même était correct.** Après force reload, le `.liq` régénéré contenait bien la
+PL externe **et son horaire**. Le défaut n'était pas dans `ConfigWriter` (la matérialisation
+est bonne) mais dans l'**absence de déclencheur** : rien ne reliait une opération BDD à la regen.
+
+**Correctif en deux volets (les deux nécessaires) — appliqués sur `Z:` et VALIDÉS au test.**
+
+*Backend* — listener Doctrine `StationRequiresRestart` (onFlush) :
+- Branche `StationPlaylist` étendue : marque restart si `use_manual_autodj` **OU**
+  PL Remote Stream (`source = RemoteUrl` ET `remote_type = Stream`) — ajout, pas remplacement.
+- Nouvelle branche `StationSchedule` : marque restart si son `playlist` parent est Remote Stream
+  (couvre insert/update/**delete** d'horaire).
+- Résolution station généralisée (`StationSchedule` n'a pas de `->station` → via `playlist?->station`).
+- Gardes existantes conservées : filtrage `AuditIgnore` sur Update + `hasLocalServices()`.
+- Helper `isRemoteStreamPlaylist(StationPlaylist): bool`.
+
+*Frontend* — `Playlists.vue` :
+- Garde `if (!useManualAutoDj.value) return;` retirée de `mayNeedRestart()`. Cette garde
+  bloquait le refetch de la requête station sous AutoDJ normal → la bannière `Sidebar`
+  (qui lit `station.needs_restart`) ne se rafraîchissait jamais, même flag DB posé.
+  C'était la cause du « le patch ne fait rien ».
+- `mayNeedRestart()` invalide désormais toujours. Sans effet de bord pour les PL songs
+  (le backend ne pose pas le flag pour elles → bannière reste masquée après refetch).
+- Imports `useStationData` / `toRefs` retirés (devenus inutiles).
+
+**Fichiers modifiés (sur `Z:`, confirmés `git diff`) :**
+- `backend/src/Doctrine/Event/StationRequiresRestart.php`
+- `frontend/components/Stations/Playlists.vue`
+
+**Patches (portage `main` / autres branches) :** `remote-stream-needs-restart.patch`,
+`frontend-remote-stream-needs-restart.patch`, + `StationRequiresRestart.php.patched` (repli).
+
+> **Rebuild frontend requis** pour que le `.vue` prenne effet.
+> Reste ouvert (thread séparé) : `strict_start` / interruption de flux distant — c'est la
+> question de la **préemption Liquidsoap** d'un flux externe, distincte du signal `needs_restart`
+> traité ici.
+
+---
+
+## À traiter
+
 ### 1. Schedule dans le formulaire playlist
 Le scheduling est encore présent dans la création des playlists sur `eternity/main`.
-→ À planifier une fois le TOPH stabilisé.
+→ À planifier.
+
+### 2b. Clock Wheel — `getPlannedSecondsIntoHour()` garde inerte (périmètre à confirmer)
+Même défaut que le TOPH (itère `getUnplayedQueue()` en lisant `timestamp_played`, null sur
+file non jouée → boucle inerte → ignore les items à venir), MAIS ce n'est PAS un point TOPH.
+Seuls appelants : `backend/src/Radio/AutoDJ/ClockWheel/ClockWheelPlaybackPlanner.php`
+(ligne 88 + wrapper privé 236/241). Impact : positionnement des slots de clock wheel.
+Pertinent uniquement si les clock wheels sont utilisées sur la station — usage NON confirmé,
+à valider avant d'y toucher. Correctif probable identique à 1b (dériver de `timestamp_cued`).
 
 ---
 
@@ -155,4 +252,30 @@ Le scheduling est encore présent dans la création des playlists sur `eternity/
   À appliquer/tester sur azuradev.
 - **2026-08-07** — Test TOPH à 12:00 : ✅ SUCCÈS. Un seul legal ID cué pour la borne,
   placé après la piste finissant à :59, et joué à l'antenne. Fix 1b validé empiriquement.
-  Résiduel connu : `getPlannedSecondsIntoHour()` (même défaut, non traité).
+- **2026-08-07** — Requalification : `getPlannedSecondsIntoHour()` n'est PAS un résiduel TOPH
+  mais un point Clock Wheel (seul appelant : `ClockWheelPlaybackPlanner`). Déplacé en « À traiter ».
+- **2026-08-07** — Baseline PL normale (`playlistTest`) : création vide, ajout dossier mp3 et
+  changement de priorité ne modifient PAS le `.liq`. Référence `.liq` avant manip conservée.
+- **2026-08-07** — Mécanique `.liq` confirmée (comportement normal, pas de bug) : création PL =
+  écriture BDD exploitée directement par l'AutoDJ (`PlaylistController` ne touche pas le `.liq`) ;
+  écriture `.liq` via `ConfigWriter` seulement si « Always Write Playlists to Liquidsoap » ;
+  EXCEPTION : PL à flux externe DOIT être écrite dans le `.liq`.
+- **2026-08-07** — Point ouvert ajouté (À traiter #3) : PL Remote Stream ne déclenche ni
+  régénération `.liq` ni `needs_restart` (ni à la création/modif, ni au scheduling), alors
+  qu'elle exige le `.liq`. Flux distant reste inactif jusqu'à regen+reload manuel. Lié `strict_start`.
+- **2026-08-07** — Synthèse #3 : seul un **force reload** synchronise le `.liq` (il contient alors
+  bien la PL externe + son horaire → `ConfigWriter` OK). Asymétrie confirmée : ajout **et**
+  effacement d'horaire ne régénèrent pas → créneau ajouté inactif, créneau effacé continue de
+  jouer, jusqu'au reload. Défaut = absence de déclencheur, pas `ConfigWriter`.
+- **2026-08-07** — Correctif #3 backend produit : `StationRequiresRestart` étendu (PL Remote Stream
+  + `StationSchedule` de PL Remote Stream → `needs_restart`). Validé `git apply --check`, ASCII/LF.
+  Livré sur `Z:` (`remote-stream-needs-restart.patch` + `.patched`). Appliqué sur `Z:` (vérifié).
+- **2026-08-07** — Diagnostic « le patch ne fait rien » : backend OK mais garde frontend
+  `if (!useManualAutoDj.value) return;` dans `Playlists.vue#mayNeedRestart` bloquait le refetch
+  station sous AutoDJ normal → bannière jamais rafraîchie. Correctif frontend appliqué sur `Z:`
+  (garde retirée, imports inutiles nettoyés). Patch : `frontend-remote-stream-needs-restart.patch`.
+  Chaine complète = backend + frontend. **Rebuild frontend requis.**
+- **2026-08-07** — ✅ Remote Stream `needs_restart` VALIDÉ au test (lc). Les deux volets (backend
+  `StationRequiresRestart` + frontend `Playlists.vue`) appliqués sur `Z:` et confirmés par
+  `git diff`. Point déplacé en « Clos » (#2). Reste ouvert et distinct : préemption Liquidsoap
+  du flux externe (`strict_start`).
