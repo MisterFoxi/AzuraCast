@@ -36,6 +36,7 @@ final class StationScheduleRepository extends Repository
         private readonly Scheduler $scheduler,
         private readonly ScheduleApiGenerator $scheduleApiGenerator,
         private readonly ScheduleConflictChecker $conflictChecker,
+        private readonly StationQueueRepository $queueRepo,
     ) {
     }
 
@@ -125,6 +126,13 @@ final class StationScheduleRepository extends Repository
         }
 
         $this->em->flush();
+
+        // A schedule change can reorder every pending priority in the AutoDJ
+        // queue, so drop the not-yet-sent portion and let the next BuildQueue
+        // rebuild it against the new schedule. Only sent_to_autodj = 0 rows are
+        // removed, so the currently-airing track and anything already handed to
+        // Liquidsoap are untouched -- no broadcast interruption.
+        $this->queueRepo->clearUpcomingQueue($station);
     }
 
     /**
