@@ -23,8 +23,7 @@
 | Élément | État |
 |---|---|
 | Batch MP3 | ✅ OK (modifs validées) |
-| TOPH (Top Of The Hour) | ❌ En cours de test — **on attend le résultat** |
-| TOPH (Top Of The Hour) | 🟡 En cours de test — **APRES VALIDATION CNFIG** |
+| TOPH (Top Of The Hour) | ✅ CORRIGÉ (patch 1b, validé au test 12:00) |
 | Playlists groupées | ❌ Absentes |
 | Schedule dans création de playlist | ⚠️ Encore présent (à sortir du formulaire playlist) |
 
@@ -45,39 +44,59 @@ Exemple relevé en base (`station_queue`), autour de 11:00 :
 - id 35 → joué 11:00:22, `top_of_hour_legal_id = 1`
 - id 36 → joué 11:00:42, `top_of_hour_legal_id = 1`
 
-**Diagnostic (cause racine) : garde anti-doublon aveugle par décalage de bucket horaire.**
+**Diagnostic (cause racine) : garde anti-doublon INERTE (mauvais champ d'horodatage).**
 - Le seul garde inter-cycle est `HourBoundaryPlanner::hasTopOfHourIdQueued()`
   (via `isTopOfHourIdDue()` qui renvoie `!hasTopOfHourIdQueued(...)`).
   Le garde per-tick du scheduler (`!empty(getNextSongs())`) ne protège que dans un même cycle.
-- Le garde cherche un TOPH déjà en file dont le passage tombe dans `[borne:00, borne+1h)`.
-- Mais un legal ID de top-of-hour est délibérément placé pour *finir* à :00, donc il passe
-  dans les dernières secondes de l'heure PRÉCÉDENTE (ex. id 34 protège 11:00 mais passe à 10:59:38,
-  soit dans le bucket 10:00).
-- Quand le scheduler calcule la borne 11:00 et cherche un doublon dans `[11:00, 12:00)`,
-  il ne voit pas l'ID déjà posé (qui vit dans `[10:00, 11:00)`) → conclut « aucun TOPH en file »
-  → en réinjecte un. Répété sur les cycles de la fenêtre → doublons.
-- Le seuil de 30 s dans `resolveTopOfHourExpectedPlayAt()` fragilise encore (petite variation
-  de prévision = changement de bucket).
+- Le garde itère `StationQueueRepository::getUnplayedQueue()` (filtre `is_played = 0`) et lit
+  `row->timestamp_played`. Or `timestamp_played` n'est renseigné QU'AU moment où `is_played`
+  passe à 1 (setter `is_played` + `trackPlayed()`). Donc **toute ligne non jouée a
+  `timestamp_played = null`**.
+- Première ligne du garde : `if ($playedAt === null) continue;` → **saute TOUTES les lignes**
+  → `hasTopOfHourIdQueued()` renvoie **toujours `false`**. Le garde est purement inerte :
+  il ne détecte jamais un TOPH déjà en file.
+- Résultat : `isTopOfHourIdDue()` se réduit au seul test de fenêtre temporelle et renvoie
+  `true` à CHAQUE cycle de build dans la fenêtre → un TOPH par cycle → doublons.
+
+> CORRECTION DE RAISONNEMENT (tracé volontairement) : une première hypothèse « décalage de
+> bucket horaire » avait été posée à partir des lignes SQL HISTORIQUES (déjà jouées, donc avec
+> `timestamp_played` renseigné). Elle est FAUSSE : le garde n'itère que la file NON jouée, où
+> `timestamp_played` est null. Hypothèse abandonnée après lecture de `getUnplayedQueue()`.
 
 **Fenêtre de déclenchement :** dépend de `buffer = finish_buffer + id_max`
 (défauts 15+60 = 75 s), PAS du look-ahead. `isTopOfHourIdDue` ne devient vrai que quand
 `secondsUntil <= 75 s` → ~:58:45→:59:59. Cohérent avec les 3 TOPH observés à :58–:59.
 Le **look-ahead de 10 min n'intervient pas** dans le déclenchement (il sert à tronquer la musique).
 
-**Effet collatéral :** `getPlannedSecondsIntoHour()` a le même travers (itère `getUnplayedQueue`,
-raisonne par bucket de passage).
+**Effet collatéral (même défaut, hors correctif immédiat) :** `getPlannedSecondsIntoHour()`
+itère aussi `getUnplayedQueue()` en lisant `timestamp_played` → boucle inerte → ignore les
+items à venir. À corriger dans un second temps.
 
-**Pistes de fix (non tranchées, non implémentées) :**
-1. Dédupliquer par **borne servie** (marquer chaque TOPH avec la borne :00 qu'il protège
-   et chercher les doublons sur cette borne) — le plus robuste.
-2. Élargir la fenêtre de recherche pour inclure la zone `finish_buffer` avant :00
-   (ex. `[borne - buffer, borne + …)`).
-3. Aligner `resolveTopOfHourExpectedPlayAt()` et `hasTopOfHourIdQueued()` sur une seule
-   définition de borne.
+**Correctif retenu : PISTE 1b (dédup sur borne servie, dérivée de `timestamp_cued`, sans migration).**
+- `hasTopOfHourIdQueued()` réécrit : pour chaque ligne non jouée marquée legal_id
+  (`top_of_hour_legal_id` OU `clock_wheel_legal_id_substitute` OU média de type station ID),
+  on calcule la borne servie via `resolveTopOfHourExpectedPlayAt($station, $row->timestamp_cued)`
+  et on compare à la borne cible. `timestamp_cued` est toujours non-null → le garde n'est plus inerte.
+- Réutilise la fonction de borne existante → alignement garanti avec le resolver/scheduler,
+  pas de définition de borne divergente.
+- Aucune migration, aucun changement de schéma.
+
+État correctif : patch produit et validé `git apply --check` sur base vierge v0.29.7 (1987b4ba),
+ASCII/LF strict. Lint PHP à faire côté Docker (`docker compose exec web php -l ...`).
+Livrables : `toph-dedup-1b.patch` + `HourBoundaryPlanner.php` (fichier complet en repli).
+
+**RÉSULTAT DU TEST (12:00) : ✅ CORRIGÉ, validé de bout en bout.**
+- Une seule ligne TOPH cuée pour la borne 12:00 (id 54, `KTAR`) — plus d'empilement
+  (contre 3 doublons ce matin à 11:00 avant patch).
+- Placement correct : la queue a inséré l'ID à la suite de la piste finissant à :59
+  (le `timestamp_cued` à :50 = moment d'insertion en file, PAS l'heure de diffusion).
+- L'ID a bien été **joué à l'antenne** au passage d'heure.
+- Reste (résiduel, non bloquant) : `getPlannedSecondsIntoHour()` a le même défaut de garde
+  inerte — à corriger dans un second temps.
 
 Fichiers concernés :
-- `backend/src/Radio/AutoDJ/HourBoundaryPlanner.php` (`hasTopOfHourIdQueued`, `isTopOfHourIdDue`,
-  `resolveTopOfHourExpectedPlayAt`, `getPlannedSecondsIntoHour`)
+- `backend/src/Radio/AutoDJ/HourBoundaryPlanner.php` (`hasTopOfHourIdQueued` — MODIFIÉ ;
+  `getPlannedSecondsIntoHour` — même défaut, à traiter ensuite)
 - `backend/src/Radio/AutoDJ/TopOfHourIdScheduler.php` (déclencheur, sur event `BuildQueue`)
 - `backend/src/Radio/AutoDJ/HourBoundaryLegalIdResolver.php` (pose la ligne de queue,
   `top_of_hour_legal_id = true`)
@@ -101,6 +120,16 @@ Investigation menée. Conclusion : la bannière n'est PAS causée par le TOPH.
 
 ---
 
+## Environnement git
+
+- **origin** = `MisterFoxi/AzuraCast` (repo lc, cible des push).
+- **upstream** = `eternityready2/AzuraCast` (fork de base, référence).
+- Branches : `main` = `dev` = `1987b4ba` (tag v0.29.7). Branche de travail : **`FoxDev`**
+  (créée depuis `main`, porte le commit du SUIVI).
+- Flux : on bosse le local (azuradev), on pousse vers `origin` quand l'état est OK.
+
+---
+
 ## À traiter
 
 ### 1. Schedule dans le formulaire playlist
@@ -116,3 +145,14 @@ Le scheduling est encore présent dans la création des playlists sur `eternity/
   Diagnostic cause racine posé : garde anti-doublon `hasTopOfHourIdQueued` aveugle
   par décalage de bucket horaire (ID joué avant :00 = bucket heure précédente).
   Investigation « Reload to apply changes » close : découplée du TOPH, parkée.
+- **2026-08-07** — Diagnostic TOPH CORRIGÉ : la cause n'est pas un bucket horaire mais un garde
+  INERTE (`timestamp_played` toujours null sur la file non jouée → `hasTopOfHourIdQueued`
+  renvoie toujours false). Hypothèse bucket abandonnée après lecture de `getUnplayedQueue()`.
+- **2026-08-07** — Remotes réorganisés (origin=MisterFoxi, upstream=eternityready2).
+  Branche `FoxDev` créée depuis `main`.
+- **2026-08-07** — Correctif TOPH piste 1b implémenté (réécriture `hasTopOfHourIdQueued`,
+  dédup sur borne servie via `timestamp_cued`). Patch validé `git apply --check`.
+  À appliquer/tester sur azuradev.
+- **2026-08-07** — Test TOPH à 12:00 : ✅ SUCCÈS. Un seul legal ID cué pour la borne,
+  placé après la piste finissant à :59, et joué à l'antenne. Fix 1b validé empiriquement.
+  Résiduel connu : `getPlannedSecondsIntoHour()` (même défaut, non traité).
