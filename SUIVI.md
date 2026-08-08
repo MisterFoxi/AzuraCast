@@ -306,6 +306,278 @@ la PL Remote Stream **non planifiée** ; AutoDJ/`nextsong`/PL planifiées inchan
 
 ---
 
+## Architecture — QueueBuilder / AutoDJ (référence)
+
+> Base de travail pour la reconstruction. Établi le 2026-08-08 par lecture directe
+> du code : `Queue.php`, `QueueBuilder.php`, `Event/Radio/BuildQueue.php`, les autres
+> abonnés de `BuildQueue`, et le pipeline `AnnotateNextSong`. `Scheduler.php` pas
+> encore ouvert (prédicats de décision — voir « Zones d'ombre »).
+
+### Deux étages, deux événements
+
+Le « queuebuilder » = **deux étages distincts**, souvent confondus :
+
+1. **Construction anticipée** — event `BuildQueue`, orchestré par `Queue::buildQueue()`.
+   Produit des lignes `StationQueue` en base, à l'avance. `QueueBuilder` vit ici.
+2. **Annotation juste-à-temps** — event `AnnotateNextSong`, orchestré par
+   `Annotations::annotateNextSong()`. Transforme une ligne `StationQueue` en chaîne
+   `annotate:…:uri` quand Liquidsoap réclame le morceau suivant.
+
+`QueueBuilder` ne fait QUE l'étage 1 (choisir quoi mettre en file). Fades, cue points,
+cap horaire à l'antenne = étage 2.
+
+### Étage 1 — `Queue` (orchestrateur) vs `QueueBuilder` (sélecteur)
+
+**`Queue::buildQueue(Station)`** (boucle publique, tâche AutoDJ périodique) :
+- calcule `expectedCueTime` (now UTC) et `expectedPlayTime` (fin du morceau courant,
+  borné à now) ;
+- relit `getUnplayedQueue` : lignes `sent_to_autodj` → avance l'horloge ; lignes
+  cuées-non-envoyées → revalide via `isQueueRowStillValid()` (playlist active +
+  `isPlaylistScheduledToPlayNow`) et **supprime** les invalides, recale `timestamp_cued` ;
+- comble jusqu'à `max(autodj_queue_length, 2)` en dispatchant **un `BuildQueue` par slot**,
+  persiste `timestamp_cued`/`timestamp_played` sur chaque pick.
+
+> `timestamp_cued` = moment d'INSERTION en file, PAS l'heure de diffusion.
+> `addDurationToTime()` retranche le recouvrement de crossfade.
+
+**`Queue::getInterruptingQueue(Station)`** : chemin parallèle interruptif (jingles /
+prioritaire immédiat). Un `BuildQueue` avec `isInterrupting=true`, `expectedPlayTime=now` ;
+lignes retournées marquées `is_played=true` immédiatement.
+
+### L'objet `BuildQueue` (sémantique clé)
+
+Porte : station, `expectedCueTime`, `expectedPlayTime`, `lastPlayedSongId`, flag
+`isInterrupting`, et le tableau **mutable** `nextSongs`. `setNextSongs()` :
+- `null` → vide la sélection, renvoie `true` (canal de **rejet DMCA**) ;
+- `StationQueue` unique dont `song_id == lastPlayedSongId` → renvoie `false`
+  (garde anti-répétition dos-à-dos) ;
+- sinon pose la sélection, renvoie `true` ;
+- **jamais `stopPropagation()` sur succès** (le validateur DMCA doit tourner après).
+
+### Pipeline `BuildQueue` (priorité décroissante)
+
+| Prio | Abonné | Rôle |
+|---|---|---|
+| 5 | `QueueBuilder::getNextSongFromRequests` | requêtes auditeurs (hors interruptif) |
+| 2 | `TopOfHourIdScheduler` | injecte le legal ID d'heure (pose `top_of_hour_legal_id=true`) |
+| 1 | `AiDjQueueListener::onBuildQueue` | clips parlés IA, injectés **hors-bande** |
+| 0 | `QueueBuilder::calculateNextSong` | **moteur de rotation principal** |
+| -5 | `DmcaComplianceListener::onBuildQueue` | validation / rejet du pick |
+
+Chaque abonné est court-circuité par `if (!empty(getNextSongs())) return;`.
+
+Subtilités :
+- **AI DJ (1) tourne avant `calculateNextSong` (0)** mais ne remplit PAS `nextSongs` :
+  il `enqueue()` le clip directement dans la queue LS `Requests` et crée une `StationQueue`
+  `is_played=true`. La sélection musicale se poursuit derrière. Nombreux gardes
+  (cooldown, fenêtre calme :50→:00, détection « programme » long, dédup de nom).
+- **DMCA (-5) = validateur, pas sélecteur** : sur violation → `setNextSongs(null)` +
+  `stopPropagation()` → c'est le **prochain cycle** qui retente. Fail-safe : historique
+  illisible → autorise.
+- `DuplicatePrevention`, `HourBoundaryPlanner`, `SponsorGuaranteedPlayoutService`,
+  `HolidayOverrideService` = **services injectés**, PAS des abonnés.
+
+### `calculateNextSong` (cœur, prio 0)
+
+1. Early-return si pick déjà posé.
+2. Si interruptif : collecte playlists sponsor « en retard de cadence »
+   (`SponsorGuaranteedPlayoutService::getPlaylistsBehindPace`).
+3. `activePlaylistsByType`, clé `{type}_{scheduled|unscheduled}`. Éligibilité =
+   `isPlayable(interrupting)` OU (interruptif ET strict-start dû) OU (interruptif ET
+   sponsor en retard).
+4. Historique récent pour dédup (`duplicate_prevention_time_range`).
+5. **Override jours fériés** : `HolidayOverrideService` → joue depuis cette PL en priorité
+   (2 passes : sans doublon puis avec).
+6. **Ordre de priorité strict des types** : `OncePerHour → OncePerXSongs →
+   OncePerXMinutes → Standard`, et **scheduled avant unscheduled** (8 buckets ordonnés).
+7. Dans un bucket : filtre `Scheduler::shouldPlaylistPlayNow`, poids, **weighted shuffle**,
+   puis 2 passes (`allowDuplicates` false→true) → premier `playSongFromPlaylist` non nul
+   → `setNextSongs` → return.
+
+### `playSongFromPlaylist` (3 branches)
+
+- **Source Remote URL** → `getSongFromRemotePlaylist` / `getMediaFromRemoteUrl` :
+  flux Stream → durée bornée par `getPlaylistScheduleDuration` (évite le jeu infini) ;
+  playlist distante → parsing + cache 6000 s.
+- **`backendMerge()`** (bloc entier) → `resetQueue` + mappe toute la file SPM.
+- **Cas normal** → sélection unitaire selon `order` (Random / Sequential / Shuffle /
+  SmartShuffle) → `applyHourBoundarySelection` → `makeQueueFromApi`.
+
+Les 3 sélecteurs d'ordre passent par `preparePlaylistQueue()` =
+`filterQueueByPlayability(filterQueueByRotationGoal(getQueue))`, `resetQueue` à
+l'épuisement, dédup via `DuplicatePrevention::preventDuplicates` (+ `aging_threshold_days`
+pour le shuffle).
+
+### Greffes fork (hors upstream vanilla)
+
+- **`filterQueueByRotationGoal`** : `rotation_goal_days` bloque les médias récents de la PL ;
+  tout bloqué → repli pool complet (warning).
+- **`filterQueueByPlayability`** : `MediaPlayability::isEligibleForPlayback` (DNP/fenêtres),
+  fail-open par média.
+- **`applyHourBoundarySelection`** : conscience TOPH côté SÉLECTION — si le tiré ne rentre
+  pas avant :00, cherche le plus long qui rentre (tri décroissant), sinon repli « plus
+  courts non-récents », log fail-loud (finish buffer / ID max vs plus court morceau).
+- **`makeQueueFromApi` — soft-strict station-wide** :
+  `maxDuration = min(maxMusicDurationBeforeTopOfHour, secondsUntilNextScheduledStart)` →
+  pose `hour_boundary_enforce_cap` + `hour_boundary_max_play_seconds` si dépassement.
+  try/catch → erreur = pas de cap (ne jamais casser le build). Pas une coupe dure :
+  l'application réelle est un cue_out à l'étage 2.
+
+### Étage 2 — `AnnotateNextSong` (→ ordre Liquidsoap)
+
+Déclenché par `Annotations::annotateNextSong()` (via `getNextToSendToAutoDj`). Abonnés :
+
+`annotateSongPath`(20) → `annotateForLiquidsoap`(15) → `addCachedAutocueData`(12) →
+`HourBoundaryAnnotator::applyHourBoundaryCap`(11) → `annotatePlaylist`(10) →
+`HourBoundaryAnnotator::applyLegalIdQuickCut`(9) → `ContentTypeCrossfadeAnnotator`(8) →
+`annotateRequest`(5) → `postAnnotation`(-10).
+
+- cap horaire (11) : traduit `hour_boundary_max_play_seconds` en `autocue_cue_out`/`duration` ;
+- quick-cut legal ID (9) : fades à 0 ;
+- crossfade par type de contenu (8) : s'efface pour les legal IDs ;
+- `postAnnotation` (-10) : pose `sent_to_autodj=true` + `timestamp_cued=now`.
+
+### Résumé une phrase
+
+`Queue::buildQueue` remplit la file à l'avance en dispatchant `BuildQueue` slot par slot ;
+sur l'event : requests → TOPH → AI DJ → `calculateNextSong` (rotation pondérée par
+type/scheduled, dédup, rotation-goal, playability, bornes horaires) → validation DMCA ;
+plus tard, à la demande de LS, `AnnotateNextSong` habille la ligne (chemin, autocue, cap,
+crossfade) et la marque envoyée.
+
+### `Scheduler.php` — les portes de décision
+
+Point d'entrée depuis `calculateNextSong` : **`shouldPlaylistPlayNow(playlist, now)`**.
+Ordre interne :
+1. `isPlaylistScheduledToPlayNow` (fenêtre d'horaire). **Aucun schedule item → toujours vrai**
+   (PL non planifiée = éligible en permanence).
+2. puis selon `type` :
+   - **OncePerHour** → `shouldPlaylistPlayNowPerHour` (voir plus bas) ;
+   - **OncePerXSongs** → `!queueRepo->isPlaylistRecentlyPlayed(pl, play_per_songs)` (comptage sur la file) ;
+   - **OncePerXMinutes** → `!wasPlaylistPlayedInLastXMinutes(pl, now, play_per_minutes)` (sur `played_at`) ;
+   - **Advanced** → **false** (jamais géré par l'AutoDJ) ;
+   - **Standard** → true.
+
+`shouldPlaylistPlayNowPerHour` :
+- si `HourBoundaryPlanner::shouldSuppressOncePerHourPlaylist` (TOPH on + minute cible :00) →
+  **false** (le legal ID TOPH remplace la PL once-per-hour de :00) ;
+- **TOPH activé → mode strict** : joue seulement si `now->minute == play_per_hour_minute` ET
+  pas jouée depuis 30 min ;
+- **TOPH désactivé → mode fuzzy** : fenêtre de 15 min après la minute cible
+  (`ONCE_PER_HOUR_FUZZY_WINDOW_MINUTES`) + garde 30 min.
+
+`isPlaylistScheduledToPlayNow → getActiveScheduleFromCollection → shouldSchedulePlayNow` :
+- `shouldSchedulePlayOnCurrentDate` : bornes `start_date`/`end_date`, gestion overnight quand
+  `start_date == end_date`, récurrence via `ScheduleRecurrence` ;
+- **périodes de comparaison** selon `start_time` vs `end_time` :
+  - **start == end** → « play once » : trois fenêtres de 15 min (hier / aujourd'hui / demain) ;
+  - **start > end** → **overnight** : deux plages à cheval sur minuit ;
+  - sinon → `[start, end]` ;
+- `shouldPlayInSchedulePeriod` : dateRange contient `now` ? + jour de semaine
+  (`isScheduleScheduledToPlayToday`) + règles spéciales (sauf si `excludeSpecialRules`) :
+  - **Play Single Track** : déjà joué après le début de la plage → false ;
+  - **Loop Once** → `shouldPlaylistLoopNow` (reset de file conditionnel via `spmRepo`,
+    comparaison `queue_reset_at`).
+
+> `excludeSpecialRules=true` est le mode du contrôle « la ligne en file est-elle encore valide ? »
+> (`Queue::isQueueRowStillValid`) : on veut juste savoir si le créneau est encore ouvert, sans
+> rejouer les règles single-track / loop.
+
+Autres portes :
+- **`isPlaylistStrictStartDueNow(pl, tz, now)`** : vrai **exactement pendant la minute** où un
+  schedule `strict_start` démarre (`start_time == HHMM courant`, date/jour OK). Déclencheur du
+  **hard interrupt** via la queue interruptive (branche éligibilité interruptif de `calculateNextSong`).
+- **`secondsUntilNextScheduledStart(station, now)`** : plus proche démarrage planifié station-wide
+  dans l'heure qui vient (scan today+tomorrow de toutes les PL activées), sinon null. Alimente le
+  cap soft-strict de `makeQueueFromApi`.
+- **`getPlaylistScheduleDuration`** : durée du créneau (flux Remote de longueur indéterminée).
+- **`canStreamerStreamNow`** : enforcement d'horaire des streamers live.
+
+### `DuplicatePrevention::preventDuplicates(eligible, played, allowDuplicates, agingThresholdDays?)`
+
+1. Map `song_id → dernier timestamp joué` depuis `played`.
+2. Sépare `eligible` en **non-joués** vs joués (pose `last_played` sur l'objet track).
+3. **Library aging** (si `agingThresholdDays > 0`, cas SmartShuffle) : tri qui remonte en tête les
+   morceaux non joués depuis > seuil (agés d'abord, puis plus anciens d'abord).
+4. `getDistinctTrack(non-joués)` puis, à défaut, `getDistinctTrack(tous)` :
+   évite **tout** titre déjà joué, puis tente d'éviter l'artiste (split multi-artistes sur
+   `, `, ` feat `, ` & `, ` vs. `, `/`… via séparateur `chr(7)`). Renvoie le premier qui évite
+   titre ET artiste.
+5. Aucun distinct :
+   - `allowDuplicates=true` → **least-recently-played** (tri `last_played` asc, premier) ;
+   - sinon `null` (déclenche 2e passe / reset côté QueueBuilder).
+
+### `HourBoundaryPlanner` — math TOPH (station-wide)
+
+Config bornée via `clampInt`, depuis `backend_config.top_of_hour_*` :
+lookahead 1–30 min (déf **10**), finish buffer 0–120 s (déf **15**), tolérance conformité
+1–60 s (déf **10**), ID max 15–120 s (déf **60**). `isTopOfHourProtectionEnabled` =
+`top_of_hour_id_enabled`.
+
+Bornes et fenêtres :
+- `isInLookaheadZone` : protection on ET `0 < secondsUntilNextTopOfHour ≤ lookahead × 60`.
+- **`maxMusicDurationBeforeTopOfHour`** = `secondsUntil − (finishBuffer + idMax)` (min 1.0), null
+  hors lookahead. **C'est le cap** consommé par `applyHourBoundarySelection` (sélection) et
+  `makeQueueFromApi` (soft-strict).
+- **`isTopOfHourIdDue`** : protection on ; fenêtre `secondsUntil ≤ buffer` ET `secondsUntil ≤ 1800` ;
+  puis `!hasTopOfHourIdQueued`. `buffer = finishBuffer + idMax` (déf **75 s** → tir vers :58:45).
+- **`resolveTopOfHourExpectedPlayAt`** : borne servie = heure suivante si `> 30 s` dans l'heure,
+  sinon heure courante. **Ancrage du fix 1b.**
+- **`hasTopOfHourIdQueued`** (garde 1b corrigée) : itère la file non jouée, repère les lignes legal ID
+  (`top_of_hour_legal_id` OU média `isStationId`), dérive la borne servie depuis **`timestamp_cued`**
+  (et non `timestamp_played`, toujours null sur file non jouée) puis compare à la cible.
+- `shouldSuppressOncePerHourPlaylist` : TOPH on + OncePerHour + `play_per_hour_minute == 0` →
+  supprime la PL legacy de :00.
+
+> **Confirmé à la lecture** : `getPlannedSecondsIntoHour()` porte **toujours** la garde inerte
+> `if ($playedAt === null) continue;` (défaut 2b du SUIVI). Hors périmètre QueueBuilder — appelée
+> uniquement par le Clock Wheel planner. Mentionné pour traçabilité.
+
+### Injection TOPH — `TopOfHourIdScheduler` (prio 2) + `HourBoundaryLegalIdResolver`
+
+Ferme la boucle TOPH côté **pose** de la ligne legal ID. État lu après le patch TOPH du 2026-08-08.
+
+**`TopOfHourIdScheduler::buildTopOfHourId`** (abonné `BuildQueue`, prio 2) — gardes en cascade :
+1. `nextSongs` déjà posé OU interruptif → skip ;
+2. protection désactivée (`isTopOfHourProtectionEnabled`) → skip ;
+3. **`ScheduleConflictChecker::hasEmergencyScheduleActive` → skip** (le legal ID cède à un schedule
+   d'urgence — garde nouvelle) ;
+4. `isTopOfHourIdDue` faux → skip ;
+5. sinon : historique récent (`duplicate_prevention_time_range`) → `resolveMandatoryLegalId` →
+   `setNextSongs` + `flush`.
+
+> ⚠️ Le fichier est actuellement truffé de logs `[TOPH DEBUG]` au niveau **info** (secondes
+> jusqu'à :00, buffer, fenêtre, target, is_due, media choisi…). Instrumentation du patch de
+> validation — **à retirer** une fois le test confirmé (bruit en prod sinon).
+
+**`HourBoundaryLegalIdResolver::resolveMandatoryLegalId(station, recentHistory, expectedPlayTime)`** :
+1. Candidats : d'abord les médias **station ID** (`loadStationIdCandidates`, types `stationIdTypeValues`,
+   tri `id ASC`) ; si aucun → **PROMO** en substitut (`usedSubstitute=true`) ; si toujours rien →
+   erreur, null.
+2. `maxDuration = min(120, idMaxSeconds)`. `filterByDuration` : garde ceux ≤ maxDuration ; si aucun
+   ne rentre, prend le **plus court** unique.
+3. Construit des `StationPlaylistQueue` (sentinelle `spm_id=0`), puis **`applySequentialAlgorithm`** :
+   tri par dernier passage croissant (least-recently-played d'abord), départage par `media.id ASC`
+   → rotation séquentielle des IDs.
+4. `preventDuplicates` (sans doublon → avec doublon → premier).
+5. Fabrique `StationQueue::fromMedia`, pose **`top_of_hour_legal_id=true`**,
+   `hour_boundary_enforce_cap=true`, `hour_boundary_max_play_seconds=floor(maxDuration)`, borne
+   `duration` à maxPlaySeconds. Persist.
+
+> Boucle complète : la ligne posée ici est ce que `hasTopOfHourIdQueued` (garde 1b) détecte au tick
+> suivant via `timestamp_cued`, et que l'étage 2 habille pour l'antenne — `applyLegalIdQuickCut`
+> (prio 9, fades 0) + `applyHourBoundaryCap` (prio 11, `cue_out` au cap).
+
+### Zones d'ombre restantes (à ouvrir sur autorisation)
+
+- `ScheduleConflictChecker` : `hasEmergencyScheduleActive` (nouvelle garde TOPH) — internes non lus.
+- `ScheduleRecurrence` / `DateRange` : utilitaires de récurrence et d'intervalle (implémentation
+  non détaillée).
+- `SponsorGuaranteedPlayoutService`, `HolidayOverrideService`, `MediaPlayability`,
+  `ContentTypeCrossfadeService` : effleurés via leurs points d'appel, internes non lus.
+
+---
+
 ## Journal
 
 - **2026-08-07** — Création du fichier. Snapshot `eternity/main` posé, TOPH en test.
@@ -364,3 +636,15 @@ la PL Remote Stream **non planifiée** ; AutoDJ/`nextsong`/PL planifiées inchan
   (résolue par reload), que l'UI ne signalait pas. Couvert par le patch `needs_restart` (Clos #2).
   Aucune correction requise sur la planification. Point acté.
 - **2026-08-08** — ✅ #3 Fallback-yield RÉGLÉ et acté.
+- **2026-08-08** — Ajout section « Architecture — QueueBuilder / AutoDJ » (référence pour la
+  reconstruction) : deux étages, pipeline `BuildQueue`, `calculateNextSong`, greffes fork, étage
+  `AnnotateNextSong`. Lecture directe du code, aucune modif de code.
+- **2026-08-08** — Doc archi étendue (lecture directe, aucune modif) : `Scheduler.php` (portes de
+  décision : `shouldPlaylistPlayNow`, périodes de schedule, strict-start, soft-strict),
+  `DuplicatePrevention` (dédup titre/artiste + library aging), `HourBoundaryPlanner` (math TOPH,
+  garde 1b confirmée). Confirmé au passage : `getPlannedSecondsIntoHour()` porte toujours la garde
+  inerte `timestamp_played` (défaut 2b, hors périmètre QueueBuilder).
+- **2026-08-08** — Doc archi : injection TOPH documentée (`TopOfHourIdScheduler` prio 2 +
+  `HourBoundaryLegalIdResolver`), lue après le patch TOPH. Boucle TOPH complète côté pose. Nouvelle
+  garde relevée : `ScheduleConflictChecker::hasEmergencyScheduleActive`. ⚠️ Logs `[TOPH DEBUG]`
+  niveau info présents dans le scheduler → à retirer après validation. Aucune modif de code.
