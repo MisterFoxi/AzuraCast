@@ -24,7 +24,8 @@ import timeGridPlugin from "@fullcalendar/timegrid";
 import dayGridPlugin from "@fullcalendar/daygrid";
 import {computed, useTemplateRef} from "vue";
 import {useAzuraCast} from "~/vendor/azuracast";
-import {Calendar, CalendarOptions} from "@fullcalendar/core";
+import {Calendar, CalendarOptions, FormatterInput} from "@fullcalendar/core";
+import useTimeDisplay from "~/functions/useTimeDisplay.ts";
 
 defineOptions({
     inheritAttrs: false
@@ -66,8 +67,16 @@ bootstrap5Plugin.themeClasses["bootstrap5"].prototype.rtlIconClasses = {
 }
 
 const {localeShort, timeConfig} = useAzuraCast();
+const {uses24HourTime} = useTimeDisplay();
 
 const calendarOptions = computed<CalendarOptions>(() => {
+    const timeFormat: FormatterInput = {
+        hourCycle: uses24HourTime.value ? 'h23' : 'h12',
+        hour: 'numeric',
+        minute: '2-digit',
+        meridiem: uses24HourTime.value ? false : 'short'
+    };
+
     return {
         locale: localeShort,
         locales: allLocales,
@@ -79,17 +88,12 @@ const calendarOptions = computed<CalendarOptions>(() => {
         headerToolbar: false,
         footerToolbar: false,
         height: 'auto',
-        views: {
-            timeGridWeek: {
-                slotLabelFormat: {
-                    ...timeConfig,
-                    hour: 'numeric',
-                    minute: '2-digit',
-                    omitZeroMinute: true,
-                    meridiem: 'short'
-                }
-            }
+        slotLabelFormat: {
+            ...timeConfig,
+            ...timeFormat,
+            omitZeroMinute: false
         },
+        eventTimeFormat: timeFormat,
         ...props.options
     };
 });

@@ -151,13 +151,11 @@
                                 >
                                     {{ $gettext('Start Time') }}
                                 </label>
-                                <input
+                                <time-code
                                     :id="'sched-start-' + activeDjId"
-                                    v-model="schedForm.start_time"
-                                    class="form-control form-control-dark"
-                                    type="time"
-                                    step="60"
-                                >
+                                    v-model="schedStartTimeCode"
+                                    class="form-control-dark"
+                                />
                             </div>
                             <div class="sched-field sched-field--half">
                                 <label
@@ -166,13 +164,11 @@
                                 >
                                     {{ $gettext('End Time') }}
                                 </label>
-                                <input
+                                <time-code
                                     :id="'sched-end-' + activeDjId"
-                                    v-model="schedForm.end_time"
-                                    class="form-control form-control-dark"
-                                    type="time"
-                                    step="60"
-                                >
+                                    v-model="schedEndTimeCode"
+                                    class="form-control-dark"
+                                />
                             </div>
                         </div>
 
@@ -273,12 +269,14 @@
 </template>
 
 <script setup lang="ts">
-import {ref} from 'vue';
+import {computed, ref} from 'vue';
 import {useGettext} from 'vue3-gettext';
 import Loading from '~/components/Common/Loading.vue';
+import TimeCode from '~/components/Common/TimeCode.vue';
 import {useAxios} from '~/vendor/axios';
 import {useNotify} from '~/components/Common/Toasts/useNotify.ts';
 import {useApiRouter} from '~/functions/useApiRouter.ts';
+import useTimeDisplay, {parseTimeCode, timeCodeTo24HourString} from '~/functions/useTimeDisplay.ts';
 
 // --- Types ---
 
@@ -305,6 +303,7 @@ const {$gettext} = useGettext();
 const {axios} = useAxios();
 const {notifySuccess, notifyError} = useNotify();
 const {getStationApiUrl} = useApiRouter();
+const {formatTimeString} = useTimeDisplay();
 
 const DAY_LABELS = [
     $gettext('Mon'),
@@ -340,6 +339,20 @@ const emptyForm = (): SchedForm => ({
 });
 const schedForm = ref<SchedForm>(emptyForm());
 
+const schedStartTimeCode = computed<number | null>({
+    get: () => parseTimeCode(schedForm.value.start_time),
+    set: (value) => {
+        schedForm.value.start_time = timeCodeTo24HourString(value);
+    },
+});
+
+const schedEndTimeCode = computed<number | null>({
+    get: () => parseTimeCode(schedForm.value.end_time),
+    set: (value) => {
+        schedForm.value.end_time = timeCodeTo24HourString(value);
+    },
+});
+
 // --- URL helpers ---
 
 const schedulesUrl = () =>
@@ -350,20 +363,8 @@ const scheduleUrl = (id: number) =>
 
 // --- Formatters ---
 
-// Render a 24h "HH:MM" backend time as 12-hour "h:MM AM/PM" so the schedule
-// surface matches the rest of the UI (client asked for no military time).
-const to12Hour = (t: string): string => {
-    const m = /^(\d{1,2}):(\d{2})/.exec(t);
-    if (!m) return t;
-    let h = parseInt(m[1], 10);
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    h = h % 12;
-    if (h === 0) h = 12;
-    return `${h}:${m[2]} ${ampm}`;
-};
-
 const formatTime = (s: AiDjSchedule): string => {
-    if (s.start_time && s.end_time) return `${to12Hour(s.start_time)} – ${to12Hour(s.end_time)}`;
+    if (s.start_time && s.end_time) return `${formatTimeString(s.start_time)} – ${formatTimeString(s.end_time)}`;
     return $gettext('All day');
 };
 

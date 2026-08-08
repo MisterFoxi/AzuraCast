@@ -53,10 +53,10 @@
                 :description="$gettext('To play once per day, set start and end to the same value.')"
             >
                 <template #default="{id, model, fieldClass}">
-                    <am-pm-time-input
-                        :input-id="id"
+                    <time-code
+                        :id="id"
                         v-model="model.$model"
-                        :field-class="fieldClass"
+                        :class="fieldClass"
                     />
                 </template>
             </form-group-field>
@@ -69,10 +69,10 @@
                 :description="$gettext('If end is before start, the event plays overnight. To avoid overlapping the next event, you can end at :59 (e.g. 1:59 PM before 2:00 PM).')"
             >
                 <template #default="{id, model, fieldClass}">
-                    <am-pm-time-input
-                        :input-id="id"
+                    <time-code
+                        :id="id"
                         v-model="model.$model"
-                        :field-class="fieldClass"
+                        :class="fieldClass"
                     />
                 </template>
             </form-group-field>
@@ -337,7 +337,7 @@
 
 <script setup lang="ts">
 import ModalForm from '~/components/Common/ModalForm.vue';
-import AmPmTimeInput from '~/components/Common/AmPmTimeInput.vue';
+import TimeCode from '~/components/Common/TimeCode.vue';
 import FormGroupField from '~/components/Form/FormGroupField.vue';
 import FormGroupMultiCheck from '~/components/Form/FormGroupMultiCheck.vue';
 import FormGroupSelect from '~/components/Form/FormGroupSelect.vue';

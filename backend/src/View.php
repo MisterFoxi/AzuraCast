@@ -147,7 +147,11 @@ final class View extends Engine
 
             if ($userObj instanceof User) {
                 // See: https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/DateTimeFormat/DateTimeFormat#hourcycle
-                $timeConfig->hourCycle = $userObj->show_24_hour_time ? 'h23' : 'h12';
+                if (true === $userObj->show_24_hour_time) {
+                    $timeConfig->hourCycle = 'h23';
+                } elseif (false === $userObj->show_24_hour_time) {
+                    $timeConfig->hourCycle = 'h12';
+                }
 
                 $globalPermissions = [];
                 $stationPermissionsRaw = [];

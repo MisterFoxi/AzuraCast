@@ -1,17 +1,19 @@
 <template>
     <input
         v-bind="$attrs"
-        v-model="timeCode"
+        v-model="displayValue"
         class="form-control"
-        type="time"
-        pattern="[0-9]{2}:[0-9]{2}"
-        placeholder="13:45"
+        :class="{'is-invalid': invalid}"
+        type="text"
+        :placeholder="placeholder"
+        :aria-invalid="invalid ? 'true' : undefined"
+        @blur="normalizeDisplay"
     >
 </template>
 
 <script setup lang="ts">
-import {computed} from "vue";
-import {padStart} from "es-toolkit/compat";
+import {computed, ref, watch} from "vue";
+import useTimeDisplay, {parseTimeCode, parseTimeInput} from "~/functions/useTimeDisplay.ts";
 
 const props = withDefaults(
     defineProps<{
@@ -26,31 +28,45 @@ const emit = defineEmits<{
     (e: 'update:modelValue', value: number | null): void
 }>();
 
-const parseTimeCode = (timeCode: string | number | null) => {
-    if (timeCode !== '' && timeCode !== null) {
-        timeCode = padStart(String(timeCode), 4, '0');
-        return timeCode.substring(0, 2) + ':' + timeCode.substring(2);
+const {uses24HourTime, formatTimeCode} = useTimeDisplay();
+
+const initialValue = parseTimeCode(props.modelValue);
+const displayValue = ref(formatTimeCode(initialValue));
+const invalid = computed(() => displayValue.value.trim() !== '' && parseTimeInput(displayValue.value) === null);
+const placeholder = computed(() => uses24HourTime.value ? '14:30' : '2:30 PM');
+
+watch(
+    () => props.modelValue,
+    (value) => {
+        const parsedValue = parseTimeCode(value);
+        if (parsedValue !== parseTimeInput(displayValue.value)) {
+            displayValue.value = formatTimeCode(parsedValue);
+        }
+    }
+);
+
+watch(uses24HourTime, () => {
+    displayValue.value = formatTimeCode(parseTimeCode(props.modelValue));
+});
+
+watch(displayValue, (value) => {
+    if (value.trim() === '') {
+        emit('update:modelValue', null);
+        return;
     }
 
-    return null;
-}
-
-const convertToTimeCode = (time: string | null | undefined): number | null => {
-    if (time === null || time === '' || time === undefined) {
-        return null;
-    }
-
-    const timeParts = time.split(':');
-    const n = (100 * parseInt(timeParts[0], 10)) + parseInt(timeParts[1], 10);
-    return Number.isNaN(n) ? null : n;
-}
-
-const timeCode = computed({
-    get: () => {
-        return parseTimeCode(props.modelValue);
-    },
-    set: (newValue) => {
-        emit('update:modelValue', convertToTimeCode(newValue));
+    const parsedValue = parseTimeInput(value);
+    if (parsedValue !== null) {
+        emit('update:modelValue', parsedValue);
     }
 });
+
+const normalizeDisplay = () => {
+    const parsedValue = parseTimeInput(displayValue.value);
+    if (parsedValue !== null) {
+        displayValue.value = formatTimeCode(parsedValue);
+    } else {
+        displayValue.value = formatTimeCode(parseTimeCode(props.modelValue));
+    }
+};
 </script>
