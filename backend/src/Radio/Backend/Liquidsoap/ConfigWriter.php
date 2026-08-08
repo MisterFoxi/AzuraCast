@@ -274,15 +274,15 @@ final class ConfigWriter implements EventSubscriberInterface
                     default => 'input.ffmpeg'
                 };
 
-                $remoteUrlFunc = 'mksafe(buffer(buffer=' . $buffer . '., '
-                    . $inputFunc . '(' . self::toRawString($remoteUrl) . ')))';
+                $remoteUrlFunc = 'buffer(buffer=' . $buffer . '., '
+                    . $inputFunc . '(' . self::toRawString($remoteUrl) . '))';
 
                 if (0 === $scheduleItems->count()) {
                     $fallbackRemoteUrl = $remoteUrlFunc;
                     continue;
                 }
 
-                $playlistConfigLines[] = $playlistVarName . ' = ' . $remoteUrlFunc;
+                $playlistConfigLines[] = $playlistVarName . ' = mksafe(' . $remoteUrlFunc . ')';
                 $event->appendLines($playlistConfigLines);
 
                 foreach ($scheduleItems as $scheduleItem) {
@@ -460,7 +460,15 @@ final class ConfigWriter implements EventSubscriberInterface
             $event->appendBlock(
                 <<< LIQ
                 remote_url = {$fallbackRemoteUrl}
-                radio = fallback(id="fallback_remote_url", track_sensitive = false, [remote_url, radio])
+                thread.run.recurrent(fast=false, delay=1.0, { azuracast.update_autodj_queue_status() })
+                radio = switch(
+                    id="fallback_remote_url",
+                    track_sensitive=false,
+                    [
+                        ({ azuracast.autodj_queue_ready() }, radio),
+                        ({ true }, remote_url)
+                    ]
+                )
                 LIQ
             );
         }

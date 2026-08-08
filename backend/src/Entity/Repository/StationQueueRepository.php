@@ -172,6 +172,22 @@ final class StationQueueRepository extends AbstractStationBasedRepository
         return $this->getUnplayedBaseQuery($station)->getQuery()->execute();
     }
 
+    public function hasUnplayedQueue(Station $station): bool
+    {
+        $result = $this->em->createQuery(
+            <<<'DQL'
+                SELECT sq.id
+                FROM App\Entity\StationQueue sq
+                WHERE sq.station = :station
+                AND sq.is_played = 0
+            DQL
+        )->setParameter('station', $station)
+            ->setMaxResults(1)
+            ->getOneOrNullResult();
+
+        return null !== $result;
+    }
+
     public function clearUpcomingQueue(Station $station): void
     {
         $this->em->createQuery(
