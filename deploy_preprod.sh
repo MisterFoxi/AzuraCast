@@ -214,6 +214,10 @@ echo "==> Suppression de l'ancienne image sur pre-prod"
 ssh "$HOST" "if docker image inspect '${FULL_IMAGE}' >/dev/null 2>&1; then docker image rm -f '${FULL_IMAGE}'; fi"
 
 echo
+echo "==> Purge des images Docker inutilisées sur pre-prod"
+ssh "$HOST" "docker image prune -af"
+
+echo
 echo "==> Streaming image vers docker load sur pre-prod"
 LOAD_OUTPUT="$(
     gzip -dc -- "$LOCAL_TAR" | ssh "$HOST" "docker load" 2>&1
