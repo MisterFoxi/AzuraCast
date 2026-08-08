@@ -49,18 +49,12 @@ EXPORT_DIR="/data/docker-exports"
 CONFIRM=1
 LOCAL_TAR=""
 BUILD_TAR=""
-REMOTE_TAR=""
-REMOTE_ARCHIVE_CREATED=0
 
 cleanup() {
     local rc=$?
 
     [[ -z "$BUILD_TAR" ]] || rm -f -- "$BUILD_TAR"
     [[ -z "$LOCAL_TAR" ]] || rm -f -- "$LOCAL_TAR"
-
-    if [[ "$REMOTE_ARCHIVE_CREATED" -eq 1 && -n "$REMOTE_TAR" ]]; then
-        ssh "$HOST" "rm -f -- '${REMOTE_TAR}'" >/dev/null 2>&1 || true
-    fi
 
     return "$rc"
 }
@@ -133,7 +127,6 @@ mkdir -p "$EXPORT_DIR" || die "impossible de créer le répertoire d'export: ${E
 ARCHIVE_NAME="$(sanitize_tag "${IMAGE_NAME}_${IMAGE_TAG}_${SHORT_SHA}").tar.gz"
 LOCAL_TAR="${EXPORT_DIR%/}/${ARCHIVE_NAME}"
 BUILD_TAR="${LOCAL_TAR%.gz}"
-REMOTE_TAR="/tmp/${ARCHIVE_NAME}"
 
 echo "==> Configuration"
 cat <<EOF
@@ -147,7 +140,6 @@ Target:         ${TARGET}
 Builder:        ${BUILDER}
 Export dir:     ${EXPORT_DIR}
 Local tar:      ${LOCAL_TAR}
-Remote tar:     ${REMOTE_TAR}
 EOF
 
 if [[ -n "$(git status --porcelain)" ]]; then
@@ -214,14 +206,17 @@ grep -Fq "\"${FULL_IMAGE}\"" <<< "$ARCHIVE_MANIFEST" \
 echo "Tarball vérifié: ${FULL_IMAGE}"
 
 echo
-echo "==> Copie vers ${HOST}:${REMOTE_TAR}"
-scp "$LOCAL_TAR" "${HOST}:${REMOTE_TAR}"
-REMOTE_ARCHIVE_CREATED=1
+echo "==> Arrêt du service ${SERVICE} sur pre-prod"
+ssh "$HOST" "cd '${COMPOSE_DIR}' && docker compose stop '${SERVICE}' && docker compose rm -f '${SERVICE}'"
 
 echo
-echo "==> docker load sur pre-prod"
+echo "==> Suppression de l'ancienne image sur pre-prod"
+ssh "$HOST" "if docker image inspect '${FULL_IMAGE}' >/dev/null 2>&1; then docker image rm -f '${FULL_IMAGE}'; fi"
+
+echo
+echo "==> Streaming image vers docker load sur pre-prod"
 LOAD_OUTPUT="$(
-    ssh "$HOST" "set -o pipefail; gunzip -c '${REMOTE_TAR}' | docker load" 2>&1
+    gzip -dc -- "$LOCAL_TAR" | ssh "$HOST" "docker load" 2>&1
 )" || {
     printf '%s\n' "$LOAD_OUTPUT" >&2
     die "docker load a échoué sur ${HOST}"
@@ -231,10 +226,6 @@ printf '%s\n' "$LOAD_OUTPUT"
 if grep -Fq "Error unpacking image" <<< "$LOAD_OUTPUT"; then
     die "docker load n'a pas pu extraire l'image sur ${HOST}"
 fi
-
-echo "==> Suppression archive de transfert sur pre-prod"
-ssh "$HOST" "rm -f -- '${REMOTE_TAR}'"
-REMOTE_ARCHIVE_CREATED=0
 
 LOADED_IMAGE_ID="$(
     ssh "$HOST" "docker image inspect '${FULL_IMAGE}' --format '{{.Id}}'"
