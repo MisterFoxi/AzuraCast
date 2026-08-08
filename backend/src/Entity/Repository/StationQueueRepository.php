@@ -152,7 +152,10 @@ final class StationQueueRepository extends AbstractStationBasedRepository
         Station $station,
         DateTimeImmutable $since,
         int $toleranceSeconds,
+        ?DateTimeImmutable $until = null,
     ): array {
+        $until ??= new DateTimeImmutable('now');
+
         $rows = $this->em->createQuery(
             <<<'DQL'
                 SELECT sq.timestamp_played, COALESCE(sm.type, '') AS media_type
@@ -162,10 +165,12 @@ final class StationQueueRepository extends AbstractStationBasedRepository
                 AND sq.is_played = 1
                 AND sq.top_of_hour_legal_id = 1
                 AND sq.timestamp_played >= :since
+                AND sq.timestamp_played <= :until
                 ORDER BY sq.timestamp_played ASC
             DQL
         )->setParameter('station', $station)
             ->setParameter('since', $since)
+            ->setParameter('until', $until)
             ->getArrayResult();
 
         $onTimeCount = 0;

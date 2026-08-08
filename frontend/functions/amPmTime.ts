@@ -16,6 +16,13 @@ export function formatTimeCodeToAmPm(timeCode: number): string {
     return formatPartsToAmPm(hour24, minutes);
 }
 
+/** Convert a whole hour (0–23) to its 12-hour display value. */
+export function formatHourOfDayToAmPm(hourOfDay: number): string {
+    const hour24 = Math.min(23, Math.max(0, Math.trunc(hourOfDay)));
+
+    return formatPartsToAmPm(hour24, 0);
+}
+
 export function formatPartsToAmPm(hour24: number, minutes: number): string {
     const mins = Math.min(59, Math.max(0, Math.trunc(minutes)));
     let hour12 = Math.trunc(hour24) % 24;
@@ -83,6 +90,20 @@ export function parseTimeCodeFromAmPm(text: string): number | null {
     const parsed = parseAmPmTime(text);
 
     return parsed !== null ? timeCodeFromParsed(parsed) : null;
+}
+
+export function parseHourOfDayFromAmPm(text: string, requireWholeHour = true): number | null {
+    const parsed = parseAmPmTime(text);
+
+    if (parsed === null) {
+        return null;
+    }
+
+    if (requireWholeHour && parsed.minutes !== 0) {
+        return null;
+    }
+
+    return parsed.hour;
 }
 
 export type AmPmPeriod = 'AM' | 'PM';

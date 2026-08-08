@@ -865,6 +865,11 @@ return static function (RouteCollectorProxy $group) {
                             )->setName('api:stations:reports:overview-heatmap');
 
                             $group->get(
+                                '/overview/top-of-hour-performance',
+                                Controller\Api\Stations\Reports\Overview\TopOfHourPerformanceAction::class
+                            )->setName('api:stations:reports:overview-top-of-hour-performance');
+
+                            $group->get(
                                 '/overview/playlist-performance',
                                 Controller\Api\Stations\Reports\Overview\PlaylistPerformanceAction::class
                             )->setName('api:stations:reports:overview-playlist-performance');
