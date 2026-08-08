@@ -1,7 +1,7 @@
 # Suivi des points à traiter — AzuraCast (fork)
 
 **Base :** `eternityready2/AzuraCast` — **Repo :** `MisterFoxi/AzuraCast` — branches `main` et `dev`
-**Dernière MAJ :** 2026-08-07
+**Dernière MAJ :** 2026-08-08
 
 > On repart de zéro. Ce fichier ne contient que des faits établis cette session.
 > Rien n'est présumé à partir de sessions antérieures.
@@ -24,7 +24,7 @@
 |---|---|
 | Batch MP3 | ✅ OK (modifs validées) |
 | TOPH (Top Of The Hour) | ✅ CORRIGÉ (patch 1b, validé au test 12:00) |
-| Playlists groupées | ❌ Absentes |
+| Playlists groupées | ❌ Absentes — analyse fonctionnelle PR #8433 dans `PLAYLIST-GROUPS.md` (réimpl. à faire) |
 | Schedule dans création de playlist | ⚠️ Encore présent (à sortir du formulaire playlist) |
 
 ---
@@ -162,7 +162,7 @@ Comportement normal, pas de bug.
 
 ---
 
-## À traiter
+## Clos (suite)
 
 ### 2. Reload to apply changes — Remote Stream (fork, lié `strict_start`) — ✅ CORRIGÉ & VALIDÉ
 
@@ -217,6 +217,14 @@ est bonne) mais dans l'**absence de déclencheur** : rien ne reliait une opérat
 > question de la **préemption Liquidsoap** d'un flux externe, distincte du signal `needs_restart`
 > traité ici.
 
+**✅ Déclenchements des PL externes aux horaires spécifiques : VALIDÉ.** Le comportement de
+diffusion aux créneaux programmés était en réalité **correct** — le `.liq` régénéré contient bien
+la PL externe et son horaire, et le flux part au bon moment. Le seul défaut était le **rechargement
+du `.liq`** (résolu par force reload), que **l'UI ne signalait pas** (bannière « reload to apply
+changes » jamais levée). Corrigé par le patch `needs_restart` ci-dessus (backend + frontend) :
+l'UI signale désormais le besoin de recharge après ajout/modif/effacement d'un horaire de PL
+Remote Stream. Rien à corriger côté planification elle-même.
+
 ---
 
 ## À traiter
@@ -232,6 +240,59 @@ Seuls appelants : `backend/src/Radio/AutoDJ/ClockWheel/ClockWheelPlaybackPlanner
 (ligne 88 + wrapper privé 236/241). Impact : positionnement des slots de clock wheel.
 Pertinent uniquement si les clock wheels sont utilisées sur la station — usage NON confirmé,
 à valider avant d'y toucher. Correctif probable identique à 1b (dériver de `timestamp_cued`).
+
+### 3. Remote Stream fallback-yield (préemption Liquidsoap) — ✅ RÉGLÉ (2026-08-08)
+
+Réglé et validé : le fallback Remote Stream s'arrête dès que la file AutoDJ est non vide, et
+reprend si elle se revide. Comportement conforme à la dev note. Voir Journal.
+
+Suite du thread ouvert « préemption Liquidsoap du flux distant » (distinct de `needs_restart`, clos #2).
+Objectif (dev note lc) : une PL Remote Stream **non planifiée** doit servir de fallback de démarrage/
+secours, pas de source prioritaire permanente. Règle : file AutoDJ vide → Remote Stream ;
+file AutoDJ non vide (≥1 `StationQueue` `is_played=0`) → radio normale. Retour possible si la file
+se revide. Pas de reload / disable-enable requis pour la bascule.
+
+**Points ouverts de la note — RÉSOLUS par investigation code (autorisée, sans web) :**
+
+- **Point d'injection `.liq`** = `ConfigWriter::writePlaylistConfiguration()`, bloc « Handle remote URL
+  fallbacks » (~l.458-465). Généré aujourd'hui pour une PL Remote Stream **non planifiée**
+  (`0 === scheduleItems->count()` → `$fallbackRemoteUrl`) :
+  `remote_url = mksafe(buffer(buffer=N., input.http("URL")))`
+  `radio = fallback(id="fallback_remote_url", track_sensitive=false, [remote_url, radio])`
+  Ce bloc est AVANT `requests_fallback`/`interrupting_fallback` (qui restent donc au-dessus →
+  requests/interrupting préemptent toujours le remote — inchangé).
+- **Cause mécanique du bug** : `mksafe` rend `remote_url` toujours ready → dans un `fallback`
+  `track_sensitive=false` il gagne en permanence, ne rend jamais la main.
+- **Commande interne à étendre** (analogue `/nextsong`) : ajouter `case QueueStatus = 'queuestatus'`
+  à `App\Radio\Enums\LiquidsoapCommands` + classe `QueueStatusCommand extends AbstractCommand`
+  (calquée sur `NextSongCommand`), renvoyant `['ready' => bool]`. Dispatch déjà générique via
+  `LiquidsoapAction` (`/api/internal/{id}/liquidsoap/{action}`, auth `X-Liquidsoap-Api-Key`).
+- **Repo** : `StationQueueRepository::hasUnplayedQueue(Station): bool`, calqué sur
+  `hasCuedPlaylistMedia()` (count(sq.id) WHERE is_played=0 > 0). `is_played` (pas `sent_to_autodj`)
+  = choix de la note, justifié.
+- **Runtime Liquidsoap 2.4 — primitives déjà présentes** dans `util/docker/stations/liquidsoap/`
+  `azuracast.liq` : `ref()`/`.set` (état caché), `azuracast.api_call(endpoint, payload)` (renvoie
+  string JSON ou `null` sur non-200/erreur), `thread.run.recurrent(delay=…, {…})` (polling, déjà
+  utilisé par l'AutoDJ l.458), parsing `let json.parse ({ready}:{ready:bool}) = null.get(...)`.
+  Le prédicat `switch(track_sensitive=false, [({pred}, s), ({true}, s2)])` est DÉJÀ l'idiome maison
+  (schedule_switch). → **aucune recherche web nécessaire.**
+- **Filet de sécurité final** : `azuracast.add_fallback(s)` = `fallback(id="safe_fallback",
+  track_sensitive=false, [s, error_file(single fallback_path)])`. Donc un remote HS peut retomber
+  sur l'error jingle **à condition de ne pas être `mksafe`**.
+
+**Décisions d'archi en attente (lc) :**
+NEANT
+
+**Plan d'impl. proposé (patches, en attente d'autorisation d'écriture) :**
+P1 `hasUnplayedQueue()` (repo) · P2 enum + `QueueStatusCommand` · P3 poller + ref dans `azuracast.liq`
+· P4 `switch` conditionnel dans `ConfigWriter` (+ décision `mksafe`). Périmètre strict : uniquement
+la PL Remote Stream **non planifiée** ; AutoDJ/`nextsong`/PL planifiées inchangés.
+
+> Patches parasites en racine (`remote-stream-fallback-yield.patch`, `remote-stream-needs-restart.patch`,
+> `frontend-remote-stream-needs-restart.patch`, `StationRequiresRestart.php.patched`, `diff.txt`,
+> `diff2.txt`, `liquidsoap.orig`) : **déclarés obsolètes par lc, à effacer.** Non supprimés par Claude
+> (action irréversible) ; suppression `rm` par lc, ou déplacement `_archive/` sur confirmation.
+> `toph-dedup-1b.patch` CONSERVÉ (fix validé) sauf avis contraire.
 
 ---
 
@@ -279,3 +340,17 @@ Pertinent uniquement si les clock wheels sont utilisées sur la station — usag
   `StationRequiresRestart` + frontend `Playlists.vue`) appliqués sur `Z:` et confirmés par
   `git diff`. Point déplacé en « Clos » (#2). Reste ouvert et distinct : préemption Liquidsoap
   du flux externe (`strict_start`).
+- **2026-08-07** — Fallback-yield (à traiter #3) : investigation code autorisée (sans web). Points
+  ouverts de la dev note tous résolus depuis le code : injection = `ConfigWriter` bloc
+  `fallback_remote_url` (~l.458) ; commande interne = enum `LiquidsoapCommands` + `QueueStatusCommand` ;
+  repo = `hasUnplayedQueue()` (patron `hasCuedPlaylistMedia`) ; runtime `azuracast.liq` a déjà
+  `ref`/`api_call`/`thread.run.recurrent` + idiome `switch(pred)`. `mksafe` identifié comme cause
+  mécanique du non-yield ; filet `safe_fallback` présent. Plan P1-P4 prêt, écriture patches à autoriser.
+- **2026-08-07** — Patches parasites en racine déclarés obsolètes par lc (à effacer). Non supprimés
+  par Claude ; `toph-dedup-1b.patch` conservé.
+- **2026-08-07** — Fallback traité. Le fallback s'arrette des que la queue est non vide.
+- **2026-08-08** — ✅ Déclenchements des PL externes aux horaires spécifiques VALIDÉS. La
+  diffusion aux créneaux programmés était correcte ; le seul problème était la recharge du `.liq`
+  (résolue par reload), que l'UI ne signalait pas. Couvert par le patch `needs_restart` (Clos #2).
+  Aucune correction requise sur la planification. Point acté.
+- **2026-08-08** — ✅ #3 Fallback-yield RÉGLÉ et acté.
