@@ -130,10 +130,12 @@ import {useApiRouter} from "~/functions/useApiRouter.ts";
 import {nextTick, ref, useTemplateRef, watch} from "vue";
 import {EventImpl} from "@fullcalendar/core/internal";
 import useHasEditModal from "~/functions/useHasEditModal";
+import {useMayNeedRestart} from "~/functions/useMayNeedRestart";
 import {useTranslate} from "~/vendor/gettext";
 
 const {$gettext} = useTranslate();
 const {getStationApiUrl} = useApiRouter();
+const {mayNeedRestart} = useMayNeedRestart();
 
 const activeTab = ref<'calendar' | 'live' | 'holidays'>('calendar');
 
@@ -170,5 +172,6 @@ const doCreateEvent = () => {
 
 const relist = () => {
     $scheduleTab.value?.refresh();
+    mayNeedRestart();
 };
 </script>

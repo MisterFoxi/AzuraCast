@@ -258,26 +258,29 @@ final class HourBoundaryPlanner
         CarbonImmutable $hourStart,
         ?DateTimeZone $tz = null,
     ): bool {
-        $tz ??= $station->getTimezoneObject();
-        $hourEnd = $hourStart->addHour();
+        $targetTimestamp = $hourStart->getTimestamp();
 
         foreach ($this->queueRepo->getUnplayedQueue($station) as $row) {
-            $playedAt = $row->timestamp_played;
-            if ($playedAt === null) {
+            $isLegalId = $row->top_of_hour_legal_id || $row->clock_wheel_legal_id_substitute;
+
+            if (!$isLegalId) {
+                $media = $row->media;
+                $isLegalId = $media !== null && StationMediaTypes::isStationId($media->type);
+            }
+
+            if (!$isLegalId) {
                 continue;
             }
 
-            $queuedLocal = CarbonImmutable::instance($playedAt)->setTimezone($tz);
-            if ($queuedLocal->lessThan($hourStart) || $queuedLocal->greaterThanOrEqualTo($hourEnd)) {
-                continue;
-            }
+            // timestamp_played is null while a row is unplayed, so it cannot be
+            // used to locate an already-queued ID. Derive the boundary this ID
+            // serves from its cue time instead: a top-of-hour ID is cued to air
+            // within ~a minute of the :00 it protects. Reusing
+            // resolveTopOfHourExpectedPlayAt() keeps this in lockstep with the
+            // boundary the scheduler is currently targeting.
+            $servedBoundary = $this->resolveTopOfHourExpectedPlayAt($station, $row->timestamp_cued);
 
-            if ($row->top_of_hour_legal_id || $row->clock_wheel_legal_id_substitute) {
-                return true;
-            }
-
-            $media = $row->media;
-            if ($media !== null && StationMediaTypes::isStationId($media->type)) {
+            if ($servedBoundary->getTimestamp() === $targetTimestamp) {
                 return true;
             }
         }
