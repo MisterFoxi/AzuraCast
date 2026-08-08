@@ -1,10 +1,20 @@
 # Suivi des points à traiter — AzuraCast (fork)
 
-**Base :** `eternityready2/AzuraCast` — **Repo :** `MisterFoxi/AzuraCast` — branches `main` et `dev`
+**Base :** `origin/FoxDev` (`MisterFoxi/AzuraCast`)
 **Dernière MAJ :** 2026-08-08
 
 > On repart de zéro. Ce fichier ne contient que des faits établis cette session.
 > Rien n'est présumé à partir de sessions antérieures.
+
+## État actuel — préparation playlists imbriquées
+
+- **Branche de développement : `FoxDev`.** La branche de travail de nettoyage part directement de `origin/FoxDev`.
+- **Clock Wheels : retirés du code applicatif et de l'UI.** Les entités, API, scheduler, écrans et tests dédiés sont supprimés.
+- **DB :** une migration terminale supprime les tables/colonnes/FK Clock Wheels. Les anciennes migrations restent dans l'historique afin que les upgrades et installations rejouant toute la chaîne aboutissent au même schéma final.
+- **Conservé :** TOPH station-wide, classification média, règles DNP/DMCA, playlists soft-strict et overrides de jours fériés côté playlist.
+- `PLAYLIST-GROUPS.md` reste la référence pour la prochaine PR de playlists imbriquées ; les anciennes specs Clock Wheels ont été retirées pour éviter toute ambiguïté.
+
+> Les sections Clock Wheels plus bas dans ce journal décrivent l'historique des investigations et ne représentent plus l'architecture active.
 
 ---
 
@@ -83,7 +93,7 @@ items à venir. À corriger dans un second temps.
 
 État correctif : patch produit et validé `git apply --check` sur base vierge v0.29.7 (1987b4ba),
 ASCII/LF strict. Lint PHP à faire côté Docker (`docker compose exec web php -l ...`).
-Livrables : `toph-dedup-1b.patch` + `HourBoundaryPlanner.php` (fichier complet en repli).
+Le correctif est désormais intégré au code de `FoxDev`; l'ancien patch autonome a été retiré du dépôt pour éviter de réintroduire un champ Clock Wheel supprimé.
 
 **RÉSULTAT DU TEST (12:00) : ✅ CORRIGÉ, validé de bout en bout.**
 - Une seule ligne TOPH cuée pour la borne 12:00 (id 54, `KTAR`) — plus d'empilement

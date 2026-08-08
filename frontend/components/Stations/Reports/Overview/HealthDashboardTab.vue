@@ -42,12 +42,6 @@
             </div>
             <div class="col-6 col-md-3">
                 <div class="border rounded p-2 text-center">
-                    <div class="fs-4 fw-semibold">{{ report.clock_wheel_fallbacks_7d }}</div>
-                    <div class="small text-muted">{{ $gettext('Wheel fallbacks (7d)') }}</div>
-                </div>
-            </div>
-            <div class="col-6 col-md-3">
-                <div class="border rounded p-2 text-center">
                     <div class="fs-4 fw-semibold">
                         {{ report.legal_id_compliance_percent ?? '—' }}<span
                             v-if="report.legal_id_compliance_percent != null"
@@ -112,7 +106,6 @@
 
 <script setup lang="ts">
 import {computed, ref, watch} from 'vue';
-import Loading from '~/components/Common/Loading.vue';
 import {useAxios} from '~/vendor/axios.ts';
 import {useTranslate} from '~/vendor/gettext';
 
@@ -123,7 +116,6 @@ interface HealthReport {
     media_tracks: number;
     do_not_play_count: number;
     empty_playlists: number;
-    clock_wheel_fallbacks_7d: number;
     legal_id_compliance_percent: number | null;
     upcoming_holidays: number;
     overall_status: string | null;

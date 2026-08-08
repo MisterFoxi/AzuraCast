@@ -11,8 +11,8 @@ use DateTimeZone;
 
 /**
  * Checks per-song time restrictions (e.g. "weekends only", "not before 6am")
- * set directly on a StationMedia track, independent of playlist/clock wheel
- * scheduling. Empty/null settings mean "no restriction" on that axis.
+ * set directly on a StationMedia track, independent of playlist scheduling.
+ * Empty/null settings mean "no restriction" on that axis.
  */
 final class SongSchedulingRestrictionChecker
 {

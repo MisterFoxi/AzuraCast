@@ -16,8 +16,6 @@ import IconIcSettingsApplication from "~icons/ic/baseline-settings-applications"
 import IconIcPsychology from "~icons/ic/baseline-psychology";
 import IconBiBroadcast from "~icons/bi/broadcast";
 import IconIcSchedule from "~icons/ic/baseline-schedule";
-import IconIcGavel from "~icons/ic/baseline-gavel";
-import IconIcAttachMoney from "~icons/ic/baseline-attach-money";
 import IconIcGraphicEq from "~icons/ic/baseline-graphic-eq";
 import IconIcCategory from "~icons/ic/baseline-category";
 import {useUserAllowedForStation} from "~/functions/useUserallowedForStation.ts";
@@ -191,14 +189,6 @@ export function useStationsMenu() {
             },
             visible: () => userAllowedForStation(StationPermissions.Podcasts)
                 && station.value.features.podcasts,
-        },
-        {
-            key: 'clock_wheels',
-            label: $gettext('Clock Wheels'),
-            icon: () => IconIcSchedule,
-            url: {
-                name: 'stations:clock_wheels:index'
-            },
         },
         {
             key: 'media_categories',

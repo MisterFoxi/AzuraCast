@@ -103,7 +103,7 @@
             class="mb-3"
             :field="r$.do_not_play"
             :label="$gettext('Do not play')"
-            :description="$gettext('Exclude this track from AutoDJ and clock wheel selection.')"
+            :description="$gettext('Exclude this track from AutoDJ selection.')"
         />
 
         <template v-if="form.do_not_play">

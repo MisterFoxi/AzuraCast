@@ -120,7 +120,7 @@ import {
 const props = withDefaults(
     defineProps<{
         modelValue?: number | null;
-        /** `timeCode` = HHMM (schedule); `hour` = 0–23 whole hours (dayparts). */
+        /** `timeCode` = HHMM (schedule); `hour` = 0–23 whole hours. */
         mode?: 'timeCode' | 'hour';
         inputId?: string;
         ariaLabel?: string;

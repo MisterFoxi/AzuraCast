@@ -21,8 +21,6 @@ use App\Entity\StationPlaylist;
 use App\Entity\StationPlaylistMedia;
 use App\Entity\StationQueue;
 use App\Event\Radio\BuildQueue;
-use App\Radio\AutoDJ\ClockWheel\ClockWheelSeparationSettings;
-use App\Radio\AutoDJ\ClockWheel\ClockWheelStretchCalculator;
 use App\Radio\PlaylistParser;
 use App\Service\HolidayOverrideService;
 use DateTimeImmutable;
@@ -49,7 +47,6 @@ final class QueueBuilder implements EventSubscriberInterface
         private readonly StationQueueRepository $queueRepo,
         private readonly SongHistoryRepository $historyRepo,
         private readonly HolidayOverrideService $holidayOverrideService,
-        private readonly ClockWheelStretchCalculator $stretchCalculator,
     ) {
     }
 
@@ -117,18 +114,6 @@ final class QueueBuilder implements EventSubscriberInterface
             $expectedPlayTime,
             $station->backend_config->duplicate_prevention_time_range
         );
-
-        $daypartSettings = ClockWheelSeparationSettings::resolveForStationHour($station, $expectedPlayTime);
-        if ($daypartSettings !== null && ($daypartSettings->enabled || $daypartSettings->burnRateMaxPlays24h !== null)) {
-            $recentSongHistoryForDuplicatePrevention = $this->queueRepo->getRecentlyPlayedByTimeRange(
-                $station,
-                $expectedPlayTime,
-                max(
-                    $station->backend_config->duplicate_prevention_time_range,
-                    $daypartSettings->historyLookbackMinutes()
-                )
-            );
-        }
 
         $holidayPlaylist = $this->holidayOverrideService->getHolidayPlaylist($station, $expectedPlayTime);
         if ($holidayPlaylist !== null) {
@@ -427,23 +412,6 @@ final class QueueBuilder implements EventSubscriberInterface
         if (null !== $maxDuration && $mediaToPlay->getCalculatedLength() > $maxDuration) {
             $stationQueueEntry->hour_boundary_enforce_cap = true;
             $stationQueueEntry->hour_boundary_max_play_seconds = (int)floor($maxDuration);
-        }
-
-        // Stretch target: same combined boundary as above.
-        $stretchTargetSeconds = (null !== $maxDuration) ? (int)floor($maxDuration) : null;
-
-        if (null !== $stretchTargetSeconds) {
-            try {
-                $stationQueueEntry->clock_wheel_stretch_ratio = $this->stretchCalculator->calculate(
-                    $mediaToPlay->getCalculatedLength(),
-                    $stretchTargetSeconds,
-                );
-            } catch (\Throwable $e) {
-                $this->logger->warning(
-                    'Stretch ratio calculation failed; leaving track unstretched.',
-                    ['exception' => $e->getMessage()]
-                );
-            }
         }
 
         $this->em->persist($stationQueueEntry);

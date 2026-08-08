@@ -4,12 +4,10 @@ declare(strict_types=1);
 
 namespace App\Entity;
 
-use App\Entity\Enums\ClockWheelScheduleMode;
 use App\Entity\Enums\RecurrenceEndType;
 use App\Entity\Enums\RecurrenceMonthlyPattern;
 use App\Entity\Enums\RecurrenceType;
 use App\Entity\Interfaces\IdentifiableEntityInterface;
-use App\Entity\StationClockWheel;
 use App\Utilities\Time;
 use Carbon\CarbonImmutable;
 use DateTimeImmutable;
@@ -35,7 +33,6 @@ final class StationSchedule implements IdentifiableEntityInterface
         set {
             if ($value !== null) {
                 $this->streamer = null;
-                $this->clock_wheel = null;
             }
 
             $this->playlist = $value;
@@ -50,25 +47,9 @@ final class StationSchedule implements IdentifiableEntityInterface
         set {
             if ($value !== null) {
                 $this->playlist = null;
-                $this->clock_wheel = null;
             }
 
             $this->streamer = $value;
-        }
-    }
-
-    #[
-        ORM\ManyToOne(inversedBy: 'schedule_items'),
-        ORM\JoinColumn(name: 'clock_wheel_id', referencedColumnName: 'id', nullable: true, onDelete: 'SET NULL')
-    ]
-    public ?StationClockWheel $clock_wheel = null {
-        set {
-            if ($value !== null) {
-                $this->playlist = null;
-                $this->streamer = null;
-            }
-
-            $this->clock_wheel = $value;
         }
     }
 
@@ -125,8 +106,7 @@ final class StationSchedule implements IdentifiableEntityInterface
     /**
      * When true, this playlist schedule holds rigidly to its exact start time,
      * cutting the currently playing track if needed rather than waiting for it
-     * to finish. Only meaningful for playlist schedules -- ignored for clock
-     * wheel and streamer schedules (clock wheels use clock_wheel_mode instead).
+     * to finish. Only meaningful for playlist schedules; ignored for streamer schedules.
      */
     #[
         OA\Property(example: false),
@@ -135,23 +115,13 @@ final class StationSchedule implements IdentifiableEntityInterface
     public bool $strict_start = false;
 
     /**
-     * When true, this schedule takes priority over clock wheel AutoDJ during its window.
+     * When true, this schedule takes priority over station-wide automatic interruptions.
      */
     #[
         OA\Property(example: false),
         ORM\Column(options: ['default' => false])
     ]
     public bool $is_emergency = false;
-
-    /**
-     * Clock wheel calendar mode: flexible (default) or strict wall-clock alignment.
-     * Only used when clock_wheel is set; ignored for playlist/streamer schedules.
-     */
-    #[
-        OA\Property(example: 'flexible', nullable: true),
-        ORM\Column(type: 'string', length: 20, nullable: true, enumType: ClockWheelScheduleMode::class)
-    ]
-    public ?ClockWheelScheduleMode $clock_wheel_mode = null;
 
     /** Recurrence: weekly (default), biweekly, monthly, or custom interval in weeks */
     #[
@@ -201,14 +171,12 @@ final class StationSchedule implements IdentifiableEntityInterface
     #[ORM\Column(length: 10, nullable: true)]
     public ?string $recurrence_end_date = null;
 
-    public function __construct(StationPlaylist|StationStreamer|StationClockWheel $relation)
+    public function __construct(StationPlaylist|StationStreamer $relation)
     {
         if ($relation instanceof StationPlaylist) {
             $this->playlist = $relation;
         } elseif ($relation instanceof StationStreamer) {
             $this->streamer = $relation;
-        } else {
-            $this->clock_wheel = $relation;
         }
     }
 

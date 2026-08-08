@@ -5,6 +5,9 @@ release channel, you can take advantage of these new features and fixes.
 
 ## New Features/Changes
 
+- **Clock Wheels removed**: Removed the custom Clock Wheels scheduling module, including its API/UI/runtime code and
+  persisted schema. Station-wide top-of-hour protection and playlist scheduling remain available independently.
+
 ## Code Quality/Technical Changes
 
 ## Bug Fixes

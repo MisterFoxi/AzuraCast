@@ -43,7 +43,6 @@ use OpenApi\Attributes as OA;
             new OA\Tag(name: OpenApi::TAG_STATIONS_HLS_STREAMS),
             new OA\Tag(name: OpenApi::TAG_STATIONS_MEDIA),
             new OA\Tag(name: OpenApi::TAG_STATIONS_MOUNT_POINTS),
-            new OA\Tag(name: OpenApi::TAG_STATIONS_CLOCK_WHEELS),
             new OA\Tag(name: OpenApi::TAG_STATIONS_PLAYLISTS),
             new OA\Tag(name: OpenApi::TAG_STATIONS_PODCASTS),
             new OA\Tag(name: OpenApi::TAG_STATIONS_QUEUE),
@@ -184,7 +183,6 @@ final class OpenApi
     public const string TAG_STATIONS_HLS_STREAMS = 'Stations: HLS Streams';
     public const string TAG_STATIONS_MEDIA = 'Stations: Media';
     public const string TAG_STATIONS_MOUNT_POINTS = 'Stations: Mount Points';
-    public const string TAG_STATIONS_CLOCK_WHEELS = 'Stations: Clock Wheels';
     public const string TAG_STATIONS_PLAYLISTS = 'Stations: Playlists';
     public const string TAG_STATIONS_PODCASTS = 'Stations: Podcasts';
     public const string TAG_STATIONS_QUEUE = 'Stations: Queue';
@@ -201,7 +199,6 @@ final class OpenApi
         self::TAG_STATIONS_HLS_STREAMS,
         self::TAG_STATIONS_MEDIA,
         self::TAG_STATIONS_MOUNT_POINTS,
-        self::TAG_STATIONS_CLOCK_WHEELS,
         self::TAG_STATIONS_PLAYLISTS,
         self::TAG_STATIONS_PODCASTS,
         self::TAG_STATIONS_QUEUE,

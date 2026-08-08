@@ -5,13 +5,10 @@ declare(strict_types=1);
 namespace App\Radio\AutoDJ;
 
 use App\Entity\Api\StationPlaylistQueue;
-use App\Entity\Enums\ClockWheelSlotTypes;
 use App\Entity\Enums\StationMediaTypes;
 use App\Entity\Station;
 use App\Entity\StationMedia;
 use App\Entity\StationQueue;
-use App\Entity\Enums\ClockWheelFallbackReason;
-use App\Radio\AutoDJ\ClockWheel\ClockWheelEventLogger;
 use App\Radio\AutoDJ\DuplicatePrevention;
 use DateTimeImmutable;
 use Doctrine\ORM\EntityManagerInterface;
@@ -26,7 +23,6 @@ final class HourBoundaryLegalIdResolver
         private readonly EntityManagerInterface $em,
         private readonly DuplicatePrevention $duplicatePrevention,
         private readonly HourBoundaryPlanner $hourBoundaryPlanner,
-        private readonly ClockWheelEventLogger $eventLogger,
         private readonly LoggerInterface $logger,
     ) {
     }
@@ -45,7 +41,7 @@ final class HourBoundaryLegalIdResolver
         $candidates = $this->loadStationIdCandidates($station);
 
         if ($candidates === []) {
-            $candidates = $this->loadMediaCandidates($station, ClockWheelSlotTypes::Promo);
+            $candidates = $this->loadMediaCandidates($station, StationMediaTypes::PROMO);
             $usedSubstitute = true;
         }
 
@@ -103,25 +99,9 @@ final class HourBoundaryLegalIdResolver
 
         $queueEntry = StationQueue::fromMedia($station, $media);
         $queueEntry->top_of_hour_legal_id = true;
-        $queueEntry->clock_wheel_legal_id_substitute = $usedSubstitute;
         $queueEntry->hour_boundary_enforce_cap = true;
         $queueEntry->hour_boundary_max_play_seconds = (int)floor($maxDuration);
         $this->em->persist($queueEntry);
-
-        $this->eventLogger->recordTopOfHourLegalIdQueued(
-            $station,
-            $media,
-            $legalIdExpectedAt,
-            $queueEntry,
-        );
-
-        if ($usedSubstitute) {
-            $this->eventLogger->recordTopOfHourFallback(
-                $station,
-                $legalIdExpectedAt,
-                ClockWheelFallbackReason::LegalIdMissingUsedPromo,
-            );
-        }
 
         $this->logger->info('Top-of-hour legal_id queued.', [
             'station_id' => $station->id,
@@ -157,7 +137,7 @@ final class HourBoundaryLegalIdResolver
     /**
      * @return StationMedia[]
      */
-    private function loadMediaCandidates(Station $station, ClockWheelSlotTypes $type): array
+    private function loadMediaCandidates(Station $station, string $type): array
     {
         /** @var StationMedia[] $result */
         $result = $this->em->createQuery(
@@ -169,7 +149,7 @@ final class HourBoundaryLegalIdResolver
             DQL
         )->setParameters([
             'storageLocation' => $station->media_storage_location,
-            'type' => $type->value,
+            'type' => $type,
         ])->getResult();
 
         return $result;

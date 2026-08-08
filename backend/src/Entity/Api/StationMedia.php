@@ -82,7 +82,7 @@ class StationMedia
     public string $length_text = '0:00';
 
     #[OA\Property(
-        description: "Media type used for clock wheel and library filtering.",
+        description: "Media type used for AutoDJ behavior and library filtering.",
         example: "music"
     )]
     public string $type = 'music';

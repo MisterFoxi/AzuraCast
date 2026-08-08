@@ -7,12 +7,10 @@ namespace App\Entity\Repository;
 use App\Doctrine\Repository;
 use App\Entity\Api\StationSchedule as ApiStationSchedule;
 use App\Entity\ApiGenerator\ScheduleApiGenerator;
-use App\Entity\Enums\ClockWheelScheduleMode;
 use App\Entity\Enums\RecurrenceEndType;
 use App\Entity\Enums\RecurrenceMonthlyPattern;
 use App\Entity\Enums\RecurrenceType;
 use App\Entity\Station;
-use App\Entity\StationClockWheel;
 use App\Entity\StationPlaylist;
 use App\Entity\StationSchedule;
 use App\Entity\StationStreamer;
@@ -40,18 +38,14 @@ final class StationScheduleRepository extends Repository
     }
 
     /**
-     * @param StationPlaylist|StationStreamer|StationClockWheel $relation
+     * @param StationPlaylist|StationStreamer $relation
      * @param array $items
      */
     public function setScheduleItems(
-        StationPlaylist|StationStreamer|StationClockWheel $relation,
+        StationPlaylist|StationStreamer $relation,
         array $items = []
     ): void {
-        $station = match (true) {
-            $relation instanceof StationPlaylist => $relation->station,
-            $relation instanceof StationStreamer => $relation->station,
-            $relation instanceof StationClockWheel => $relation->station,
-        };
+        $station = $relation->station;
 
         $this->conflictChecker->assertBatchHasNoConflicts($station, $relation, $items);
 
@@ -87,17 +81,6 @@ final class StationScheduleRepository extends Repository
             $record->loop_once = $item['loop_once'] ?? false;
             $record->is_emergency = (bool)($item['is_emergency'] ?? false);
             $record->strict_start = (bool)($item['strict_start'] ?? false);
-
-            if ($relation instanceof StationClockWheel) {
-                $record->loop_once = false;
-                $record->strict_start = false;
-                $modeRaw = $item['clock_wheel_mode'] ?? ClockWheelScheduleMode::Flexible->value;
-                $record->clock_wheel_mode = is_string($modeRaw)
-                    ? (ClockWheelScheduleMode::tryFrom($modeRaw) ?? ClockWheelScheduleMode::Flexible)
-                    : ($modeRaw instanceof ClockWheelScheduleMode ? $modeRaw : ClockWheelScheduleMode::Flexible);
-            } else {
-                $record->clock_wheel_mode = null;
-            }
 
             $record->recurrence_type = isset($item['recurrence_type'])
                 ? (is_string($item['recurrence_type']) ? RecurrenceType::tryFrom($item['recurrence_type']) : $item['recurrence_type'])
@@ -191,18 +174,14 @@ final class StationScheduleRepository extends Repository
     }
 
     /**
-     * @param StationPlaylist|StationStreamer|StationClockWheel $relation
+     * @param StationPlaylist|StationStreamer $relation
      *
      * @return StationSchedule[]
      */
-    public function findByRelation(StationPlaylist|StationStreamer|StationClockWheel $relation): array
+    public function findByRelation(StationPlaylist|StationStreamer $relation): array
     {
         if ($relation instanceof StationPlaylist) {
             return $this->repository->findBy(['playlist' => $relation]);
-        }
-
-        if ($relation instanceof StationClockWheel) {
-            return $this->repository->findBy(['clock_wheel' => $relation]);
         }
 
         return $this->repository->findBy(['streamer' => $relation]);
@@ -217,14 +196,12 @@ final class StationScheduleRepository extends Repository
     {
         return $this->em->createQuery(
             <<<'DQL'
-                SELECT ssc, sp, sst, scw
+                SELECT ssc, sp, sst
                 FROM App\Entity\StationSchedule ssc
                 LEFT JOIN ssc.playlist sp
                 LEFT JOIN ssc.streamer sst
-                LEFT JOIN ssc.clock_wheel scw
                 WHERE (sp.station = :station AND sp.is_jingle = 0 AND sp.is_enabled = 1)
                 OR (sst.station = :station AND sst.is_active = 1)
-                OR (scw.station = :station AND scw.is_active = 1)
             DQL
         )->setParameter('station', $station)
             ->execute();

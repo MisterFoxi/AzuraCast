@@ -745,170 +745,9 @@ return static function (RouteCollectorProxy $group) {
                         }
                     )->add(new Middleware\Permissions(StationPermissions::Media, true));
 
-                    // Clock Wheels
                     $group->group(
                         '',
                         function (RouteCollectorProxy $group) {
-                            $group->get(
-                                '/clock-wheels',
-                                Controller\Api\Stations\ClockWheels\ClockWheelsController::class . ':listAction'
-                            )->setName('api:stations:clock-wheels');
-
-                            $group->get(
-                                '/clock-wheels/schedule',
-                                Controller\Api\Stations\ClockWheels\ClockWheelsController::class . ':scheduleAction'
-                            )->setName('api:stations:clock-wheels:schedule');
-
-                            $group->get(
-                                '/clock-wheels/program-grid',
-                                Controller\Api\Stations\ClockWheels\ProgramGridAction::class
-                            )->setName('api:stations:clock-wheels:program-grid');
-
-                            $group->get(
-                                '/clock-wheels/reconciliation-log',
-                                Controller\Api\Stations\ClockWheels\ReconciliationLogAction::class
-                            )->setName('api:stations:clock-wheels:reconciliation-log');
-
-                            $group->get(
-                                '/clock-wheels/reconciliation-log/export',
-                                Controller\Api\Stations\ClockWheels\ReconciliationLogExportAction::class
-                            )->setName('api:stations:clock-wheels:reconciliation-log:export');
-
-                            $group->post(
-                                '/clock-wheels/generate',
-                                Controller\Api\Stations\ClockWheels\GenerateAction::class
-                            )->setName('api:stations:clock-wheels:generate');
-
-                            $group->post(
-                                '/clock-wheels/import',
-                                Controller\Api\Stations\ClockWheels\ImportAction::class
-                            )->setName('api:stations:clock-wheels:import');
-
-                            $group->post(
-                                '/clock-wheels',
-                                Controller\Api\Stations\ClockWheels\ClockWheelsController::class . ':createAction'
-                            );
-
-                            $group->get(
-                                '/clock-wheel-templates',
-                                Controller\Api\Stations\ClockWheels\ClockWheelTemplatesController::class . ':listAction'
-                            )->setName('api:stations:clock-wheel-templates');
-
-                            $group->post(
-                                '/clock-wheel-templates',
-                                Controller\Api\Stations\ClockWheels\ClockWheelTemplatesController::class . ':createAction'
-                            );
-
-                            $group->group(
-                                '/clock-wheel-template/{id}',
-                                function (RouteCollectorProxy $group) {
-                                    $group->get(
-                                        '',
-                                        Controller\Api\Stations\ClockWheels\ClockWheelTemplatesController::class . ':getAction'
-                                    )->setName('api:stations:clock-wheel-template');
-
-                                    $group->put(
-                                        '',
-                                        Controller\Api\Stations\ClockWheels\ClockWheelTemplatesController::class . ':editAction'
-                                    );
-
-                                    $group->delete(
-                                        '',
-                                        Controller\Api\Stations\ClockWheels\ClockWheelTemplatesController::class . ':deleteAction'
-                                    );
-
-                                    $group->get(
-                                        '/slots',
-                                        Controller\Api\Stations\ClockWheels\ClockWheelTemplatesController::class . ':getSlotsAction'
-                                    );
-
-                                    $group->put(
-                                        '/slots',
-                                        Controller\Api\Stations\ClockWheels\ClockWheelTemplatesController::class . ':putSlotsAction'
-                                    );
-                                }
-                            );
-
-                            $group->get(
-                                '/clock-dayparts',
-                                Controller\Api\Stations\ClockWheels\ClockWheelDaypartsController::class . ':listAction'
-                            )->setName('api:stations:clock-dayparts');
-
-                            $group->post(
-                                '/clock-dayparts',
-                                Controller\Api\Stations\ClockWheels\ClockWheelDaypartsController::class . ':createAction'
-                            );
-
-                            $group->group(
-                                '/clock-daypart/{id}',
-                                function (RouteCollectorProxy $group) {
-                                    $group->get(
-                                        '',
-                                        Controller\Api\Stations\ClockWheels\ClockWheelDaypartsController::class . ':getAction'
-                                    )->setName('api:stations:clock-daypart');
-
-                                    $group->put(
-                                        '',
-                                        Controller\Api\Stations\ClockWheels\ClockWheelDaypartsController::class . ':editAction'
-                                    );
-
-                                    $group->delete(
-                                        '',
-                                        Controller\Api\Stations\ClockWheels\ClockWheelDaypartsController::class . ':deleteAction'
-                                    );
-
-                                    $group->post(
-                                        '/sync',
-                                        Controller\Api\Stations\ClockWheels\ClockWheelDaypartsController::class . ':syncAction'
-                                    )->setName('api:stations:clock-daypart:sync');
-                                }
-                            );
-
-                            $group->group(
-                                '/clock-wheel/{id}',
-                                function (RouteCollectorProxy $group) {
-                                    $group->get(
-                                        '',
-                                        Controller\Api\Stations\ClockWheels\ClockWheelsController::class . ':getAction'
-                                    )->setName('api:stations:clock-wheel');
-
-                                    $group->put(
-                                        '',
-                                        Controller\Api\Stations\ClockWheels\ClockWheelsController::class . ':editAction'
-                                    );
-
-                                    $group->delete(
-                                        '',
-                                        Controller\Api\Stations\ClockWheels\ClockWheelsController::class . ':deleteAction'
-                                    );
-
-                                    $group->get(
-                                        '/slots',
-                                        Controller\Api\Stations\ClockWheels\ClockWheelsController::class . ':getSlotsAction'
-                                    )->setName('api:stations:clock-wheel:slots');
-
-                                    $group->put(
-                                        '/slots',
-                                        Controller\Api\Stations\ClockWheels\ClockWheelsController::class . ':putSlotsAction'
-                                    );
-
-                                    $group->get(
-                                        '/preview',
-                                        Controller\Api\Stations\ClockWheels\PreviewAction::class
-                                    )->setName('api:stations:clock-wheel:preview');
-
-                                    $group->get(
-                                        '/analytics',
-                                        Controller\Api\Stations\ClockWheels\AnalyticsAction::class
-                                    )->setName('api:stations:clock-wheel:analytics');
-
-                                    $group->get(
-                                        '/export',
-                                        Controller\Api\Stations\ClockWheels\ExportAction::class
-                                    )->setName('api:stations:clock-wheel:export');
-                                }
-                            );
-
                             $group->get(
                                 '/holiday-overrides',
                                 Controller\Api\Stations\HolidayOverrides\HolidayOverridesController::class . ':listAction'
@@ -1026,11 +865,6 @@ return static function (RouteCollectorProxy $group) {
                             )->setName('api:stations:reports:overview-heatmap');
 
                             $group->get(
-                                '/overview/clock-performance',
-                                Controller\Api\Stations\Reports\Overview\ClockPerformanceAction::class
-                            )->setName('api:stations:reports:overview-clock-performance');
-
-                            $group->get(
                                 '/overview/playlist-performance',
                                 Controller\Api\Stations\Reports\Overview\PlaylistPerformanceAction::class
                             )->setName('api:stations:reports:overview-playlist-performance');
@@ -1054,11 +888,6 @@ return static function (RouteCollectorProxy $group) {
                                 '/overview/retention-curve',
                                 Controller\Api\Stations\Reports\Overview\RetentionCurveAction::class
                             )->setName('api:stations:reports:overview-retention-curve');
-
-                            $group->get(
-                                '/overview/daypart-audience',
-                                Controller\Api\Stations\Reports\Overview\DaypartAudienceAction::class
-                            )->setName('api:stations:reports:overview-daypart-audience');
 
                             $group->get(
                                 '/overview/health',

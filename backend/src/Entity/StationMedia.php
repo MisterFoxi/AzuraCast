@@ -57,7 +57,7 @@ final class StationMedia implements
     #[ORM\Column(length: 20, nullable: false, options: ['default' => 'music'])]
     public string $type = 'music';
 
-    /** When true, AutoDJ and clock wheels skip this track. */
+    /** When true, AutoDJ skips this track. */
     #[ORM\Column]
     public bool $do_not_play = false;
 

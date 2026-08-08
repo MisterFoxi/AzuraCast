@@ -55,15 +55,6 @@ final class StationHolidayOverride implements
 
     #[
         ORM\ManyToOne,
-        ORM\JoinColumn(name: 'clock_wheel_id', referencedColumnName: 'id', nullable: true, onDelete: 'SET NULL')
-    ]
-    public ?StationClockWheel $clock_wheel = null;
-
-    #[ORM\Column(nullable: true, insertable: false, updatable: false)]
-    public private(set) ?int $clock_wheel_id = null;
-
-    #[
-        ORM\ManyToOne,
         ORM\JoinColumn(name: 'playlist_id', referencedColumnName: 'id', nullable: true, onDelete: 'SET NULL')
     ]
     public ?StationPlaylist $playlist = null;
@@ -75,7 +66,7 @@ final class StationHolidayOverride implements
     public bool $is_active = true;
 
     #[
-        OA\Property(example: 'Special Christmas wheel', nullable: true),
+        OA\Property(example: 'Special Christmas programming', nullable: true),
         ORM\Column(length: 255, nullable: true),
         Assert\Length(max: 255)
     ]
@@ -97,7 +88,6 @@ final class StationHolidayOverride implements
     public function syncReadOnlyForeignKeys(): void
     {
         $this->station_id = $this->station->id;
-        $this->clock_wheel_id = $this->clock_wheel?->id;
         $this->playlist_id = $this->playlist?->id;
     }
 

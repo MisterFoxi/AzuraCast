@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Controller\Api\Stations\HolidayOverrides;
 
 use App\Controller\Api\Stations\AbstractStationApiCrudController;
-use App\Entity\StationClockWheel;
 use App\Entity\StationHolidayOverride;
 use App\Entity\StationPlaylist;
 use App\Exception\ValidationException;
@@ -81,18 +80,6 @@ final class HolidayOverridesController extends AbstractStationApiCrudController
                 ->startOfDay()
                 ->toDateTimeImmutable();
             unset($data['override_date']);
-        }
-
-        if (array_key_exists('clock_wheel_id', $data) && $record instanceof StationHolidayOverride) {
-            $wheelId = is_numeric($data['clock_wheel_id']) ? (int)$data['clock_wheel_id'] : null;
-            $record->clock_wheel = null;
-            if ($wheelId !== null && $wheelId > 0) {
-                $wheel = $this->em->find(StationClockWheel::class, $wheelId);
-                if ($wheel instanceof StationClockWheel && $wheel->station_id === $record->station_id) {
-                    $record->clock_wheel = $wheel;
-                }
-            }
-            unset($data['clock_wheel_id']);
         }
 
         if (array_key_exists('playlist_id', $data) && $record instanceof StationHolidayOverride) {

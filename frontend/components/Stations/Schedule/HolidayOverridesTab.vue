@@ -54,13 +54,6 @@
                 :label="$gettext('Date')"
             />
             <form-group-select
-                id="holiday_wheel"
-                v-model="form.clock_wheel_id"
-                class="mb-3"
-                :label="$gettext('Clock wheel override')"
-                :options="wheelOptions"
-            />
-            <form-group-select
                 id="holiday_playlist"
                 v-model="form.playlist_id"
                 class="mb-3"
@@ -84,7 +77,6 @@
 
 <script setup lang="ts">
 import {computed, onMounted, ref, useTemplateRef} from 'vue';
-import Loading from '~/components/Common/Loading.vue';
 import DataTable, {DataTableField} from '~/components/Common/DataTable.vue';
 import AddButton from '~/components/Common/AddButton.vue';
 import ModalForm from '~/components/Common/ModalForm.vue';
@@ -101,7 +93,6 @@ interface HolidayRow {
     id: number;
     name: string;
     override_date: string;
-    clock_wheel_id: number | null;
     playlist_id: number | null;
     is_active: boolean;
     notes: string | null;
@@ -110,7 +101,6 @@ interface HolidayRow {
 
 const props = defineProps<{
     listUrl: string;
-    wheelsUrl: string;
     playlistsUrl: string;
 }>();
 
@@ -123,13 +113,11 @@ const loading = ref(false);
 const saving = ref(false);
 const rows = ref<HolidayRow[]>([]);
 const editUrl = ref<string | null>(null);
-const wheelOptions = ref<{value: number | null; text: string}[]>([]);
 const playlistOptions = ref<{value: number | null; text: string}[]>([]);
 
 const blankForm = () => ({
     name: '',
     override_date: '',
-    clock_wheel_id: null as number | null,
     playlist_id: null as number | null,
     is_active: true,
     notes: '',
@@ -166,15 +154,10 @@ const itemProvider = useClientItemProvider<HolidayRow>(
 );
 
 const loadOptions = async () => {
-    const [{data: wheels}, {data: playlists}] = await Promise.all([
-        axios.get<{rows: {id: number; name: string}[]}>(props.wheelsUrl, {params: {rowCount: 0}}),
-        axios.get<{rows: {id: number; name: string}[]}>(props.playlistsUrl, {params: {rowCount: 0}}),
-    ]);
-
-    wheelOptions.value = [
-        {value: null, text: $gettext('— None —')},
-        ...(wheels.rows ?? []).map((w) => ({value: w.id, text: w.name})),
-    ];
+    const {data: playlists} = await axios.get<{rows: {id: number; name: string}[]}>(
+        props.playlistsUrl,
+        {params: {rowCount: 0}}
+    );
     playlistOptions.value = [
         {value: null, text: $gettext('— None —')},
         ...(playlists.rows ?? []).map((p) => ({value: p.id, text: p.name})),
@@ -192,7 +175,6 @@ const openEdit = (item: HolidayRow) => {
     form.value = {
         name: item.name,
         override_date: item.override_date,
-        clock_wheel_id: item.clock_wheel_id,
         playlist_id: item.playlist_id,
         is_active: item.is_active,
         notes: item.notes ?? '',
@@ -216,7 +198,12 @@ const save = async () => {
     }
 };
 
-const {doDelete} = useConfirmAndDelete($gettext('Delete this holiday override?'), load);
+const {doDelete} = useConfirmAndDelete(
+    $gettext('Delete this holiday override?'),
+    () => {
+        void load();
+    },
+);
 
 const doDeleteRow = (item: HolidayRow) => {
     const url = item.links?.self ?? getStationApiUrl(`/holiday-override/${item.id}`).value;

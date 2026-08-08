@@ -14,7 +14,7 @@ use DateTimeImmutable;
 use DateTimeZone;
 
 /**
- * Shared hour-boundary math for clock wheels and station-wide top-of-hour protection.
+ * Shared hour-boundary math for station-wide top-of-hour protection.
  */
 final class HourBoundaryPlanner
 {
@@ -261,7 +261,7 @@ final class HourBoundaryPlanner
         $targetTimestamp = $hourStart->getTimestamp();
 
         foreach ($this->queueRepo->getUnplayedQueue($station) as $row) {
-            $isLegalId = $row->top_of_hour_legal_id || $row->clock_wheel_legal_id_substitute;
+            $isLegalId = $row->top_of_hour_legal_id;
 
             if (!$isLegalId) {
                 $media = $row->media;

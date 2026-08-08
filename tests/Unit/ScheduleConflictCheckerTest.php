@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Unit;
 
 use App\Entity\Station;
-use App\Entity\StationClockWheel;
 use App\Entity\StationPlaylist;
 use App\Entity\StationSchedule;
 use App\Entity\Enums\PlaylistSources;
@@ -42,12 +41,12 @@ final class ScheduleConflictCheckerTest extends Unit
 
     public function testWeeklySchedulesOnDifferentDaysDoNotConflict(): void
     {
-        $wheel = $this->makeClockWheel(1);
+        $playlist = $this->makePlaylistFixture(1);
         $range = $this->dateRangeForWindow();
 
         $this->checker = $this->makeChecker([]);
 
-        $this->checker->assertBatchHasNoConflicts($wheel->station, $wheel, [
+        $this->checker->assertBatchHasNoConflicts($playlist->station, $playlist, [
             $this->weeklyItem(900, 1700, $range, [1]),
             $this->weeklyItem(900, 1700, $range, [2]),
         ]);
@@ -57,7 +56,7 @@ final class ScheduleConflictCheckerTest extends Unit
 
     public function testWeeklyOverlappingTimesInBatchAreRejected(): void
     {
-        $wheel = $this->makeClockWheel(1);
+        $playlist = $this->makePlaylistFixture(1);
         $range = $this->dateRangeForWindow();
 
         $this->checker = $this->makeChecker([]);
@@ -65,7 +64,7 @@ final class ScheduleConflictCheckerTest extends Unit
         $this->expectException(ValidationException::class);
         $this->expectExceptionMessage('overlap');
 
-        $this->checker->assertBatchHasNoConflicts($wheel->station, $wheel, [
+        $this->checker->assertBatchHasNoConflicts($playlist->station, $playlist, [
             $this->weeklyItem(900, 1200, $range, [1, 2, 3, 4, 5]),
             $this->weeklyItem(1100, 1700, $range, [1, 2, 3, 4, 5]),
         ]);
@@ -73,12 +72,12 @@ final class ScheduleConflictCheckerTest extends Unit
 
     public function testAdjacentBoundariesDoNotConflict(): void
     {
-        $wheel = $this->makeClockWheel(1);
+        $playlist = $this->makePlaylistFixture(1);
         $range = $this->dateRangeForWindow();
 
         $this->checker = $this->makeChecker([]);
 
-        $this->checker->assertBatchHasNoConflicts($wheel->station, $wheel, [
+        $this->checker->assertBatchHasNoConflicts($playlist->station, $playlist, [
             $this->weeklyItem(900, 1000, $range, [1, 2, 3, 4, 5, 6, 7]),
             $this->weeklyItem(1001, 1100, $range, [1, 2, 3, 4, 5, 6, 7]),
         ]);
@@ -88,14 +87,14 @@ final class ScheduleConflictCheckerTest extends Unit
 
     public function testOvernightSchedulesOverlap(): void
     {
-        $wheel = $this->makeClockWheel(1);
+        $playlist = $this->makePlaylistFixture(1);
         $range = $this->dateRangeForWindow();
 
         $this->checker = $this->makeChecker([]);
 
         $this->expectException(ValidationException::class);
 
-        $this->checker->assertBatchHasNoConflicts($wheel->station, $wheel, [
+        $this->checker->assertBatchHasNoConflicts($playlist->station, $playlist, [
             $this->weeklyItem(2200, 600, $range, [1, 2, 3, 4, 5, 6, 7]),
             $this->weeklyItem(2300, 700, $range, [1, 2, 3, 4, 5, 6, 7]),
         ]);
@@ -103,14 +102,14 @@ final class ScheduleConflictCheckerTest extends Unit
 
     public function testMonthlyDatePatternOverlap(): void
     {
-        $wheel = $this->makeClockWheel(1);
+        $playlist = $this->makePlaylistFixture(1);
         $range = $this->dateRangeForWindow();
 
         $this->checker = $this->makeChecker([]);
 
         $this->expectException(ValidationException::class);
 
-        $this->checker->assertBatchHasNoConflicts($wheel->station, $wheel, [
+        $this->checker->assertBatchHasNoConflicts($playlist->station, $playlist, [
             $this->monthlyDateItem(900, 1200, $range, 15),
             $this->monthlyDateItem(1100, 1700, $range, 15),
         ]);
@@ -118,12 +117,12 @@ final class ScheduleConflictCheckerTest extends Unit
 
     public function testMonthlyDatePatternNonOverlappingTimesDoNotConflict(): void
     {
-        $wheel = $this->makeClockWheel(1);
+        $playlist = $this->makePlaylistFixture(1);
         $range = $this->dateRangeForWindow();
 
         $this->checker = $this->makeChecker([]);
 
-        $this->checker->assertBatchHasNoConflicts($wheel->station, $wheel, [
+        $this->checker->assertBatchHasNoConflicts($playlist->station, $playlist, [
             $this->monthlyDateItem(900, 1000, $range, 15),
             $this->monthlyDateItem(1100, 1200, $range, 15),
         ]);
@@ -133,7 +132,7 @@ final class ScheduleConflictCheckerTest extends Unit
 
     public function testPlayOnceSameStartAndEndTimeOverlaps(): void
     {
-        $wheel = $this->makeClockWheel(1);
+        $playlist = $this->makePlaylistFixture(1);
         $day = CarbonImmutable::now('UTC')->addDays(3);
         $date = $day->format('Y-m-d');
         $dayOfWeek = $day->dayOfWeekIso;
@@ -142,19 +141,19 @@ final class ScheduleConflictCheckerTest extends Unit
 
         $this->expectException(ValidationException::class);
 
-        $this->checker->assertBatchHasNoConflicts($wheel->station, $wheel, [
+        $this->checker->assertBatchHasNoConflicts($playlist->station, $playlist, [
             $this->playOnceItem(1000, 1000, $date, $dayOfWeek),
             $this->playOnceItem(1000, 1000, $date, $dayOfWeek),
         ]);
     }
 
-    public function testExistingClockWheelScheduleBlocksNewWheel(): void
+    public function testExistingPlaylistScheduleBlocksNewPlaylist(): void
     {
-        $wheelA = $this->makeClockWheel(1);
-        $wheelB = $this->makeClockWheel(2);
+        $playlistA = $this->makePlaylistFixture(1);
+        $playlistB = $this->makePlaylistFixture(2);
         $range = $this->dateRangeForWindow();
 
-        $existing = new StationSchedule($wheelA);
+        $existing = new StationSchedule($playlistA);
         $existing->start_time = 900;
         $existing->end_time = 1700;
         $existing->start_date = $range['start_date'];
@@ -168,16 +167,16 @@ final class ScheduleConflictCheckerTest extends Unit
         $this->expectExceptionMessage('conflict');
 
         $this->checker->assertBatchHasNoConflicts(
-            $wheelB->station,
-            $wheelB,
+            $playlistB->station,
+            $playlistB,
             [$this->weeklyItem(1000, 1800, $range, [1, 2, 3, 4, 5])]
         );
     }
 
-    public function testExistingPlaylistBlocksClockWheel(): void
+    public function testExistingPlaylistBlocksPlaylist(): void
     {
-        $playlist = $this->makePlaylist(10);
-        $wheel = $this->makeClockWheel(2);
+        $playlist = $this->makePlaylistFixture(10);
+        $otherPlaylist = $this->makePlaylistFixture(2);
         $range = $this->dateRangeForWindow();
 
         $existing = new StationSchedule($playlist);
@@ -193,15 +192,15 @@ final class ScheduleConflictCheckerTest extends Unit
         $this->expectExceptionMessage('playlist');
 
         $this->checker->assertBatchHasNoConflicts(
-            $wheel->station,
-            $wheel,
+            $otherPlaylist->station,
+            $otherPlaylist,
             [$this->weeklyItem(1000, 1800, $range, [1, 2, 3, 4, 5])]
         );
     }
 
     public function testBiweeklySchedulesOnAlternatingWeeksMayNotConflict(): void
     {
-        $wheel = $this->makeClockWheel(1);
+        $playlist = $this->makePlaylistFixture(1);
         $anchor = CarbonImmutable::now('UTC')->startOf('week'); // Monday
         $range = [
             'start_date' => $anchor->format('Y-m-d'),
@@ -211,7 +210,7 @@ final class ScheduleConflictCheckerTest extends Unit
         $this->checker = $this->makeChecker([]);
 
         // Same weekday/time but anchors one week apart with 2-week interval → staggered occurrences.
-        $this->checker->assertBatchHasNoConflicts($wheel->station, $wheel, [
+        $this->checker->assertBatchHasNoConflicts($playlist->station, $playlist, [
             $this->biweeklyItem(900, 1000, $range, [1], $anchor->format('Y-m-d')),
             $this->biweeklyItem(
                 900,
@@ -275,13 +274,13 @@ final class ScheduleConflictCheckerTest extends Unit
         return new ScheduleConflictChecker($em, $this->scheduler);
     }
 
-    private function makeClockWheel(int $id): StationClockWheel
+    private function makePlaylistFixture(int $id): StationPlaylist
     {
-        $wheel = new StationClockWheel($this->station);
-        $wheel->name = 'Test Wheel ' . $id;
-        $this->setEntityId($wheel, $id);
+        $playlist = new StationPlaylist($this->station);
+        $playlist->name = 'Test Playlist ' . $id;
+        $this->setEntityId($playlist, $id);
 
-        return $wheel;
+        return $playlist;
     }
 
     private function makePlaylist(int $id): StationPlaylist

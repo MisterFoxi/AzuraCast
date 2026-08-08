@@ -4,13 +4,12 @@ declare(strict_types=1);
 
 namespace App\Service;
 
-use App\Entity\Repository\ClockWheelEventRepository;
+use App\Entity\Repository\StationQueueRepository;
 use App\Entity\Station;
 use App\Entity\StationMount;
 use App\Entity\Enums\PlaylistSources;
 use App\Radio\AutoDJ\HourBoundaryPlanner;
 use Carbon\CarbonImmutable;
-use DateTimeImmutable;
 use Doctrine\ORM\EntityManagerInterface;
 use OpenApi\Attributes as OA;
 
@@ -51,12 +50,6 @@ final class StationHealthReport
     #[OA\Property(example: 1)]
     public int $empty_playlists = 0;
 
-    #[OA\Property(example: 5)]
-    public int $clock_wheel_fallbacks_7d = 0;
-
-    #[OA\Property(example: 2)]
-    public int $clock_wheel_deferred_7d = 0;
-
     #[OA\Property(example: 95.5, nullable: true)]
     public ?float $legal_id_compliance_percent = null;
 
@@ -80,7 +73,7 @@ final class StationHealthService
 {
     public function __construct(
         private readonly EntityManagerInterface $em,
-        private readonly ClockWheelEventRepository $eventRepo,
+        private readonly StationQueueRepository $queueRepo,
         private readonly HourBoundaryPlanner $hourBoundaryPlanner,
     ) {
     }
@@ -129,11 +122,7 @@ final class StationHealthService
             ->setParameter('source', PlaylistSources::Songs)
             ->getSingleScalarResult();
 
-        $stationSummary = $this->eventRepo->getStationAnalyticsSummary($station, $since);
-        $report->clock_wheel_fallbacks_7d = $stationSummary['fallbacks'];
-        $report->clock_wheel_deferred_7d = $stationSummary['deferred'];
-
-        $compliance = $this->eventRepo->getStationTopOfHourLegalIdComplianceSummary(
+        $compliance = $this->queueRepo->getTopOfHourLegalIdComplianceSummary(
             $station,
             $since,
             $this->hourBoundaryPlanner->getComplianceToleranceSeconds($station),
@@ -173,10 +162,6 @@ final class StationHealthService
     {
         if (!$report->is_online || !$report->autodj_enabled) {
             return 'critical';
-        }
-
-        if ($report->clock_wheel_fallbacks_7d > 20) {
-            return 'warning';
         }
 
         if ($report->legal_id_compliance_percent !== null && $report->legal_id_compliance_percent < 90.0) {

@@ -1,5 +1,5 @@
 /**
- * 12-hour display + parsing for schedule times (HHMM) and daypart hours (0–23).
+ * 12-hour display + parsing for schedule times (HHMM) and whole hours (0–23).
  */
 
 export type ParsedAmPmTime = {
@@ -14,29 +14,6 @@ export function formatTimeCodeToAmPm(timeCode: number): string {
     const minutes = parseInt(padded.slice(2), 10);
 
     return formatPartsToAmPm(hour24, minutes);
-}
-
-/** Daypart start/end hour (minutes always :00). */
-export function formatHourOfDayToAmPm(hourOfDay: number): string {
-    const hour24 = Math.min(23, Math.max(0, Math.trunc(hourOfDay)));
-
-    return formatPartsToAmPm(hour24, 0);
-}
-
-/**
- * Schedule window for a daypart hourly wheel: one hour starting at :00.
- * Returns AzuraCast HHMM values (e.g. 9 → 900–1000, 23 → 2300–0).
- */
-export function scheduleTimeWindowForHourOfDay(hourOfDay: number): {
-    start_time: number;
-    end_time: number;
-} {
-    const hour = Math.min(23, Math.max(0, Math.trunc(hourOfDay)));
-
-    return {
-        start_time: hour * 100,
-        end_time: ((hour + 1) % 24) * 100,
-    };
 }
 
 export function formatPartsToAmPm(hour24: number, minutes: number): string {
@@ -70,7 +47,7 @@ export function parseAmPmTime(text: string): ParsedAmPmTime | null {
         return null;
     }
 
-    let hour12 = parseInt(match[1], 10);
+    const hour12 = parseInt(match[1], 10);
     const minutes = match[2] !== undefined ? parseInt(match[2], 10) : 0;
     const period = match[3].replace(/\./g, '').toUpperCase();
 
@@ -108,20 +85,6 @@ export function parseTimeCodeFromAmPm(text: string): number | null {
     return parsed !== null ? timeCodeFromParsed(parsed) : null;
 }
 
-export function parseHourOfDayFromAmPm(text: string, requireWholeHour = true): number | null {
-    const parsed = parseAmPmTime(text);
-
-    if (parsed === null) {
-        return null;
-    }
-
-    if (requireWholeHour && parsed.minutes !== 0) {
-        return null;
-    }
-
-    return parsed.hour;
-}
-
 export type AmPmPeriod = 'AM' | 'PM';
 
 export type AmPmTimeSegments = {
@@ -130,7 +93,7 @@ export type AmPmTimeSegments = {
     period: AmPmPeriod;
 };
 
-/** Convert schedule HHMM or daypart hour (0–23) into 12-hour segments. */
+/** Convert schedule HHMM or a whole hour (0–23) into 12-hour segments. */
 export function modelValueToSegments(
     value: number,
     wholeHourOnly: boolean,

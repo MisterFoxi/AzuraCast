@@ -48,22 +48,6 @@
                     <button
                         type="button"
                         class="nav-link"
-                        :class="{active: activeTab === 'live'}"
-                        role="tab"
-                        :aria-selected="activeTab === 'live'"
-                        @click="activeTab = 'live'"
-                    >
-                        {{ $gettext('Live Clock Wheel') }}
-                    </button>
-                </div>
-
-                <div
-                    class="nav-item"
-                    role="presentation"
-                >
-                    <button
-                        type="button"
-                        class="nav-link"
                         :class="{active: activeTab === 'holidays'}"
                         role="tab"
                         :aria-selected="activeTab === 'holidays'"
@@ -79,37 +63,18 @@
             <schedule-calendar
                 v-show="activeTab === 'calendar'"
                 ref="$scheduleTab"
-                :schedule-url="[scheduleUrl, clockWheelsScheduleUrl]"
+                :schedule-url="scheduleUrl"
                 :show-create-button="true"
                 @click="doCalendarClick"
                 @create="doCreateEvent"
             />
 
-            <clock-wheel-live-tab
-                v-show="activeTab === 'live'"
-                :active="activeTab === 'live'"
-            />
-
             <holiday-overrides-tab
                 v-show="activeTab === 'holidays'"
                 :list-url="holidayOverridesUrl"
-                :wheels-url="clockWheelsListUrl"
                 :playlists-url="listUrl"
             />
         </div>
-
-        <edit-modal
-            ref="$editModal"
-            :create-url="listUrl"
-            @relist="relist"
-        />
-
-        <clock-wheel-edit-modal
-            ref="$clockWheelEditModal"
-            :create-url="clockWheelsListUrl"
-            :templates-url="clockWheelTemplatesUrl"
-            @relist="relist"
-        />
 
         <create-event-modal
             ref="$createEventModal"
@@ -120,16 +85,12 @@
 
 <script setup lang="ts">
 import ScheduleCalendar from "~/components/Stations/Common/ScheduleCalendar.vue";
-import ClockWheelLiveTab from "~/components/Stations/Schedule/ClockWheelLiveTab.vue";
 import HolidayOverridesTab from "~/components/Stations/Schedule/HolidayOverridesTab.vue";
-import EditModal from "~/components/Stations/Playlists/EditModal.vue";
-import ClockWheelEditModal from "~/components/Stations/ClockWheels/EditModal.vue";
 import CreateEventModal from "~/components/Stations/Common/CreateEventModal.vue";
 import TimeZone from "~/components/Stations/Common/TimeZone.vue";
 import {useApiRouter} from "~/functions/useApiRouter.ts";
 import {nextTick, ref, useTemplateRef, watch} from "vue";
 import {EventImpl} from "@fullcalendar/core/internal";
-import useHasEditModal from "~/functions/useHasEditModal";
 import {useMayNeedRestart} from "~/functions/useMayNeedRestart";
 import {useTranslate} from "~/vendor/gettext";
 
@@ -137,20 +98,11 @@ const {$gettext} = useTranslate();
 const {getStationApiUrl} = useApiRouter();
 const {mayNeedRestart} = useMayNeedRestart();
 
-const activeTab = ref<'calendar' | 'live' | 'holidays'>('calendar');
+const activeTab = ref<'calendar' | 'holidays'>('calendar');
 
 const listUrl = getStationApiUrl('/playlists');
-const clockWheelsListUrl = getStationApiUrl('/clock-wheels');
-const clockWheelTemplatesUrl = getStationApiUrl('/clock-wheel-templates');
 const holidayOverridesUrl = getStationApiUrl('/holiday-overrides');
 const scheduleUrl = getStationApiUrl('/playlists/schedule');
-const clockWheelsScheduleUrl = getStationApiUrl('/clock-wheels/schedule');
-
-const $editModal = useTemplateRef('$editModal');
-const {doEdit} = useHasEditModal($editModal);
-
-const $clockWheelEditModal = useTemplateRef('$clockWheelEditModal');
-const {doEdit: doEditClockWheel} = useHasEditModal($clockWheelEditModal);
 
 const $scheduleTab = useTemplateRef('$scheduleTab');
 const $createEventModal = useTemplateRef('$createEventModal');

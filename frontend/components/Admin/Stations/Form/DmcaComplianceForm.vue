@@ -3,7 +3,7 @@
         <legend>{{ $gettext('DMCA Compliance') }}</legend>
 
         <p class="text-muted small mb-3">
-            {{ $gettext('Enforce DMCA § 114 digital performance rules at the queue level. When enabled, songs that would violate these limits are automatically rejected before reaching Liquidsoap, and AzuraCast retries with a different track. Works with both standard playlists and clock wheels.') }}
+            {{ $gettext('Enforce DMCA § 114 digital performance rules at the queue level. When enabled, songs that would violate these limits are automatically rejected before reaching Liquidsoap, and AzuraCast retries with a different track.') }}
         </p>
 
         <div class="mb-3">
