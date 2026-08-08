@@ -48,15 +48,15 @@ BUILDER="azura-builder"
 EXPORT_DIR="/data/docker-exports"
 CONFIRM=1
 LOCAL_TAR=""
+BUILD_TAR=""
 REMOTE_TAR=""
 REMOTE_ARCHIVE_CREATED=0
 
 cleanup() {
     local rc=$?
 
-    if [[ -n "$LOCAL_TAR" ]]; then
-        rm -f -- "$LOCAL_TAR" "${LOCAL_TAR%.gz}"
-    fi
+    [[ -z "$BUILD_TAR" ]] || rm -f -- "$BUILD_TAR"
+    [[ -z "$LOCAL_TAR" ]] || rm -f -- "$LOCAL_TAR"
 
     if [[ "$REMOTE_ARCHIVE_CREATED" -eq 1 && -n "$REMOTE_TAR" ]]; then
         ssh "$HOST" "rm -f -- '${REMOTE_TAR}'" >/dev/null 2>&1 || true
@@ -132,6 +132,7 @@ IMAGE_TAG="${FULL_IMAGE##*:}"
 mkdir -p "$EXPORT_DIR" || die "impossible de créer le répertoire d'export: ${EXPORT_DIR}"
 ARCHIVE_NAME="$(sanitize_tag "${IMAGE_NAME}_${IMAGE_TAG}_${SHORT_SHA}").tar.gz"
 LOCAL_TAR="${EXPORT_DIR%/}/${ARCHIVE_NAME}"
+BUILD_TAR="${LOCAL_TAR%.gz}"
 REMOTE_TAR="/tmp/${ARCHIVE_NAME}"
 
 echo "==> Configuration"
@@ -183,8 +184,6 @@ docker buildx inspect "${BUILDER}" >/dev/null 2>&1 \
 
 mkdir -p "$(dirname "$LOCAL_TAR")"
 
-BUILD_TAR="${LOCAL_TAR%.gz}"
-
 echo
 echo "==> Build Docker target ${TARGET} via buildx"
 rm -f "$BUILD_TAR" "$LOCAL_TAR"
@@ -221,7 +220,17 @@ REMOTE_ARCHIVE_CREATED=1
 
 echo
 echo "==> docker load sur pre-prod"
-ssh "$HOST" "gunzip -c '${REMOTE_TAR}' | docker load"
+LOAD_OUTPUT="$(
+    ssh "$HOST" "set -o pipefail; gunzip -c '${REMOTE_TAR}' | docker load" 2>&1
+)" || {
+    printf '%s\n' "$LOAD_OUTPUT" >&2
+    die "docker load a échoué sur ${HOST}"
+}
+printf '%s\n' "$LOAD_OUTPUT"
+
+if grep -Fq "Error unpacking image" <<< "$LOAD_OUTPUT"; then
+    die "docker load n'a pas pu extraire l'image sur ${HOST}"
+fi
 
 echo "==> Suppression archive de transfert sur pre-prod"
 ssh "$HOST" "rm -f -- '${REMOTE_TAR}'"
@@ -271,7 +280,7 @@ ssh "$HOST" "cd '${COMPOSE_DIR}' && docker compose ps && docker compose images"
 
 echo
 echo "==> Nettoyage des artefacts locaux"
-rm -f -- "$LOCAL_TAR" "${LOCAL_TAR%.gz}"
+rm -f -- "$BUILD_TAR" "$LOCAL_TAR"
 
 echo
 echo "Déploiement vérifié: ${FULL_IMAGE}"
