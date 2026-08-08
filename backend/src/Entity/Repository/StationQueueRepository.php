@@ -245,6 +245,29 @@ final class StationQueueRepository extends AbstractStationBasedRepository
         return null !== $result;
     }
 
+    public function hasTopOfHourLegalIdCuedBetween(
+        Station $station,
+        DateTimeImmutable $start,
+        DateTimeImmutable $end,
+    ): bool {
+        $result = $this->em->createQuery(
+            <<<'DQL'
+                SELECT sq.id
+                FROM App\Entity\StationQueue sq
+                WHERE sq.station = :station
+                AND sq.top_of_hour_legal_id = 1
+                AND sq.timestamp_cued >= :start
+                AND sq.timestamp_cued <= :end
+            DQL
+        )->setParameter('station', $station)
+            ->setParameter('start', $start)
+            ->setParameter('end', $end)
+            ->setMaxResults(1)
+            ->getOneOrNullResult();
+
+        return null !== $result;
+    }
+
     public function clearUpcomingQueue(Station $station): void
     {
         $this->em->createQuery(
