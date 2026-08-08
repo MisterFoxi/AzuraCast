@@ -79,6 +79,7 @@
 import {computed, onMounted, ref, useTemplateRef} from 'vue';
 import DataTable, {DataTableField} from '~/components/Common/DataTable.vue';
 import AddButton from '~/components/Common/AddButton.vue';
+import Loading from '~/components/Common/Loading.vue';
 import ModalForm from '~/components/Common/ModalForm.vue';
 import FormGroupField from '~/components/Form/FormGroupField.vue';
 import FormGroupSelect from '~/components/Form/FormGroupSelect.vue';
