@@ -4,20 +4,23 @@ set -euo pipefail
 usage() {
     cat <<'EOF'
 Usage:
-  ./deploy-preprod-image.sh --host user@host --compose-dir /path/to/compose [--no-confirm]
+  ./deploy-preprod-image.sh --host user@host --compose-dir /path/to/compose [--export-dir /path/to/exports] [--no-confirm]
 
 Required:
   --host HOST                 SSH target, example: ubuntu@preprod
   --compose-dir DIR           Remote directory containing docker-compose.yml
 
 Options:
+  --export-dir DIR            Local directory for Docker image exports
+                              (default: /data/docker-exports)
   --no-confirm                Do not ask before build/deploy
   -h, --help                  Show this help
 
 Example:
   ./deploy-preprod-image.sh \
     --host ubuntu@preprod \
-    --compose-dir /data/preprod/AzuraCast
+    --compose-dir /data/preprod/AzuraCast \
+    --export-dir /mnt/docker-exports
 EOF
 }
 
@@ -42,8 +45,27 @@ COMPOSE_DIR=""
 TARGET="final"
 SERVICE="web"
 BUILDER="azura-builder"
-BUILDKIT_CACHE="/data/buildkit-cache"
+EXPORT_DIR="/data/docker-exports"
 CONFIRM=1
+LOCAL_TAR=""
+REMOTE_TAR=""
+REMOTE_ARCHIVE_CREATED=0
+
+cleanup() {
+    local rc=$?
+
+    if [[ -n "$LOCAL_TAR" ]]; then
+        rm -f -- "$LOCAL_TAR" "${LOCAL_TAR%.gz}"
+    fi
+
+    if [[ "$REMOTE_ARCHIVE_CREATED" -eq 1 && -n "$REMOTE_TAR" ]]; then
+        ssh "$HOST" "rm -f -- '${REMOTE_TAR}'" >/dev/null 2>&1 || true
+    fi
+
+    return "$rc"
+}
+
+trap cleanup EXIT
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -55,6 +77,11 @@ while [[ $# -gt 0 ]]; do
         --compose-dir)
             require_value "$@"
             COMPOSE_DIR="${2:-}"
+            shift 2
+            ;;
+        --export-dir)
+            require_value "$@"
+            EXPORT_DIR="${2:-}"
             shift 2
             ;;
         --no-confirm)
@@ -86,6 +113,9 @@ SHORT_SHA="$(git rev-parse --short HEAD)"
 BASE="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || true)"
 
 echo "==> Préflight Compose sur ${HOST}"
+ssh "$HOST" "test ! -e '${COMPOSE_DIR}/.git'" \
+    || die "${COMPOSE_DIR} est encore un checkout Git; la cible doit contenir uniquement la configuration d'exploitation"
+
 FULL_IMAGE="$(
     ssh "$HOST" \
         "cd '${COMPOSE_DIR}' && docker compose config --images '${SERVICE}'"
@@ -99,9 +129,9 @@ FULL_IMAGE="$(
 IMAGE_NAME="${FULL_IMAGE%:*}"
 IMAGE_TAG="${FULL_IMAGE##*:}"
 
-mkdir -p /data/docker-exports
+mkdir -p "$EXPORT_DIR" || die "impossible de créer le répertoire d'export: ${EXPORT_DIR}"
 ARCHIVE_NAME="$(sanitize_tag "${IMAGE_NAME}_${IMAGE_TAG}_${SHORT_SHA}").tar.gz"
-LOCAL_TAR="/data/docker-exports/${ARCHIVE_NAME}"
+LOCAL_TAR="${EXPORT_DIR%/}/${ARCHIVE_NAME}"
 REMOTE_TAR="/tmp/${ARCHIVE_NAME}"
 
 echo "==> Configuration"
@@ -114,7 +144,7 @@ Tracking:       ${BASE:-aucune}
 Image:          ${FULL_IMAGE}
 Target:         ${TARGET}
 Builder:        ${BUILDER}
-BuildKit cache: ${BUILDKIT_CACHE}
+Export dir:     ${EXPORT_DIR}
 Local tar:      ${LOCAL_TAR}
 Remote tar:     ${REMOTE_TAR}
 EOF
@@ -151,7 +181,7 @@ echo "==> Vérification buildx builder ${BUILDER}"
 docker buildx inspect "${BUILDER}" >/dev/null 2>&1 \
     || die "builder buildx introuvable: ${BUILDER}"
 
-mkdir -p "$(dirname "$LOCAL_TAR")" "$BUILDKIT_CACHE"
+mkdir -p "$(dirname "$LOCAL_TAR")"
 
 BUILD_TAR="${LOCAL_TAR%.gz}"
 
@@ -163,8 +193,6 @@ docker buildx build \
     --builder "${BUILDER}" \
     --target "${TARGET}" \
     --progress=plain \
-    --cache-from "type=local,src=${BUILDKIT_CACHE}" \
-    --cache-to "type=local,dest=${BUILDKIT_CACHE},mode=max" \
     --output "type=docker,dest=${BUILD_TAR}" \
     -t "${FULL_IMAGE}" \
     "$REPO_ROOT"
@@ -189,10 +217,15 @@ echo "Tarball vérifié: ${FULL_IMAGE}"
 echo
 echo "==> Copie vers ${HOST}:${REMOTE_TAR}"
 scp "$LOCAL_TAR" "${HOST}:${REMOTE_TAR}"
+REMOTE_ARCHIVE_CREATED=1
 
 echo
 echo "==> docker load sur pre-prod"
 ssh "$HOST" "gunzip -c '${REMOTE_TAR}' | docker load"
+
+echo "==> Suppression archive de transfert sur pre-prod"
+ssh "$HOST" "rm -f -- '${REMOTE_TAR}'"
+REMOTE_ARCHIVE_CREATED=0
 
 LOADED_IMAGE_ID="$(
     ssh "$HOST" "docker image inspect '${FULL_IMAGE}' --format '{{.Id}}'"
@@ -235,6 +268,10 @@ echo "Image vérifiée: ${FULL_IMAGE} (${EXPECTED_IMAGE_ID})"
 echo
 echo "==> État compose"
 ssh "$HOST" "cd '${COMPOSE_DIR}' && docker compose ps && docker compose images"
+
+echo
+echo "==> Nettoyage des artefacts locaux"
+rm -f -- "$LOCAL_TAR" "${LOCAL_TAR%.gz}"
 
 echo
 echo "Déploiement vérifié: ${FULL_IMAGE}"
