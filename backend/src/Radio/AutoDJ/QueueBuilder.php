@@ -11,6 +11,7 @@ use App\Entity\Enums\PlaylistOrders;
 use App\Entity\Enums\PlaylistRemoteTypes;
 use App\Entity\Enums\PlaylistSources;
 use App\Entity\Enums\PlaylistTypes;
+use App\Entity\Repository\StationPlaylistGroupMemberRepository;
 use App\Entity\Repository\StationPlaylistMediaRepository;
 use App\Entity\Repository\StationQueueRepository;
 use App\Entity\Repository\StationRequestRepository;
@@ -18,6 +19,7 @@ use App\Entity\Repository\SongHistoryRepository;
 use App\Entity\Song;
 use App\Entity\StationMedia;
 use App\Entity\StationPlaylist;
+use App\Entity\StationPlaylistGroupMember;
 use App\Entity\StationPlaylistMedia;
 use App\Entity\StationQueue;
 use App\Event\Radio\BuildQueue;
@@ -42,6 +44,7 @@ final class QueueBuilder implements EventSubscriberInterface
         private readonly DuplicatePrevention $duplicatePrevention,
         private readonly HourBoundaryPlanner $hourBoundaryPlanner,
         private readonly CacheInterface $cache,
+        private readonly StationPlaylistGroupMemberRepository $groupMemberRepo,
         private readonly StationPlaylistMediaRepository $spmRepo,
         private readonly StationRequestRepository $requestRepo,
         private readonly StationQueueRepository $queueRepo,
@@ -89,8 +92,17 @@ final class QueueBuilder implements EventSubscriberInterface
         }
 
         $activePlaylistsByType = [];
+        $groupMemberPlaylistIds = array_fill_keys(
+            $this->groupMemberRepo->getChildPlaylistIds($station),
+            true
+        );
+
         foreach ($station->playlists as $playlist) {
             /** @var StationPlaylist $playlist */
+            if (isset($groupMemberPlaylistIds[$playlist->id])) {
+                continue;
+            }
+
             $isEligible = $playlist->isPlayable($event->isInterrupting())
                 || ($event->isInterrupting()
                     && $this->scheduler->isPlaylistStrictStartDueNow($playlist, $tz, $expectedPlayTime))
@@ -277,6 +289,15 @@ final class QueueBuilder implements EventSubscriberInterface
         DateTimeImmutable $expectedPlayTime,
         bool $allowDuplicates = false
     ): StationQueue|array|null {
+        if (PlaylistSources::Group === $playlist->source) {
+            return $this->playSongFromGroup(
+                $playlist,
+                $recentSongHistory,
+                $expectedPlayTime,
+                $allowDuplicates
+            );
+        }
+
         if (PlaylistSources::RemoteUrl === $playlist->source) {
             return $this->getSongFromRemotePlaylist($playlist, $expectedPlayTime);
         }
@@ -352,6 +373,53 @@ final class QueueBuilder implements EventSubscriberInterface
             ]
         );
         return null;
+    }
+
+    private function playSongFromGroup(
+        StationPlaylist $group,
+        array $recentSongHistory,
+        DateTimeImmutable $expectedPlayTime,
+        bool $allowDuplicates,
+    ): StationQueue|array|null {
+        $members = $group->group_members->toArray();
+        if ([] === $members) {
+            return null;
+        }
+
+        $memberIndex = 0;
+        foreach ($members as $index => $member) {
+            if ($member->position >= $group->group_next_position) {
+                $memberIndex = $index;
+                break;
+            }
+        }
+
+        /** @var StationPlaylistGroupMember $member */
+        $member = $members[$memberIndex];
+        if (PlaylistSources::Group === $member->playlist->source) {
+            $this->logger->warning(
+                'Nested playlist groups are not supported in this increment.',
+                ['group_id' => $group->id, 'member_id' => $member->id]
+            );
+            return null;
+        }
+
+        $selection = $this->playSongFromPlaylist(
+            $member->playlist,
+            $recentSongHistory,
+            $expectedPlayTime,
+            $allowDuplicates
+        );
+        if (null === $selection) {
+            return null;
+        }
+
+        $nextMemberIndex = ($memberIndex + 1) % count($members);
+        $group->group_next_position = $members[$nextMemberIndex]->position;
+        $group->played_at = $expectedPlayTime;
+        $this->em->persist($group);
+
+        return $selection;
     }
 
     private function makeQueueFromApi(

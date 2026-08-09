@@ -91,8 +91,12 @@ final class StationPlaylist implements
         set {
             $this->source = $value;
 
-            if (PlaylistSources::RemoteUrl === $value) {
+            if (in_array($value, [PlaylistSources::RemoteUrl, PlaylistSources::Group], true)) {
                 $this->type = PlaylistTypes::Standard;
+            }
+
+            if (PlaylistSources::Group === $value) {
+                $this->order = PlaylistOrders::Sequential;
             }
         }
     }
@@ -355,6 +359,9 @@ final class StationPlaylist implements
         set (DateTimeImmutable|string|int|null $value) => Time::toNullableUtcCarbonImmutable($value);
     }
 
+    #[ORM\Column(type: 'smallint', options: ['unsigned' => true, 'default' => 0])]
+    public int $group_next_position = 0;
+
     /** @var Collection<int, StationPlaylistMedia> */
     #[
         ORM\OneToMany(targetEntity: StationPlaylistMedia::class, mappedBy: 'playlist', fetch: 'EXTRA_LAZY'),
@@ -377,6 +384,27 @@ final class StationPlaylist implements
     ]
     public private(set) Collection $schedule_items;
 
+    /** @var Collection<int, StationPlaylistGroupMember> */
+    #[
+        ORM\OneToMany(
+            targetEntity: StationPlaylistGroupMember::class,
+            mappedBy: 'group',
+            fetch: 'EXTRA_LAZY'
+        ),
+        ORM\OrderBy(['position' => 'ASC', 'id' => 'ASC'])
+    ]
+    public private(set) Collection $group_members;
+
+    /** @var Collection<int, StationPlaylistGroupMember> */
+    #[
+        ORM\OneToMany(
+            targetEntity: StationPlaylistGroupMember::class,
+            mappedBy: 'playlist',
+            fetch: 'EXTRA_LAZY'
+        )
+    ]
+    public private(set) Collection $group_memberships;
+
     /** @var Collection<int, Podcast> */
     #[
         OA\Property(type: "array", items: new OA\Items()),
@@ -398,6 +426,8 @@ final class StationPlaylist implements
         $this->media_items = new ArrayCollection();
         $this->folders = new ArrayCollection();
         $this->schedule_items = new ArrayCollection();
+        $this->group_members = new ArrayCollection();
+        $this->group_memberships = new ArrayCollection();
         $this->podcasts = new ArrayCollection();
     }
 
@@ -428,6 +458,10 @@ final class StationPlaylist implements
             return $this->media_items->count() > 0;
         }
 
+        if (PlaylistSources::Group === $this->source) {
+            return $this->group_members->count() > 0;
+        }
+
         // Remote stream playlists aren't supported by the AzuraCast AutoDJ.
         return PlaylistRemoteTypes::Playlist === $this->remote_type;
     }
@@ -440,6 +474,9 @@ final class StationPlaylist implements
         $this->media_items = new ArrayCollection();
         $this->folders = new ArrayCollection();
         $this->schedule_items = new ArrayCollection();
+        $this->group_members = new ArrayCollection();
+        $this->group_memberships = new ArrayCollection();
+        $this->group_next_position = 0;
         $this->podcasts = new ArrayCollection();
     }
 

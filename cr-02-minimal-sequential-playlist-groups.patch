@@ -1,0 +1,632 @@
+diff --git a/backend/src/Entity/Enums/PlaylistSources.php b/backend/src/Entity/Enums/PlaylistSources.php
+index 36d52ba..bc2dcac 100644
+--- a/backend/src/Entity/Enums/PlaylistSources.php
++++ b/backend/src/Entity/Enums/PlaylistSources.php
+@@ -11,4 +11,5 @@ enum PlaylistSources: string
+ {
+     case Songs = 'songs';
+     case RemoteUrl = 'remote_url';
++    case Group = 'group';
+ }
+diff --git a/backend/src/Entity/StationPlaylist.php b/backend/src/Entity/StationPlaylist.php
+index e9f1735..0a17774 100644
+--- a/backend/src/Entity/StationPlaylist.php
++++ b/backend/src/Entity/StationPlaylist.php
+@@ -91,9 +91,13 @@ final class StationPlaylist implements
+         set {
+             $this->source = $value;
+ 
+-            if (PlaylistSources::RemoteUrl === $value) {
++            if (in_array($value, [PlaylistSources::RemoteUrl, PlaylistSources::Group], true)) {
+                 $this->type = PlaylistTypes::Standard;
+             }
++
++            if (PlaylistSources::Group === $value) {
++                $this->order = PlaylistOrders::Sequential;
++            }
+         }
+     }
+ 
+@@ -355,6 +359,9 @@ final class StationPlaylist implements
+         set (DateTimeImmutable|string|int|null $value) => Time::toNullableUtcCarbonImmutable($value);
+     }
+ 
++    #[ORM\Column(type: 'smallint', options: ['unsigned' => true, 'default' => 0])]
++    public int $group_next_position = 0;
++
+     /** @var Collection<int, StationPlaylistMedia> */
+     #[
+         ORM\OneToMany(targetEntity: StationPlaylistMedia::class, mappedBy: 'playlist', fetch: 'EXTRA_LAZY'),
+@@ -377,6 +384,27 @@ final class StationPlaylist implements
+     ]
+     public private(set) Collection $schedule_items;
+ 
++    /** @var Collection<int, StationPlaylistGroupMember> */
++    #[
++        ORM\OneToMany(
++            targetEntity: StationPlaylistGroupMember::class,
++            mappedBy: 'group',
++            fetch: 'EXTRA_LAZY'
++        ),
++        ORM\OrderBy(['position' => 'ASC', 'id' => 'ASC'])
++    ]
++    public private(set) Collection $group_members;
++
++    /** @var Collection<int, StationPlaylistGroupMember> */
++    #[
++        ORM\OneToMany(
++            targetEntity: StationPlaylistGroupMember::class,
++            mappedBy: 'playlist',
++            fetch: 'EXTRA_LAZY'
++        )
++    ]
++    public private(set) Collection $group_memberships;
++
+     /** @var Collection<int, Podcast> */
+     #[
+         OA\Property(type: "array", items: new OA\Items()),
+@@ -398,6 +426,8 @@ final class StationPlaylist implements
+         $this->media_items = new ArrayCollection();
+         $this->folders = new ArrayCollection();
+         $this->schedule_items = new ArrayCollection();
++        $this->group_members = new ArrayCollection();
++        $this->group_memberships = new ArrayCollection();
+         $this->podcasts = new ArrayCollection();
+     }
+ 
+@@ -428,6 +458,10 @@ final class StationPlaylist implements
+             return $this->media_items->count() > 0;
+         }
+ 
++        if (PlaylistSources::Group === $this->source) {
++            return $this->group_members->count() > 0;
++        }
++
+         // Remote stream playlists aren't supported by the AzuraCast AutoDJ.
+         return PlaylistRemoteTypes::Playlist === $this->remote_type;
+     }
+@@ -440,6 +474,9 @@ final class StationPlaylist implements
+         $this->media_items = new ArrayCollection();
+         $this->folders = new ArrayCollection();
+         $this->schedule_items = new ArrayCollection();
++        $this->group_members = new ArrayCollection();
++        $this->group_memberships = new ArrayCollection();
++        $this->group_next_position = 0;
+         $this->podcasts = new ArrayCollection();
+     }
+ 
+diff --git a/backend/src/Radio/AutoDJ/QueueBuilder.php b/backend/src/Radio/AutoDJ/QueueBuilder.php
+index 98058d6..9ef4911 100644
+--- a/backend/src/Radio/AutoDJ/QueueBuilder.php
++++ b/backend/src/Radio/AutoDJ/QueueBuilder.php
+@@ -11,6 +11,7 @@ use App\Entity\Enums\PlaylistOrders;
+ use App\Entity\Enums\PlaylistRemoteTypes;
+ use App\Entity\Enums\PlaylistSources;
+ use App\Entity\Enums\PlaylistTypes;
++use App\Entity\Repository\StationPlaylistGroupMemberRepository;
+ use App\Entity\Repository\StationPlaylistMediaRepository;
+ use App\Entity\Repository\StationQueueRepository;
+ use App\Entity\Repository\StationRequestRepository;
+@@ -18,6 +19,7 @@ use App\Entity\Repository\SongHistoryRepository;
+ use App\Entity\Song;
+ use App\Entity\StationMedia;
+ use App\Entity\StationPlaylist;
++use App\Entity\StationPlaylistGroupMember;
+ use App\Entity\StationPlaylistMedia;
+ use App\Entity\StationQueue;
+ use App\Event\Radio\BuildQueue;
+@@ -42,6 +44,7 @@ final class QueueBuilder implements EventSubscriberInterface
+         private readonly DuplicatePrevention $duplicatePrevention,
+         private readonly HourBoundaryPlanner $hourBoundaryPlanner,
+         private readonly CacheInterface $cache,
++        private readonly StationPlaylistGroupMemberRepository $groupMemberRepo,
+         private readonly StationPlaylistMediaRepository $spmRepo,
+         private readonly StationRequestRepository $requestRepo,
+         private readonly StationQueueRepository $queueRepo,
+@@ -89,8 +92,17 @@ final class QueueBuilder implements EventSubscriberInterface
+         }
+ 
+         $activePlaylistsByType = [];
++        $groupMemberPlaylistIds = array_fill_keys(
++            $this->groupMemberRepo->getChildPlaylistIds($station),
++            true
++        );
++
+         foreach ($station->playlists as $playlist) {
+             /** @var StationPlaylist $playlist */
++            if (isset($groupMemberPlaylistIds[$playlist->id])) {
++                continue;
++            }
++
+             $isEligible = $playlist->isPlayable($event->isInterrupting())
+                 || ($event->isInterrupting()
+                     && $this->scheduler->isPlaylistStrictStartDueNow($playlist, $tz, $expectedPlayTime))
+@@ -277,6 +289,15 @@ final class QueueBuilder implements EventSubscriberInterface
+         DateTimeImmutable $expectedPlayTime,
+         bool $allowDuplicates = false
+     ): StationQueue|array|null {
++        if (PlaylistSources::Group === $playlist->source) {
++            return $this->playSongFromGroup(
++                $playlist,
++                $recentSongHistory,
++                $expectedPlayTime,
++                $allowDuplicates
++            );
++        }
++
+         if (PlaylistSources::RemoteUrl === $playlist->source) {
+             return $this->getSongFromRemotePlaylist($playlist, $expectedPlayTime);
+         }
+@@ -354,6 +375,53 @@ final class QueueBuilder implements EventSubscriberInterface
+         return null;
+     }
+ 
++    private function playSongFromGroup(
++        StationPlaylist $group,
++        array $recentSongHistory,
++        DateTimeImmutable $expectedPlayTime,
++        bool $allowDuplicates,
++    ): StationQueue|array|null {
++        $members = $group->group_members->toArray();
++        if ([] === $members) {
++            return null;
++        }
++
++        $memberIndex = 0;
++        foreach ($members as $index => $member) {
++            if ($member->position >= $group->group_next_position) {
++                $memberIndex = $index;
++                break;
++            }
++        }
++
++        /** @var StationPlaylistGroupMember $member */
++        $member = $members[$memberIndex];
++        if (PlaylistSources::Group === $member->playlist->source) {
++            $this->logger->warning(
++                'Nested playlist groups are not supported in this increment.',
++                ['group_id' => $group->id, 'member_id' => $member->id]
++            );
++            return null;
++        }
++
++        $selection = $this->playSongFromPlaylist(
++            $member->playlist,
++            $recentSongHistory,
++            $expectedPlayTime,
++            $allowDuplicates
++        );
++        if (null === $selection) {
++            return null;
++        }
++
++        $nextMemberIndex = ($memberIndex + 1) % count($members);
++        $group->group_next_position = $members[$nextMemberIndex]->position;
++        $group->played_at = $expectedPlayTime;
++        $this->em->persist($group);
++
++        return $selection;
++    }
++
+     private function makeQueueFromApi(
+         StationPlaylistQueue $validTrack,
+         StationPlaylist $playlist,
+diff --git a/backend/src/Radio/Backend/Liquidsoap/ConfigWriter.php b/backend/src/Radio/Backend/Liquidsoap/ConfigWriter.php
+index 6f1c3cd..4d6dce4 100644
+--- a/backend/src/Radio/Backend/Liquidsoap/ConfigWriter.php
++++ b/backend/src/Radio/Backend/Liquidsoap/ConfigWriter.php
+@@ -218,6 +218,10 @@ final class ConfigWriter implements EventSubscriberInterface
+                 continue;
+             }
+ 
++            if (PlaylistSources::Group === $playlist->source) {
++                continue;
++            }
++
+             if (!self::shouldWritePlaylist($event, $playlist)) {
+                 continue;
+             }
+diff --git a/backend/src/Tests/AutoDjTestHarness.php b/backend/src/Tests/AutoDjTestHarness.php
+index 6f2e906..3febc60 100644
+--- a/backend/src/Tests/AutoDjTestHarness.php
++++ b/backend/src/Tests/AutoDjTestHarness.php
+@@ -6,9 +6,11 @@ namespace App\Tests;
+ 
+ use App\Doctrine\ReloadableEntityManagerInterface;
+ use App\Entity\Enums\PlaylistOrders;
++use App\Entity\Enums\PlaylistSources;
+ use App\Entity\Station;
+ use App\Entity\StationMedia;
+ use App\Entity\StationPlaylist;
++use App\Entity\StationPlaylistGroupMember;
+ use App\Entity\StationPlaylistMedia;
+ use App\Event\Radio\BuildQueue;
+ use App\Radio\AutoDJ\QueueBuilder;
+@@ -29,6 +31,9 @@ final class AutoDjTestHarness
+     /** @var StationPlaylistMedia[] */
+     private array $playlistMedia = [];
+ 
++    /** @var StationPlaylistGroupMember[] */
++    private array $groupMembers = [];
++
+     public function __construct(
+         private readonly ReloadableEntityManagerInterface $em,
+         private readonly QueueBuilder $queueBuilder,
+@@ -46,30 +51,113 @@ final class AutoDjTestHarness
+         }
+ 
+         $suffix = substr(uniqid('', true), -8);
++        $station = $this->createStation($suffix);
++        $playlistFixture = $this->createPlaylist($station, 'Sequential Test Playlist', $trackTitles, $suffix);
++
++        $this->em->flush();
++
++        return [
++            'station' => $station,
++            'playlist' => $playlistFixture['playlist'],
++            'media' => $playlistFixture['media'],
++        ];
++    }
++
++    /**
++     * @param array<string, non-empty-list<string>> $playlists
++     * @param non-empty-list<string> $memberOrder
++     * @return array{station: Station, group: StationPlaylist, playlists: array<string, StationPlaylist>}
++     */
++    public function createSequentialGroup(array $playlists, array $memberOrder): array
++    {
++        if ([] === $playlists || [] === $memberOrder) {
++            throw new InvalidArgumentException('At least one playlist and one member occurrence are required.');
++        }
++
++        $suffix = substr(uniqid('', true), -8);
++        $station = $this->createStation($suffix);
++
++        $createdPlaylists = [];
++        foreach ($playlists as $name => $trackTitles) {
++            if ([] === $trackTitles) {
++                throw new InvalidArgumentException('Each child playlist must contain at least one track.');
++            }
++
++            $fixture = $this->createPlaylist($station, $name, $trackTitles, $suffix);
++            $createdPlaylists[$name] = $fixture['playlist'];
++        }
++
++        $group = new StationPlaylist($station);
++        $group->name = 'Sequential Test Group';
++        $group->source = PlaylistSources::Group;
++        $group->avoid_duplicates = false;
++        $station->playlists->add($group);
++        $this->em->persist($group);
++        $this->playlists[] = $group;
++
++        foreach ($memberOrder as $position => $playlistName) {
++            $childPlaylist = $createdPlaylists[$playlistName] ?? null;
++            if (!$childPlaylist instanceof StationPlaylist) {
++                throw new InvalidArgumentException('Unknown child playlist: ' . $playlistName);
++            }
++
++            $member = new StationPlaylistGroupMember($group, $childPlaylist, $position);
++            $group->group_members->add($member);
++            $childPlaylist->group_memberships->add($member);
++            $this->em->persist($member);
++            $this->groupMembers[] = $member;
++        }
+ 
++        $this->em->flush();
++
++        return [
++            'station' => $station,
++            'group' => $group,
++            'playlists' => $createdPlaylists,
++        ];
++    }
++
++    private function createStation(string $suffix): Station
++    {
+         $station = new Station();
+         $station->name = 'AutoDJ Test Station';
+         $station->short_name = 'autodj_test_' . $suffix;
+         $station->timezone = 'UTC';
+         $station->ensureDirectoriesExist();
+ 
++        $this->em->persist($station->media_storage_location);
++        $this->em->persist($station->recordings_storage_location);
++        $this->em->persist($station->podcasts_storage_location);
++        $this->em->persist($station);
++        $this->stations[] = $station;
++
++        return $station;
++    }
++
++    /**
++     * @param non-empty-list<string> $trackTitles
++     * @return array{playlist: StationPlaylist, media: list<StationMedia>}
++     */
++    private function createPlaylist(
++        Station $station,
++        string $name,
++        array $trackTitles,
++        string $suffix,
++    ): array {
+         $playlist = new StationPlaylist($station);
+-        $playlist->name = 'Sequential Test Playlist';
++        $playlist->name = $name;
+         $playlist->order = PlaylistOrders::Sequential;
+         $playlist->avoid_duplicates = false;
+         $station->playlists->add($playlist);
+ 
+-        $this->em->persist($station->media_storage_location);
+-        $this->em->persist($station->recordings_storage_location);
+-        $this->em->persist($station->podcasts_storage_location);
+-        $this->em->persist($station);
+         $this->em->persist($playlist);
++        $this->playlists[] = $playlist;
+ 
+         $createdMedia = [];
+         foreach ($trackTitles as $weight => $title) {
+             $media = new StationMedia(
+                 $station->media_storage_location,
+-                '/autodj-test-' . $suffix . '-' . $weight . '.mp3'
++                '/autodj-test-' . $suffix . '-' . count($this->media) . '.mp3'
+             );
+             $media->title = $title;
+             $media->artist = 'AutoDJ Test Artist';
+@@ -90,13 +178,7 @@ final class AutoDjTestHarness
+             $this->playlistMedia[] = $playlistMedia;
+         }
+ 
+-        $this->em->flush();
+-
+-        $this->stations[] = $station;
+-        $this->playlists[] = $playlist;
+-
+         return [
+-            'station' => $station,
+             'playlist' => $playlist,
+             'media' => $createdMedia,
+         ];
+@@ -123,6 +205,9 @@ final class AutoDjTestHarness
+                 ->execute();
+         }
+ 
++        foreach ($this->groupMembers as $groupMember) {
++            $this->removeIfManaged($groupMember);
++        }
+         foreach ($this->playlistMedia as $playlistMedia) {
+             $this->removeIfManaged($playlistMedia);
+         }
+diff --git a/backend/src/Entity/Migration/Version20260809090000.php b/backend/src/Entity/Migration/Version20260809090000.php
+new file mode 100644
+index 0000000..bf83f94
+--- /dev/null
++++ b/backend/src/Entity/Migration/Version20260809090000.php
+@@ -0,0 +1,52 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Entity\Migration;
++
++use Doctrine\DBAL\Schema\Schema;
++use Doctrine\Migrations\AbstractMigration;
++
++final class Version20260809090000 extends AbstractMigration
++{
++    public function getDescription(): string
++    {
++        return 'Add minimal sequential playlist groups.';
++    }
++
++    public function up(Schema $schema): void
++    {
++        $this->addSql(
++            'ALTER TABLE station_playlists
++             ADD COLUMN group_next_position SMALLINT UNSIGNED NOT NULL DEFAULT 0'
++        );
++        $this->addSql(
++            'CREATE TABLE station_playlist_group_members (
++                id INT AUTO_INCREMENT NOT NULL,
++                group_id INT NOT NULL,
++                playlist_id INT NOT NULL,
++                position SMALLINT UNSIGNED NOT NULL,
++                INDEX IDX_playlist_group (group_id),
++                INDEX IDX_playlist_group_child (playlist_id),
++                UNIQUE INDEX uniq_playlist_group_position (group_id, position),
++                PRIMARY KEY(id)
++             ) DEFAULT CHARACTER SET utf8mb4 COLLATE `utf8mb4_general_ci` ENGINE = InnoDB'
++        );
++        $this->addSql(
++            'ALTER TABLE station_playlist_group_members
++             ADD CONSTRAINT FK_playlist_group
++             FOREIGN KEY (group_id) REFERENCES station_playlists (id) ON DELETE CASCADE'
++        );
++        $this->addSql(
++            'ALTER TABLE station_playlist_group_members
++             ADD CONSTRAINT FK_playlist_group_child
++             FOREIGN KEY (playlist_id) REFERENCES station_playlists (id) ON DELETE CASCADE'
++        );
++    }
++
++    public function down(Schema $schema): void
++    {
++        $this->addSql('DROP TABLE station_playlist_group_members');
++        $this->addSql('ALTER TABLE station_playlists DROP COLUMN group_next_position');
++    }
++}
+diff --git a/backend/src/Entity/Repository/StationPlaylistGroupMemberRepository.php b/backend/src/Entity/Repository/StationPlaylistGroupMemberRepository.php
+new file mode 100644
+index 0000000..166cfcb
+--- /dev/null
++++ b/backend/src/Entity/Repository/StationPlaylistGroupMemberRepository.php
+@@ -0,0 +1,36 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Entity\Repository;
++
++use App\Doctrine\Repository;
++use App\Entity\Station;
++use App\Entity\StationPlaylistGroupMember;
++
++/**
++ * @extends Repository<StationPlaylistGroupMember>
++ */
++final class StationPlaylistGroupMemberRepository extends Repository
++{
++    protected string $entityClass = StationPlaylistGroupMember::class;
++
++    /** @return list<int> */
++    public function getChildPlaylistIds(Station $station): array
++    {
++        $rows = $this->em->createQuery(
++            <<<'DQL'
++                SELECT DISTINCT IDENTITY(spgm.playlist) AS playlist_id
++                FROM App\Entity\StationPlaylistGroupMember spgm
++                JOIN spgm.group parentPlaylist
++                WHERE parentPlaylist.station = :station
++            DQL
++        )->setParameter('station', $station)
++            ->getScalarResult();
++
++        return array_map(
++            static fn(array $row): int => (int)$row['playlist_id'],
++            $rows
++        );
++    }
++}
+diff --git a/backend/src/Entity/StationPlaylistGroupMember.php b/backend/src/Entity/StationPlaylistGroupMember.php
+new file mode 100644
+index 0000000..72e7455
+--- /dev/null
++++ b/backend/src/Entity/StationPlaylistGroupMember.php
+@@ -0,0 +1,39 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Entity;
++
++use Doctrine\ORM\Mapping as ORM;
++
++#[
++    ORM\Entity,
++    ORM\Table(
++        name: 'station_playlist_group_members',
++        uniqueConstraints: [
++            new ORM\UniqueConstraint(name: 'uniq_playlist_group_position', columns: ['group_id', 'position']),
++        ]
++    )
++]
++final class StationPlaylistGroupMember implements Interfaces\IdentifiableEntityInterface
++{
++    use Traits\HasAutoIncrementId;
++
++    #[ORM\ManyToOne(fetch: 'EAGER', inversedBy: 'group_members')]
++    #[ORM\JoinColumn(name: 'group_id', referencedColumnName: 'id', nullable: false, onDelete: 'CASCADE')]
++    public StationPlaylist $group;
++
++    #[ORM\ManyToOne(fetch: 'EAGER', inversedBy: 'group_memberships')]
++    #[ORM\JoinColumn(name: 'playlist_id', referencedColumnName: 'id', nullable: false, onDelete: 'CASCADE')]
++    public StationPlaylist $playlist;
++
++    #[ORM\Column(type: 'smallint', options: ['unsigned' => true])]
++    public int $position;
++
++    public function __construct(StationPlaylist $group, StationPlaylist $playlist, int $position)
++    {
++        $this->group = $group;
++        $this->playlist = $playlist;
++        $this->position = $position;
++    }
++}
+diff --git a/tests/Unit/PlaylistGroupTest.php b/tests/Unit/PlaylistGroupTest.php
+new file mode 100644
+index 0000000..8749118
+--- /dev/null
++++ b/tests/Unit/PlaylistGroupTest.php
+@@ -0,0 +1,82 @@
++<?php
++
++declare(strict_types=1);
++
++namespace Unit;
++
++use App\Entity\Station;
++use App\Radio\AutoDJ\QueueBuilder;
++use App\Tests\AutoDjTestHarness;
++use App\Tests\Module;
++use Carbon\CarbonImmutable;
++use Codeception\Test\Unit;
++
++final class PlaylistGroupTest extends Unit
++{
++    private AutoDjTestHarness $harness;
++
++    protected function _inject(Module $testsModule): void
++    {
++        $this->harness = new AutoDjTestHarness(
++            $testsModule->em,
++            $testsModule->container->get(QueueBuilder::class),
++        );
++    }
++
++    public function testGroupRotatesOccurrencesSequentiallyAndWraps(): void
++    {
++        $fixture = $this->harness->createSequentialGroup(
++            [
++                'A' => ['A'],
++                'B' => ['B'],
++                'C' => ['C'],
++            ],
++            ['A', 'B', 'C'],
++        );
++
++        try {
++            self::assertSame(
++                ['A', 'B', 'C', 'A', 'B', 'C'],
++                $this->selectTitles($fixture['station'], 6),
++            );
++        } finally {
++            $this->harness->cleanUp();
++        }
++    }
++
++    public function testRepeatedPlaylistOccurrenceControlsFrequency(): void
++    {
++        $fixture = $this->harness->createSequentialGroup(
++            [
++                'Jingle' => ['Jingle'],
++                'Hot' => ['Hot'],
++                'Music' => ['Music'],
++            ],
++            ['Jingle', 'Hot', 'Music', 'Hot'],
++        );
++
++        try {
++            self::assertSame(
++                ['Jingle', 'Hot', 'Music', 'Hot'],
++                $this->selectTitles($fixture['station'], 4),
++            );
++        } finally {
++            $this->harness->cleanUp();
++        }
++    }
++
++    /** @return list<string|null> */
++    private function selectTitles(Station $station, int $count): array
++    {
++        $titles = [];
++        $time = CarbonImmutable::parse('2026-08-09 10:00:00', 'UTC');
++
++        for ($i = 0; $i < $count; $i++) {
++            $event = $this->harness->calculateNextSong($station, $time->addMinutes($i * 3));
++            self::assertCount(1, $event->getNextSongs());
++            $titles[] = $event->getNextSongs()[0]->media?->title;
++        }
++
++        return $titles;
++    }
++}
+

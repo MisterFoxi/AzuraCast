@@ -218,6 +218,10 @@ final class ConfigWriter implements EventSubscriberInterface
                 continue;
             }
 
+            if (PlaylistSources::Group === $playlist->source) {
+                continue;
+            }
+
             if (!self::shouldWritePlaylist($event, $playlist)) {
                 continue;
             }
