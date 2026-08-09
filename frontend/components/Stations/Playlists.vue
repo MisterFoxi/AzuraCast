@@ -56,8 +56,11 @@
                                         <template v-if="row.item.source === 'songs'">
                                             {{ $gettext('Song-based') }}
                                         </template>
-                                        <template v-else>
+                                        <template v-else-if="row.item.source === 'remote_url'">
                                             {{ $gettext('Remote URL') }}
+                                        </template>
+                                        <template v-else-if="row.item.source === 'group'">
+                                            {{ $gettext('Playlist Group') }}
                                         </template>
                                     </span>
                                     <span
@@ -96,8 +99,11 @@
                                 <template v-if="!item.is_enabled">
                                     {{ $gettext('Disabled') }}
                                 </template>
-                                <template v-else-if="item.source !== 'songs'">
+                                <template v-else-if="item.source === 'remote_url'">
                                     {{ $gettext('Remote URL') }}
+                                </template>
+                                <template v-else-if="item.source === 'group'">
+                                    {{ $gettext('Sequential Group') }}
                                 </template>
                                 <template v-else-if="item.type === 'default'">
                                     {{ $gettext('General Rotation') }}<br>
@@ -193,6 +199,14 @@
                                         {{ $gettext('Reorder') }}
                                     </button>
                                     <button
+                                        v-if="item.links.members"
+                                        type="button"
+                                        class="btn btn-sm btn-primary"
+                                        @click="doManageMembers(item.links.members)"
+                                    >
+                                        {{ $gettext('Manage Members') }}
+                                    </button>
+                                    <button
                                         type="button"
                                         class="btn btn-sm"
                                         :class="(item.is_enabled) ? 'btn-warning' : 'btn-success'"
@@ -278,6 +292,11 @@
         @needs-restart="() => mayNeedRestart()"
     />
     <reorder-modal ref="$reorderModal" />
+    <group-members-modal
+        ref="$groupMembersModal"
+        :playlists-url="listUrl"
+        @saved="relist"
+    />
     <queue-modal ref="$queueModal" />
     <reorder-modal ref="$reorderModal" />
     <import-modal
@@ -300,6 +319,7 @@
 import DataTable, {DataTableField} from "~/components/Common/DataTable.vue";
 import EditModal from "~/components/Stations/Playlists/EditModal.vue";
 import ReorderModal from "~/components/Stations/Playlists/ReorderModal.vue";
+import GroupMembersModal from "~/components/Stations/Playlists/GroupMembersModal.vue";
 import ImportModal from "~/components/Stations/Playlists/ImportModal.vue";
 import QueueModal from "~/components/Stations/Playlists/QueueModal.vue";
 import CloneModal from "~/components/Stations/Playlists/CloneModal.vue";
@@ -364,6 +384,12 @@ const $reorderModal = useTemplateRef('$reorderModal');
 
 const doReorder = (url: string) => {
     $reorderModal.value?.open(url);
+};
+
+const $groupMembersModal = useTemplateRef('$groupMembersModal');
+
+const doManageMembers = (url: string) => {
+    void $groupMembersModal.value?.open(url);
 };
 
 const $queueModal = useTemplateRef('$queueModal');

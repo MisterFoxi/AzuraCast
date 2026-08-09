@@ -290,6 +290,11 @@ const sourceOptions = [
         value: 'remote_url',
         text: $gettext('Remote URL'),
         description: $gettext('A playlist that instructs the station to play from a remote URL.')
+    },
+    {
+        value: 'group',
+        text: $gettext('Playlist Group'),
+        description: $gettext('A sequential group that plays one item from each member playlist in order.')
     }
 ];
 

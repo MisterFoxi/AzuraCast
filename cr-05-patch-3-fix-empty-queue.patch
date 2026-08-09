@@ -1,0 +1,75 @@
+diff --git a/backend/src/Entity/Repository/StationPlaylistGroupMemberRepository.php b/backend/src/Entity/Repository/StationPlaylistGroupMemberRepository.php
+index 7d611ff..1a85e43 100644
+--- a/backend/src/Entity/Repository/StationPlaylistGroupMemberRepository.php
++++ b/backend/src/Entity/Repository/StationPlaylistGroupMemberRepository.php
+@@ -67,11 +67,20 @@ final class StationPlaylistGroupMemberRepository extends Repository
+                         $member->position = $position;
+                     }
+ 
++                    if (!$group->group_members->contains($member)) {
++                        $group->group_members->add($member);
++                    }
++                    if (!$playlist->group_memberships->contains($member)) {
++                        $playlist->group_memberships->add($member);
++                    }
++
+                     $newMembers[] = $member;
+                 }
+ 
+                 foreach ($membersByPlaylistId as $unusedMembers) {
+                     foreach ($unusedMembers as $unusedMember) {
++                        $group->group_members->removeElement($unusedMember);
++                        $unusedMember->playlist->group_memberships->removeElement($unusedMember);
+                         $this->em->remove($unusedMember);
+                     }
+                 }
+diff --git a/backend/src/Radio/AutoDJ/QueueBuilder.php b/backend/src/Radio/AutoDJ/QueueBuilder.php
+index 9ef4911..eb52c47 100644
+--- a/backend/src/Radio/AutoDJ/QueueBuilder.php
++++ b/backend/src/Radio/AutoDJ/QueueBuilder.php
+@@ -381,7 +381,10 @@ final class QueueBuilder implements EventSubscriberInterface
+         DateTimeImmutable $expectedPlayTime,
+         bool $allowDuplicates,
+     ): StationQueue|array|null {
+-        $members = $group->group_members->toArray();
++        // Query the authoritative ordered membership list. The group entity can
++        // remain managed across the API request that updates its members, so its
++        // inverse collection may otherwise be stale while the join table is not.
++        $members = $this->groupMemberRepo->getMembers($group);
+         if ([] === $members) {
+             return null;
+         }
+diff --git a/tests/PureUnit/PlaylistGroupMemberRepositoryTest.php b/tests/PureUnit/PlaylistGroupMemberRepositoryTest.php
+index 667b92a..b18489c 100644
+--- a/tests/PureUnit/PlaylistGroupMemberRepositoryTest.php
++++ b/tests/PureUnit/PlaylistGroupMemberRepositoryTest.php
+@@ -69,6 +69,10 @@ final class PlaylistGroupMemberRepositoryTest extends TestCase
+             $members
+         ));
+         self::assertSame(0, $group->group_next_position);
++        self::assertTrue($group->group_members->contains($firstA));
++        self::assertTrue($group->group_members->contains($secondA));
++        self::assertFalse($group->group_members->contains($onlyB));
++        self::assertFalse($playlistB->group_memberships->contains($onlyB));
+     }
+ 
+     public function testSetMembersCreatesOnlyMissingOccurrences(): void
+@@ -111,6 +115,8 @@ final class PlaylistGroupMemberRepositoryTest extends TestCase
+             $members
+         ));
+         self::assertSame([$members[1], $group], $persisted);
++        self::assertTrue($group->group_members->contains($members[1]));
++        self::assertTrue($playlistA->group_memberships->contains($members[1]));
+     }
+ 
+     public function testSetMembersRejectsMoreThanMaximumBeforeStartingTransaction(): void
+@@ -158,6 +164,8 @@ final class PlaylistGroupMemberRepositoryTest extends TestCase
+     ): StationPlaylistGroupMember {
+         $member = new StationPlaylistGroupMember($group, $playlist, $position);
+         $this->setId($member, $id);
++        $group->group_members->add($member);
++        $playlist->group_memberships->add($member);
+ 
+         return $member;
+     }
+
