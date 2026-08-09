@@ -117,6 +117,25 @@ final class AutoDjTestHarness
         ];
     }
 
+    /**
+     * @param non-empty-list<string> $trackTitles
+     */
+    public function addSequentialPlaylist(
+        Station $station,
+        string $name,
+        array $trackTitles,
+    ): StationPlaylist {
+        if ([] === $trackTitles) {
+            throw new InvalidArgumentException('At least one track is required.');
+        }
+
+        $suffix = substr(uniqid('', true), -8);
+        $fixture = $this->createPlaylist($station, $name, $trackTitles, $suffix);
+        $this->em->flush();
+
+        return $fixture['playlist'];
+    }
+
     private function createStation(string $suffix): Station
     {
         $station = new Station();

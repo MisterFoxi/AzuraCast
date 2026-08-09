@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace Unit;
 
+use App\Entity\Enums\PlaylistTypes;
 use App\Entity\Station;
+use App\Entity\StationPlaylist;
+use App\Entity\StationQueue;
+use App\Event\Radio\BuildQueue;
 use App\Radio\AutoDJ\QueueBuilder;
 use App\Tests\AutoDjTestHarness;
 use App\Tests\Module;
@@ -23,22 +27,28 @@ final class PlaylistGroupTest extends Unit
         );
     }
 
-    public function testGroupRotatesOccurrencesSequentiallyAndWraps(): void
+    public function testGroupQueuesAllMembersAsOneOrderedBlock(): void
     {
         $fixture = $this->harness->createSequentialGroup(
             [
-                'A' => ['A'],
+                'A' => ['A1', 'A2'],
                 'B' => ['B'],
                 'C' => ['C'],
             ],
             ['A', 'B', 'C'],
         );
+        $fixture['playlists']['A']->backend_options = [StationPlaylist::OPTION_MERGE];
 
         try {
-            self::assertSame(
-                ['A', 'B', 'C', 'A', 'B', 'C'],
-                $this->selectTitles($fixture['station'], 6),
+            $event = $this->calculateNextSong($fixture['station']);
+
+            self::assertSame(['A1', 'B', 'C'], $this->getTitles($event->getNextSongs()));
+
+            $nextEvent = $this->calculateNextSong(
+                $fixture['station'],
+                CarbonImmutable::parse('2026-08-09 10:03:00', 'UTC'),
             );
+            self::assertSame(['A2', 'B', 'C'], $this->getTitles($nextEvent->getNextSongs()));
         } finally {
             $this->harness->cleanUp();
         }
@@ -56,27 +66,61 @@ final class PlaylistGroupTest extends Unit
         );
 
         try {
-            self::assertSame(
-                ['Jingle', 'Hot', 'Music', 'Hot'],
-                $this->selectTitles($fixture['station'], 4),
-            );
+            $event = $this->calculateNextSong($fixture['station']);
+
+            self::assertSame(['Jingle', 'Hot', 'Music', 'Hot'], $this->getTitles($event->getNextSongs()));
         } finally {
             $this->harness->cleanUp();
         }
     }
 
-    /** @return list<string|null> */
-    private function selectTitles(Station $station, int $count): array
+    public function testGroupBlockIsQueuedAheadOfAnIndependentRootPlaylist(): void
     {
-        $titles = [];
-        $time = CarbonImmutable::parse('2026-08-09 10:00:00', 'UTC');
+        $fixture = $this->harness->createSequentialGroup(
+            [
+                'A' => ['A'],
+                'B' => ['B'],
+                'C' => ['C'],
+            ],
+            ['A', 'B', 'C'],
+        );
+        $this->harness->addSequentialPlaylist($fixture['station'], 'Independent Root', ['Root']);
 
-        for ($i = 0; $i < $count; $i++) {
-            $event = $this->harness->calculateNextSong($station, $time->addMinutes($i * 3));
-            self::assertCount(1, $event->getNextSongs());
-            $titles[] = $event->getNextSongs()[0]->media?->title;
+        $fixture['group']->type = PlaylistTypes::OncePerHour;
+        $fixture['group']->play_per_hour_minute = 0;
+
+        try {
+            $groupEvent = $this->calculateNextSong($fixture['station']);
+            self::assertSame(['A', 'B', 'C'], $this->getTitles($groupEvent->getNextSongs()));
+
+            $rootEvent = $this->calculateNextSong(
+                $fixture['station'],
+                CarbonImmutable::parse('2026-08-09 10:03:00', 'UTC'),
+            );
+            self::assertSame(['Root'], $this->getTitles($rootEvent->getNextSongs()));
+        } finally {
+            $this->harness->cleanUp();
         }
+    }
 
-        return $titles;
+    private function calculateNextSong(
+        Station $station,
+        ?CarbonImmutable $time = null,
+    ): BuildQueue {
+        $time ??= CarbonImmutable::parse('2026-08-09 10:00:00', 'UTC');
+
+        return $this->harness->calculateNextSong($station, $time);
+    }
+
+    /**
+     * @param list<StationQueue> $queueEntries
+     * @return list<string|null>
+     */
+    private function getTitles(array $queueEntries): array
+    {
+        return array_map(
+            static fn(StationQueue $queueEntry): ?string => $queueEntry->media?->title,
+            $queueEntries,
+        );
     }
 }

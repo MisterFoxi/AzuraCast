@@ -66,7 +66,18 @@
                     {{ $gettext('Listener Request') }}
                 </div>
                 <div v-else-if="row.item.playlist">
-                    {{ $gettext('Playlist') }}: {{ row.item.playlist }}
+                    <div>
+                        {{ $gettext('Playlist') }}: {{ row.item.playlist }}
+                    </div>
+                    <div v-if="row.item.group_lists?.length">
+                        <span
+                            v-for="groupList in row.item.group_lists"
+                            :key="groupList"
+                            class="badge text-bg-info me-1"
+                        >
+                            {{ $gettext('Group List') }}: {{ groupList }}
+                        </span>
+                    </div>
                 </div>
             </template>
         </data-table>

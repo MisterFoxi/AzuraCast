@@ -19,7 +19,6 @@ use App\Entity\Repository\SongHistoryRepository;
 use App\Entity\Song;
 use App\Entity\StationMedia;
 use App\Entity\StationPlaylist;
-use App\Entity\StationPlaylistGroupMember;
 use App\Entity\StationPlaylistMedia;
 use App\Entity\StationQueue;
 use App\Event\Radio\BuildQueue;
@@ -281,13 +280,15 @@ final class QueueBuilder implements EventSubscriberInterface
      * @param array $recentSongHistory
      * @param DateTimeImmutable $expectedPlayTime
      * @param bool $allowDuplicates Whether to return a media ID even if duplicates can't be prevented.
+     * @param bool $singleTrackOnly Whether an array-producing playlist should return only its first track.
      * @return StationQueue|StationQueue[]|null
      */
     private function playSongFromPlaylist(
         StationPlaylist $playlist,
         array $recentSongHistory,
         DateTimeImmutable $expectedPlayTime,
-        bool $allowDuplicates = false
+        bool $allowDuplicates = false,
+        bool $singleTrackOnly = false,
     ): StationQueue|array|null {
         if (PlaylistSources::Group === $playlist->source) {
             return $this->playSongFromGroup(
@@ -302,7 +303,7 @@ final class QueueBuilder implements EventSubscriberInterface
             return $this->getSongFromRemotePlaylist($playlist, $expectedPlayTime);
         }
 
-        if ($playlist->backendMerge()) {
+        if ($playlist->backendMerge() && !$singleTrackOnly) {
             $this->spmRepo->resetQueue($playlist);
 
             $queueEntries = array_filter(
@@ -381,45 +382,50 @@ final class QueueBuilder implements EventSubscriberInterface
         DateTimeImmutable $expectedPlayTime,
         bool $allowDuplicates,
     ): StationQueue|array|null {
-        $members = $group->group_members->toArray();
+        $members = $this->groupMemberRepo->getMembers($group);
         if ([] === $members) {
             return null;
         }
 
-        $memberIndex = 0;
-        foreach ($members as $index => $member) {
-            if ($member->position >= $group->group_next_position) {
-                $memberIndex = $index;
-                break;
+        $queueEntries = [];
+        foreach ($members as $member) {
+            if (PlaylistSources::Group === $member->playlist->source) {
+                $this->logger->warning(
+                    'Nested playlist groups are not supported in this increment.',
+                    ['group_id' => $group->id, 'member_id' => $member->id]
+                );
+                continue;
+            }
+
+            $selection = $this->playSongFromPlaylist(
+                $member->playlist,
+                $recentSongHistory,
+                $expectedPlayTime,
+                $allowDuplicates,
+                true,
+            );
+            if (null === $selection) {
+                continue;
+            }
+
+            if (is_array($selection)) {
+                foreach ($selection as $queueEntry) {
+                    $queueEntries[] = $queueEntry;
+                }
+            } else {
+                $queueEntries[] = $selection;
             }
         }
 
-        /** @var StationPlaylistGroupMember $member */
-        $member = $members[$memberIndex];
-        if (PlaylistSources::Group === $member->playlist->source) {
-            $this->logger->warning(
-                'Nested playlist groups are not supported in this increment.',
-                ['group_id' => $group->id, 'member_id' => $member->id]
-            );
+        if ([] === $queueEntries) {
             return null;
         }
 
-        $selection = $this->playSongFromPlaylist(
-            $member->playlist,
-            $recentSongHistory,
-            $expectedPlayTime,
-            $allowDuplicates
-        );
-        if (null === $selection) {
-            return null;
-        }
-
-        $nextMemberIndex = ($memberIndex + 1) % count($members);
-        $group->group_next_position = $members[$nextMemberIndex]->position;
+        $group->group_next_position = 0;
         $group->played_at = $expectedPlayTime;
         $this->em->persist($group);
 
-        return $selection;
+        return $queueEntries;
     }
 
     private function makeQueueFromApi(
