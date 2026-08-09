@@ -22,11 +22,6 @@ export default function useStationsRoutes(): RouteRecordRaw[] {
                     name: 'stations:bulk-media'
                 },
                 {
-                    path: 'clock-wheels',
-                    component: () => import('~/components/Stations/ClockWheels.vue'),
-                    name: 'stations:clock_wheels:index'
-                },
-                {
                     path: 'media-categories',
                     component: () => import('~/components/Stations/MediaCategories.vue'),
                     name: 'stations:media_categories:index'

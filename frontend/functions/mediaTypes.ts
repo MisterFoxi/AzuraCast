@@ -1,6 +1,6 @@
 export type MediaTypeValue = 'music' | 'talk' | 'legal_id' | 'id' | 'promo' | 'ad';
 
-/** Canonical list — keep in sync with {@see ClockWheelSlotTypes} on the backend. */
+/** Canonical list — keep in sync with StationMediaTypes on the backend. */
 export const MEDIA_TYPE_VALUES: readonly MediaTypeValue[] = [
     'music',
     'talk',

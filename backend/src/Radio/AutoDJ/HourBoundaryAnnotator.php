@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Radio\AutoDJ\ClockWheel;
+namespace App\Radio\AutoDJ;
 
 use App\Entity\Enums\StationMediaTypes;
 use App\Entity\StationMedia;
@@ -11,70 +11,38 @@ use App\Event\Radio\AnnotateNextSong;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 
 /**
- * Applies clock-wheel playback caps via AutoDJ annotations (cue_out) when the planner
- * could not guarantee fit by track selection alone.
+ * Applies station-wide hour-boundary playback annotations independently of Clock Wheels.
  */
-final class ClockWheelAnnotator implements EventSubscriberInterface
+final class HourBoundaryAnnotator implements EventSubscriberInterface
 {
     public static function getSubscribedEvents(): array
     {
         return [
             AnnotateNextSong::class => [
-                ['applyClockWheelStretch', 12],
-                ['applyClockWheelCap', 11],
+                ['applyHourBoundaryCap', 11],
                 ['applyLegalIdQuickCut', 9],
             ],
         ];
     }
 
-    public function applyClockWheelStretch(AnnotateNextSong $event): void
+    public function applyHourBoundaryCap(AnnotateNextSong $event): void
     {
         if (!$event->isAsAutoDj()) {
             return;
         }
 
         $queue = $event->getQueue();
-        if (!$queue instanceof StationQueue) {
+        if (!$queue instanceof StationQueue || !$queue->hour_boundary_enforce_cap) {
             return;
         }
 
-        $ratio = $queue->clock_wheel_stretch_ratio;
-        if (null === $ratio) {
+        $maxSeconds = $queue->hour_boundary_max_play_seconds;
+        if (null === $maxSeconds || $maxSeconds <= 0) {
             return;
-        }
-
-        $event->addAnnotations([
-            'liq_stretch_ratio' => $ratio,
-        ]);
-    }
-
-    public function applyClockWheelCap(AnnotateNextSong $event): void
-    {
-        if (!$event->isAsAutoDj()) {
-            return;
-        }
-
-        $queue = $event->getQueue();
-        if (!$queue instanceof StationQueue) {
-            return;
-        }
-
-        if (null === $queue->clock_wheel || !$queue->clock_wheel_enforce_cap) {
-            if (!$queue->hour_boundary_enforce_cap) {
-                return;
-            }
-
-            $maxSeconds = $queue->hour_boundary_max_play_seconds;
-        } else {
-            $maxSeconds = $queue->clock_wheel_max_play_seconds;
         }
 
         $media = $event->getMedia();
         if (!$media instanceof StationMedia) {
-            return;
-        }
-
-        if (null === $maxSeconds || $maxSeconds <= 0) {
             return;
         }
 
@@ -110,8 +78,7 @@ final class ClockWheelAnnotator implements EventSubscriberInterface
         }
 
         $media = $event->getMedia();
-        $isLegalId = ($queue->top_of_hour_legal_id ?? false)
-            || ($queue->clock_wheel_legal_id_substitute ?? false)
+        $isLegalId = $queue->top_of_hour_legal_id
             || ($media instanceof StationMedia && StationMediaTypes::isStationId($media->type));
 
         if (!$isLegalId) {

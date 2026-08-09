@@ -75,7 +75,7 @@ const {
                     strict_start: Boolean(item.strict_start),
                     recurrence_type: item.recurrence_type ?? 'weekly',
                     recurrence_interval: item.recurrence_interval ?? 1,
-                    recurrence_end_type: (endType === 'on_date' ? 'never' : endType) as string,
+                    recurrence_end_type: (endType === 'on_date' ? 'never' : endType),
                     recurrence_end_after: endType === 'after' ? (item.recurrence_end_after ?? null) : null,
                     recurrence_end_date: null
                 };
@@ -90,7 +90,6 @@ const {
                 }
                 delete merged.playlist;
                 delete merged.streamer;
-                delete merged.clock_wheel;
                 return merged;
             });
         }
@@ -136,7 +135,6 @@ const {
                 // API GET may embed relation shortcuts; never post them back.
                 delete out.playlist;
                 delete out.streamer;
-                delete out.clock_wheel;
 
                 return out;
             });

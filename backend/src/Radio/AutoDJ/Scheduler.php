@@ -37,9 +37,8 @@ final class Scheduler
     }
 
     /**
-     * Seconds until the next playlist OR clock wheel is scheduled to start,
-     * station-wide, within the next hour. Used so stretch/squeeze has a real
-     * target throughout the whole hour, not just at the top-of-hour boundary.
+     * Seconds until the next playlist is scheduled to start, station-wide,
+     * within the next hour. Used by soft-strict boundary protection.
      * Checks both today's and tomorrow's occurrence of each schedule item, so
      * a start time just after midnight is not missed late at night. Returns
      * null if nothing starts within the next hour.
@@ -62,12 +61,6 @@ final class Scheduler
                 $allScheduleItems[] = $scheduleItem;
             }
         }
-        foreach ($station->clock_wheels as $clockWheel) {
-            foreach ($clockWheel->schedule_items as $scheduleItem) {
-                $allScheduleItems[] = $scheduleItem;
-            }
-        }
-
         foreach ($allScheduleItems as $scheduleItem) {
             $days = $scheduleItem->days;
 

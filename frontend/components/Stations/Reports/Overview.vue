@@ -53,9 +53,9 @@
                     />
                 </tab>
 
-                <tab :label="$gettext('Clock Performance')">
-                    <clock-performance-tab
-                        :api-url="clockPerformanceUrl"
+                <tab :label="$gettext('Top of Hour')">
+                    <top-of-hour-performance-tab
+                        :api-url="topOfHourPerformanceUrl"
                         :date-range="dateRange"
                     />
                 </tab>
@@ -91,13 +91,6 @@
                 <tab :label="$gettext('Retention')">
                     <retention-curve-tab
                         :api-url="retentionCurveUrl"
-                        :date-range="dateRange"
-                    />
-                </tab>
-
-                <tab :label="$gettext('Daypart Audience')">
-                    <daypart-audience-tab
-                        :api-url="daypartAudienceUrl"
                         :date-range="dateRange"
                     />
                 </tab>
@@ -157,13 +150,12 @@ import StreamsTab from "~/components/Stations/Reports/Overview/StreamsTab.vue";
 import ClientsTab from "~/components/Stations/Reports/Overview/ClientsTab.vue";
 import ListeningTimeTab from "~/components/Stations/Reports/Overview/ListeningTimeTab.vue";
 import HeatmapTab from "~/components/Stations/Reports/Overview/HeatmapTab.vue";
-import ClockPerformanceTab from "~/components/Stations/Reports/Overview/ClockPerformanceTab.vue";
+import TopOfHourPerformanceTab from "~/components/Stations/Reports/Overview/TopOfHourPerformanceTab.vue";
 import PlaylistPerformanceTab from "~/components/Stations/Reports/Overview/PlaylistPerformanceTab.vue";
 import DropoutTab from "~/components/Stations/Reports/Overview/DropoutTab.vue";
 import ListenerInsightsTab from "~/components/Stations/Reports/Overview/ListenerInsightsTab.vue";
 import GrowthTrendTab from "~/components/Stations/Reports/Overview/GrowthTrendTab.vue";
 import RetentionCurveTab from "~/components/Stations/Reports/Overview/RetentionCurveTab.vue";
-import DaypartAudienceTab from "~/components/Stations/Reports/Overview/DaypartAudienceTab.vue";
 import HealthDashboardTab from "~/components/Stations/Reports/Overview/HealthDashboardTab.vue";
 import {ref} from "vue";
 import Tabs from "~/components/Common/Tabs.vue";
@@ -187,13 +179,12 @@ const byCountryUrl = getStationApiUrl('/reports/overview/by-country');
 const byClientUrl = getStationApiUrl('/reports/overview/by-client');
 const listeningTimeUrl = getStationApiUrl('/reports/overview/by-listening-time');
 const heatmapUrl = getStationApiUrl('/reports/overview/heatmap');
-const clockPerformanceUrl = getStationApiUrl('/reports/overview/clock-performance');
+const topOfHourPerformanceUrl = getStationApiUrl('/reports/overview/top-of-hour-performance');
 const playlistPerformanceUrl = getStationApiUrl('/reports/overview/playlist-performance');
 const dropoutUrl = getStationApiUrl('/reports/overview/dropout');
 const listenerInsightsUrl = getStationApiUrl('/reports/overview/listener-insights');
 const growthTrendUrl = getStationApiUrl('/reports/overview/growth-trend');
 const retentionCurveUrl = getStationApiUrl('/reports/overview/retention-curve');
-const daypartAudienceUrl = getStationApiUrl('/reports/overview/daypart-audience');
 const healthUrl = getStationApiUrl('/reports/overview/health');
 
 const stationData = useStationData();

@@ -103,7 +103,7 @@
             class="mb-3"
             :field="r$.do_not_play"
             :label="$gettext('Do not play')"
-            :description="$gettext('Exclude this track from AutoDJ and clock wheel selection.')"
+            :description="$gettext('Exclude this track from AutoDJ selection.')"
         />
 
         <template v-if="form.do_not_play">
@@ -160,14 +160,14 @@
             <div class="row g-3">
                 <div class="col-md-6">
                     <label class="form-label">{{ $gettext('Allowed start time') }}</label>
-                    <AmPmTimeInput v-model="allowedStartTimeDisplay" />
+                    <time-code v-model="allowedStartTimeDisplay" />
                     <small class="text-muted">
                         {{ $gettext('Leave blank for no start restriction.') }}
                     </small>
                 </div>
                 <div class="col-md-6">
                     <label class="form-label">{{ $gettext('Allowed end time') }}</label>
-                    <AmPmTimeInput v-model="allowedEndTimeDisplay" />
+                    <time-code v-model="allowedEndTimeDisplay" />
                     <small class="text-muted">
                         {{ $gettext('If end is before start, treated as an overnight window. Leave blank for no end restriction.') }}
                     </small>
@@ -180,7 +180,7 @@
 <script setup lang="ts">
 import FormGroupField from "~/components/Form/FormGroupField.vue";
 import FormFieldset from "~/components/Form/FormFieldset.vue";
-import AmPmTimeInput from '~/components/Common/AmPmTimeInput.vue';
+import TimeCode from '~/components/Common/TimeCode.vue';
 import {storeToRefs} from "pinia";
 import {useFormTabClass} from "~/functions/useFormTabClass.ts";
 import {computed, ref, onMounted} from "vue";
@@ -210,7 +210,7 @@ const dayOptions = [
     {value: 7, text: $gettext('Sunday')},
 ];
 
-// AmPmTimeInput works in HHMM format (e.g. 600 for 6:00 AM). The backend
+// TimeCode works in HHMM format (e.g. 600 for 6:00 AM). The backend
 // stores allowed_start_minute/allowed_end_minute as plain minutes-since-
 // midnight (e.g. 360 for 6:00 AM) to keep the boundary math simple elsewhere.
 // These computed properties convert between the two so the UI can use a

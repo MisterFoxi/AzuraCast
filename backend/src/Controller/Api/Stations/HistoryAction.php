@@ -89,12 +89,11 @@ final class HistoryAction implements SingleActionInterface
 
         $qb = $this->em->createQueryBuilder();
 
-        $qb->select('sh, sr, sp, ss, scw')
+        $qb->select('sh, sr, sp, ss')
             ->from(SongHistory::class, 'sh')
             ->leftJoin('sh.request', 'sr')
             ->leftJoin('sh.playlist', 'sp')
             ->leftJoin('sh.streamer', 'ss')
-            ->leftJoin('sh.clock_wheel', 'scw')
             ->where('sh.station = :station')
             ->andWhere('sh.timestamp_start >= :start AND sh.timestamp_start <= :end')
             ->andWhere('sh.listeners_start IS NOT NULL')
@@ -156,7 +155,6 @@ final class HistoryAction implements SingleActionInterface
             'Track',
             'Artist',
             'Playlist',
-            'Clock Wheel',
             'Streamer',
         ]);
 
@@ -169,11 +167,6 @@ final class HistoryAction implements SingleActionInterface
             $playlist = $sh->playlist;
             $playlistName = (null !== $playlist)
                 ? $playlist->name
-                : '';
-
-            $clockWheel = $sh->clock_wheel;
-            $clockWheelName = (null !== $clockWheel)
-                ? $clockWheel->name
                 : '';
 
             $streamer = $sh->streamer;
@@ -189,7 +182,6 @@ final class HistoryAction implements SingleActionInterface
                 $sh->title ?: $sh->text,
                 $sh->artist,
                 $playlistName,
-                $clockWheelName,
                 $streamerName,
             ]);
         }

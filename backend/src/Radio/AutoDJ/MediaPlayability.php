@@ -9,8 +9,7 @@ use DateTimeImmutable;
 use DateTimeZone;
 
 /**
- * Per-song do-not-play (DNP) and time-restriction eligibility for AutoDJ and
- * clock wheels (Phase E).
+ * Per-song do-not-play (DNP) and time-restriction eligibility for AutoDJ.
  */
 final class MediaPlayability
 {

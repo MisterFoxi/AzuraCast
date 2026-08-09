@@ -3,11 +3,9 @@
 ## Functional Specification
 
 **Status:** Draft for implementation design  
-**Version:** 0.2  
+**Version:** 0.1  
 **Reference material:** AzuraCast PR #8433  
 **Purpose:** Define the desired functional behavior independently from the implementation proposed by PR #8433.
-
-> The functional specification is normative. Appendix A is informative only: it preserves observations from the PR #8433 autopsy and highlights implementation risks, but does not define the target implementation.
 
 ---
 
@@ -54,7 +52,7 @@ The initial implementation MUST cover:
 - normal playlist eligibility and scheduling rules;
 - exclusion of group members from top-level AutoDJ rotation;
 - graceful fallback when a member cannot produce a track;
-- an explicit decision on duplicate-prevention behavior;
+- duplicate-prevention inheritance;
 - preservation of the complete selection path.
 
 ### 2.2 Phase 2 — Request integration
@@ -277,9 +275,9 @@ Failed attempts MUST NOT be counted as successful consecutive plays.
 
 ### FR-021 — Play full cycle before advancing
 
-**MUST**, for media playlists (`Songs`) whose playback order exposes a finite cycle, initially `Sequential` and `Shuffle`.
+**MUST**, for playlist orders for which a finite cycle is meaningful.
 
-A media-playlist member MAY be configured to complete one track cycle before its parent group advances to the next member occurrence.
+A member MAY be configured to complete one track cycle before its parent group advances to the next member occurrence.
 
 Given:
 
@@ -300,8 +298,6 @@ Without full-cycle playback:
 ```text
 a1, b1, a2, b1, a3, b1, ...
 ```
-
-Phase 1 does not define `play full cycle` on a nested Playlist Group. Extending the concept to groups requires separate semantics and is not implied by this requirement.
 
 ### FR-022 — Full-cycle semantics for Random
 
@@ -332,15 +328,14 @@ Preferred rule: treat full-cycle as the unit of advancement and avoid exposing `
 
 Being referenced by a group MUST NOT make a playlist playable when it would otherwise be ineligible.
 
-Applicable existing eligibility rules remain authoritative, including as relevant to selection through a group:
+Existing eligibility rules remain authoritative, including as applicable:
 
 - enabled/disabled state;
 - schedule;
+- playlist type;
 - source availability;
 - media availability;
-- other constraints that apply to the selected playlist in this context.
-
-Constraints that exist only to decide whether a playlist participates as a **top-level** AutoDJ candidate MUST NOT automatically be reapplied as child eligibility rules. In particular, membership selection must not accidentally execute top-level scheduling logic twice.
+- other existing AutoDJ constraints.
 
 General rule:
 
@@ -363,21 +358,6 @@ Clock
 The group MUST only obtain tracks from a member while that member is eligible according to the existing scheduler.
 
 A root group MAY itself have the same scheduling/playlist-type rules available to a normal root playlist.
-
-### FR-034 — Impossible child schedules should be visible
-
-**SHOULD**
-
-If a child schedule can never become active during the active schedule window of one of its group ancestors, the configuration UI SHOULD warn the administrator.
-
-Example:
-
-```text
-Morning Clock       08:00-10:00
-  News              11:00-11:15
-```
-
-The warning is an authoring aid. Runtime selection MUST still remain safe if such a configuration exists.
 
 ### FR-032 — Group members are not top-level AutoDJ candidates
 
@@ -494,13 +474,13 @@ The specification requires the information, not a specific persistence format or
 
 ## 10. Duplicate prevention
 
-### FR-060 — Duplicate-prevention semantics
+### FR-060 — Duplicate-prevention inheritance
 
-**TO DECIDE**
+**MUST**
 
-The product must explicitly define whether duplicate-prevention restrictions accumulate while traversing a group hierarchy or remain local to the leaf playlist.
+Duplicate-prevention restrictions MUST accumulate while traversing a group hierarchy.
 
-One candidate rule is inheritance: if duplicate prevention is enabled at any applicable ancestor, a descendant cannot weaken it.
+If duplicate prevention is enabled at any applicable ancestor, a descendant MUST NOT weaken it.
 
 Example:
 
@@ -510,15 +490,13 @@ Root Group: avoid_duplicates=true
     Playlist: avoid_duplicates=false
 ```
 
-Under that candidate rule, the final selection remains subject to duplicate prevention.
+The final selection remains subject to duplicate prevention.
 
 Conceptually:
 
 ```text
 effective_avoid_duplicates = OR(all applicable ancestors and selected playlist)
 ```
-
-This formula is **not normative in v0.2**. It must not be implemented merely because PR #8433 uses or tests equivalent propagation; the desired product behavior must be confirmed first.
 
 ### FR-061 — Other inherited policies
 
@@ -649,16 +627,6 @@ Runtime state includes, for example:
 - full-cycle progress.
 
 This specification does not require either transient or database persistence for runtime state. That is an architectural decision.
-
-### FR-203 — Queue rebuilds and runtime state must remain coherent
-
-**MUST**
-
-Queue generation, queue clearing and queue rebuilding MUST have defined semantics with respect to Clock runtime state.
-
-The system MUST NOT silently advance member rotation or leaf-media rotation for queue items that are discarded in a way that makes the rebuilt queue inconsistent with the logical playback sequence.
-
-The implementation may derive state from committed queue/history, stage state transactionally, or use another design, but it MUST define the point at which a selection becomes authoritative.
 
 ---
 
@@ -805,11 +773,11 @@ Given playlist `A` is a member of Clock `C`,
 when AutoDJ evaluates top-level candidates,  
 then `A` is not independently selected outside `C`.
 
-### AC-14 — Duplicate prevention
+### AC-14 — Duplicate prevention inheritance
 
-**PENDING PRODUCT DECISION (FR-060).**
-
-An acceptance scenario MUST be finalized once the inheritance/locality rule is chosen. Until then, no particular propagation behavior is part of the Phase 1 contract.
+Given duplicate prevention enabled on an ancestor group and disabled on its selected child,  
+when the child resolves a track,  
+then the ancestor restriction remains effective.
 
 ### AC-15 — Selection path
 
@@ -868,7 +836,6 @@ The following points are intentionally not inherited from PR #8433 and must be d
 6. **Nested state reset:** should completing a parent cycle ever reset child cycles? This draft says no implicit reset.
 7. **Request Random semantics:** selection-first then request filtering is preferred, but must be confirmed for Phase 2.
 8. **Request legacy coexistence:** exact precedence between Request Queue playlists and the legacy global request mechanism during migration.
-9. **Duplicate prevention:** inherited through the selection path, leaf-local, or another explicit composition rule?
 
 ---
 
@@ -910,9 +877,8 @@ The implementation should therefore avoid turning the main queue builder into th
 
 Phase 1 is functionally complete when:
 
-- all MUST requirements from sections 4–10, 12 and 13 are implemented;
-- acceptance scenarios AC-01 through AC-13 and AC-15 pass;
-- AC-14 is finalized and passes once FR-060 is decided;
+- all MUST requirements from sections 4–10 and 13 are implemented;
+- acceptance scenarios AC-01 through AC-15 pass;
 - the unresolved decisions that affect Phase 1 have explicit answers and tests;
 - ordinary stations that do not use groups behave unchanged;
 - nested groups cannot deadlock or indefinitely loop AutoDJ queue generation;
@@ -920,273 +886,3 @@ Phase 1 is functionally complete when:
 
 Request integration (section 11 and AC-16) is not required to declare Phase 1 complete.
 
----
-
-# Appendix A — PR #8433 Autopsy / Implementation Notes
-
-## A.1 Status of this appendix
-
-**INFORMATIVE — NOT NORMATIVE**
-
-This appendix records observations from the analysis of AzuraCast PR #8433 (`feature/playlist-groups`) so that useful implementation knowledge and identified hazards are not lost.
-
-Nothing in this appendix is a requirement merely because the PR implements it. If an observation conflicts with the functional specification above, the functional specification wins.
-
-The PR was WIP and unmerged when analyzed. These notes describe the analyzed PR, not necessarily current AzuraCast behavior.
-
-## A.2 Scope observed in the PR
-
-PR #8433 combines several largely separable changes:
-
-1. Playlist Groups and nesting;
-2. Clock Wheel behavior (`consecutive_plays`, `play_full_cycle`);
-3. Request Queue playlists, request filtering and scheduled request blocking;
-4. playlist configuration export/import and an in-memory AutoDJ test harness;
-5. scheduler/UI changes and fixes that are not intrinsic to Playlist Groups.
-
-**Attention:** our implementation should keep the Phase 1 Clock Wheel core independent from Request integration and unrelated scheduler/export work.
-
-## A.3 Data model used by the PR
-
-### Observation
-
-The PR does not introduce a dedicated Group aggregate. Instead:
-
-- a group is a normal `StationPlaylist` with `source = Playlists`;
-- a leaf can be `Songs`, `RemoteUrl`, `Requests`, etc.;
-- group membership is represented by a `station_playlist_group` relation;
-- the relation is a true membership occurrence and stores both configuration and runtime rotation state.
-
-Observed membership fields include:
-
-| Field | Observed role |
-| --- | --- |
-| `playlist_id` | member playlist |
-| `playlist_group_id` | parent group |
-| `weight` | member order |
-| `consecutive_plays` | requested consecutive passes |
-| `play_full_cycle` | keep media member active for a complete track cycle |
-| `allowed_requests` | request policy for the occurrence |
-| `is_queued` | persisted group-rotation state |
-| `consecutive_plays_count` | persisted progress counter |
-| `last_played` | runtime/history value |
-
-### Interest
-
-Treating membership as an **occurrence** is functionally useful. It naturally supports the same playlist appearing multiple times with different position settings.
-
-### Attention
-
-The PR overloads `StationPlaylist` as both container and leaf and mixes occurrence configuration with mutable runtime state. Neither is required by this specification.
-
-## A.4 Top-level selection and group recursion
-
-### Observation
-
-The PR excludes every playlist that is a group member from the normal top-level AutoDJ candidate list. Groups themselves participate in the existing playlist-type priority system.
-
-`QueueBuilder::playSongFromPlaylist` dispatches according to the playlist source. A group recursively resolves its members until a leaf produces an item.
-
-When a member is inactive or cannot produce an item, the PR attempts another group member. If the group yields nothing, the caller can continue to another top-level candidate.
-
-### Interest
-
-The recursive resolution model maps cleanly to the functional rule:
-
-```text
-root selection -> group member selection -> ... -> leaf track selection
-```
-
-### Attention
-
-The analyzed QueueBuilder recursion has no equivalent of the Scheduler's visited-ID cycle guard. A cyclic configuration can therefore recurse indefinitely. Our spec requires cycles to be rejected and runtime resolution to terminate defensively.
-
-## A.5 Sequential, Shuffle and Random
-
-### Observation
-
-The PR implements group ordering approximately as follows:
-
-- `Sequential`: persisted queued flags plus configured `weight`;
-- `Shuffle`: the same queued mechanism with weights reshuffled when a cycle resets;
-- `Random`: database random ordering on each selection, without the queued-cycle mechanism.
-
-### Interest
-
-The behavioral tests are more valuable than this mechanism: Sequential must visit occurrences in order; Shuffle must visit each occurrence once per cycle; Random permits repetition.
-
-### Attention
-
-Persisted flags and randomized weights are an implementation choice, not part of the target contract.
-
-## A.6 Consecutive plays
-
-### Observation
-
-The PR uses `consecutive_plays = 0` as its default representation and keeps a member queued while a `consecutive_plays_count` progresses.
-
-### Decision in our spec
-
-Our functional model deliberately uses the clearer user-level convention:
-
-```text
-1 = normal single pass
-2 = two consecutive successful passes
-3 = three consecutive successful passes
-```
-
-This is a modeling decision, not a claim about the PR's storage format.
-
-### Attention
-
-Failed resolution attempts must not be confused with successful consecutive plays.
-
-## A.7 `play_full_cycle`
-
-### Observation
-
-The PR implements `play_full_cycle` only for `Songs` members using Sequential/Shuffle media ordering. It determines whether to keep the member active by inspecting the member's internal media queue. When full-cycle is used, its code effectively disables the ordinary consecutive-play count for that occurrence.
-
-### Interest
-
-The user-visible behavior is valuable: a media playlist can finish its finite track cycle before the Clock advances.
-
-### Attention
-
-Coupling full-cycle completion to an internal mutable media-queue count is fragile if that queue can be cleared or regenerated. The PR does not establish semantics for full-cycle on nested groups or Random media order. Our v0.2 intentionally does not invent them.
-
-## A.8 Scheduling and skipped members
-
-### Observation
-
-The PR respects child scheduling during recursive resolution. A member that is not scheduled at the current time is skipped and `forceAdvance` consumes its group-rotation position.
-
-The Scheduler also detects a child schedule that cannot overlap the active window of a group ancestor and exposes that as an agenda/configuration warning. Its recursive schedule traversal contains a cycle guard.
-
-### Interest
-
-The impossible-schedule warning is useful UX and is captured as FR-034.
-
-### Attention
-
-Consuming an inactive member's Sequential/Shuffle position is **not** adopted as a requirement. FR-042 keeps this as an explicit product decision because skip-without-consume and skip-and-consume produce different clocks after the schedule becomes active.
-
-## A.9 Two mutable rotation state machines
-
-### Observation
-
-The PR has two related rotation mechanisms:
-
-1. group-member rotation state on membership relations;
-2. media rotation state for the selected Songs playlist.
-
-Both can be mutated while the upcoming AutoDJ queue is being built.
-
-### Attention — high priority
-
-This can make queue state and logical rotation diverge if upcoming queue items are cleared after the rotation state has already advanced. A rebuild may then start from state that represents items which never actually played.
-
-This is why FR-203 requires an explicit commit/coherency model for queue rebuilds. The target architecture should decide which event makes member and media advancement authoritative rather than copying the PR's persistence behavior.
-
-## A.10 Selection-path observability
-
-### Observation
-
-The PR records a `playlist_chain` on queued/history items. It snapshots playlist/group names traversed during selection and is mainly used for display/diagnostics.
-
-### Interest
-
-Keeping a complete logical selection path is useful for Queue/Timeline, Now Playing diagnostics, APIs and future analytics. Our spec retains the capability without requiring the PR's JSON shape or name-snapshot persistence.
-
-## A.11 Duplicate prevention
-
-### Observation
-
-The PR contains behavior/tests around duplicate avoidance across grouped selection contexts.
-
-### Attention
-
-The autopsy does not establish that ancestor-to-child duplicate-policy inheritance is a desired product requirement. v0.1 promoted this too quickly to `MUST`. v0.2 deliberately moves it to FR-060 `TO DECIDE`.
-
-## A.12 Requests — Phase 2 observations
-
-### Observation
-
-The PR adds three interacting request mechanisms:
-
-- `source = Requests` playlists;
-- station-level `requests_only_via_playlists` to disable legacy global injection;
-- schedule-level `prevent_requests`;
-- membership-level `allowed_requests = any | playlist | none`.
-
-The implementation checks request policy in several different directions/contexts: global request selection descends through scheduled groups, while a Requests playlist also checks ancestor relations.
-
-### Interest
-
-Making Requests a selectable source allows explicit programming such as:
-
-```text
-Jingle -> Music -> Request -> Music -> Request
-```
-
-and per-position request policy is useful.
-
-### Attention
-
-The PR's blocking logic is distributed across several predicates with different semantics, especially around Random groups. Phase 2 should define one contextual request-eligibility contract before implementation, ideally after the logical member/path is known.
-
-## A.13 Editing membership
-
-### Observation
-
-The PR's member-update API deletes/recreates membership relations when the group is saved.
-
-### Attention
-
-This is a simplifying implementation choice, not a functional requirement. Stable occurrence identity is preferable if runtime state, auditability or editing semantics depend on a membership occurrence.
-
-## A.14 UI regression observed in the PR discussion
-
-### Observation
-
-During PR discussion/testing, a grouped playlist was reported as losing or no longer showing its own `Song Playback Order` correctly in the UI.
-
-### Attention
-
-Whether the underlying value was lost or only misrepresented, the failure mode is important: grouping must never silently redefine the child's track-order semantics. FR-013 and FR-302 explicitly protect this separation.
-
-## A.15 Test harness
-
-### Observation
-
-PR #8433 includes an in-memory AutoDJ harness and JSON fixtures that exercise QueueBuilder/Scheduler scenarios without requiring a full database-backed station runtime.
-
-### Interest — recommended inspiration
-
-The harness concept is worth adapting: write behavioral fixtures against this specification and make them deterministic. The tests should assert observable sequences and paths, not reproduce `is_queued`, weights or other PR internals.
-
-## A.16 Implementation lessons retained from the autopsy
-
-The following are **engineering cautions, not product requirements**:
-
-1. do not let queue rebuilding advance invisible/abandoned rotation state;
-2. keep group occurrence state distinct from leaf-media ordering;
-3. reject cycles at configuration time and retain a defensive runtime guard;
-4. do not couple full-cycle semantics to an incidental media-queue count without a defined lifecycle;
-5. centralize contextual eligibility/request-policy evaluation;
-6. avoid delete/recreate membership updates when stable occurrence identity matters;
-7. keep unrelated request/export/scheduler changes outside the initial Clock Wheel delivery;
-8. prefer deterministic behavior tests over tests coupled to the PR's storage mechanism.
-
-## A.17 Provenance
-
-Autopsy source: AzuraCast PR #8433, `feature/playlist-groups`, analyzed 2026-08-08. The accompanying extraction used merge-base `b62d3179` and PR head `pr8433` at the time of analysis, with particular attention to `QueueBuilder.php`, `Scheduler.php`, `StationPlaylistRepository.php`, the `StationPlaylistGroup` entity, migrations, fixtures and PR discussion.
-
-Reference: https://github.com/AzuraCast/AzuraCast/pull/8433
-
----
-
-## Revision history
-
-- **0.2 — 2026-08-08:** tightened `play_full_cycle` to finite-cycle Songs playlists; clarified child-vs-root eligibility; moved duplicate-prevention inheritance to `TO DECIDE`; added impossible-schedule warning; made queue rebuild/runtime-state coherence explicit; added informative PR #8433 autopsy appendix.
-- **0.1:** initial implementation-independent functional extraction from PR #8433.

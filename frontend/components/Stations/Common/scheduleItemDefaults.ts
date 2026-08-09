@@ -5,12 +5,10 @@ export interface PlaylistScheduleRow {
     end_date: string,
     days: number[],
     loop_once: boolean,
-    /** When true, this window overrides clock wheel AutoDJ. */
+    /** When true, this window suppresses station-wide automatic interruptions. */
     is_emergency?: boolean,
     /** Playlist schedule only: holds rigidly to start time, cutting the current track if needed. */
     strict_start?: boolean,
-    /** Clock wheel schedule only: flexible | strict (not loop_once). */
-    clock_wheel_mode?: 'flexible' | 'strict',
     recurrence_type: string | null,
     recurrence_interval: number,
     recurrence_monthly_pattern: string | null,
@@ -40,7 +38,6 @@ export function createScheduleItemDefaults(): PlaylistScheduleRow {
         loop_once: false,
         is_emergency: false,
         strict_start: false,
-        clock_wheel_mode: 'flexible',
         recurrence_type: null,
         recurrence_interval: 1,
         recurrence_monthly_pattern: null,

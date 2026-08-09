@@ -713,42 +713,6 @@ final class Station implements Stringable, IdentifiableEntityInterface
     #[ORM\OneToMany(targetEntity: StationRequest::class, mappedBy: 'station')]
     public private(set) Collection $requests;
 
-    /** @var Collection<int, StationClockWheel> */
-    #[
-        ORM\OneToMany(
-            targetEntity: StationClockWheel::class,
-            mappedBy: 'station',
-            cascade: ['persist', 'remove'],
-            fetch: 'EXTRA_LAZY'
-        ),
-        ORM\OrderBy(['name' => 'ASC'])
-    ]
-    public private(set) Collection $clock_wheels;
-
-    /** @var Collection<int, StationClockWheelTemplate> */
-    #[
-        ORM\OneToMany(
-            targetEntity: StationClockWheelTemplate::class,
-            mappedBy: 'station',
-            cascade: ['persist', 'remove'],
-            fetch: 'EXTRA_LAZY'
-        ),
-        ORM\OrderBy(['name' => 'ASC'])
-    ]
-    public private(set) Collection $clock_wheel_templates;
-
-    /** @var Collection<int, StationClockDaypart> */
-    #[
-        ORM\OneToMany(
-            targetEntity: StationClockDaypart::class,
-            mappedBy: 'station',
-            cascade: ['persist', 'remove'],
-            fetch: 'EXTRA_LAZY'
-        ),
-        ORM\OrderBy(['name' => 'ASC'])
-    ]
-    public private(set) Collection $clock_dayparts;
-
     #[
         ORM\OneToMany(
             targetEntity: StationHolidayOverride::class,
@@ -789,9 +753,6 @@ final class Station implements Stringable, IdentifiableEntityInterface
         $this->streamer_broadcasts = new ArrayCollection();
         $this->sftp_users = new ArrayCollection();
         $this->requests = new ArrayCollection();
-        $this->clock_wheels = new ArrayCollection();
-        $this->clock_wheel_templates = new ArrayCollection();
-        $this->clock_dayparts = new ArrayCollection();
         $this->holiday_overrides = new ArrayCollection();
     }
 

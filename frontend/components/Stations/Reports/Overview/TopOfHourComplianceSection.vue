@@ -1,7 +1,7 @@
 <template>
     <fieldset>
         <legend>
-            {{ title }}
+            {{ $gettext('Top of Hour compliance (station-wide)') }}
             <span class="text-muted fw-normal small">
                 ({{ $gettext('tolerance') }}: {{ compliance.tolerance_seconds }}s)
             </span>
@@ -41,33 +41,30 @@
                     </div>
                 </div>
             </div>
-            <div
-                v-if="compliance.fallback_count != null"
-                class="col-6 col-md-3"
-            >
+            <div class="col-6 col-md-3">
                 <div class="border rounded p-2 text-center">
-                    <div class="fs-4 fw-semibold text-danger">
+                    <div class="fs-4 fw-semibold text-secondary">
                         {{ compliance.fallback_count }}
                     </div>
                     <div class="small text-muted">
-                        {{ $gettext('Fallbacks') }}
+                        {{ $gettext('Fallback events') }}
                     </div>
                 </div>
             </div>
         </div>
 
         <ul
-            v-if="(compliance.late_events?.length ?? 0) > 0"
+            v-if="compliance.late_events.length > 0"
             class="list-group list-group-flush mb-3"
         >
             <li
-                v-for="(ev, idx) in compliance.late_events"
-                :key="idx"
+                v-for="(event, index) in compliance.late_events"
+                :key="index"
                 class="list-group-item px-0 small"
             >
-                {{ $gettext('Expected') }}: {{ formatDateTime(ev.expected_play_at) }}
-                · {{ $gettext('Actual') }}: {{ formatDateTime(ev.actual_play_at) }}
-                · {{ $gettext('Drift') }}: {{ ev.drift_seconds ?? '—' }}s
+                {{ $gettext('Expected') }}: {{ formatDateTime(event.expected_play_at) }}
+                · {{ $gettext('Actual') }}: {{ formatDateTime(event.actual_play_at) }}
+                · {{ $gettext('Drift') }}: {{ event.drift_seconds }}s
             </li>
         </ul>
     </fieldset>
@@ -75,33 +72,25 @@
 
 <script setup lang="ts">
 import useStationDateTimeFormatter from "~/functions/useStationDateTimeFormatter.ts";
-import {useTranslate} from "~/vendor/gettext";
-
-const {$gettext} = useTranslate();
 
 defineProps<{
-    title: string,
     compliance: {
         tolerance_seconds: number,
         on_time_count: number,
         late_count: number,
         compliance_percent: number | null,
-        fallback_count?: number,
-        late_events?: Array<{
+        fallback_count: number,
+        late_events: Array<{
             expected_play_at: string,
-            actual_play_at: string | null,
-            drift_seconds: number | null,
+            actual_play_at: string,
+            drift_seconds: number,
         }>,
     },
 }>();
 
 const {formatIsoAsDateTime} = useStationDateTimeFormatter();
 
-function formatDateTime(value: string | null): string {
-    if (!value) {
-        return '—';
-    }
-
+function formatDateTime(value: string): string {
     return formatIsoAsDateTime(value) || '—';
 }
 </script>

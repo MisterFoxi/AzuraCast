@@ -7,12 +7,10 @@ namespace App\Service;
 use App\Container\EntityManagerAwareTrait;
 use App\Entity\Enums\AnalyticsIntervals;
 use App\Entity\Repository\AnalyticsRepository;
-use App\Entity\Repository\ClockWheelEventRepository;
 use App\Entity\Repository\ListenerRepository;
 use App\Entity\Song;
 use App\Entity\Station;
 use App\Entity\ApiGenerator\SongApiGenerator;
-use App\Radio\AutoDJ\HourBoundaryPlanner;
 use App\Utilities\DateRange;
 use Carbon\CarbonImmutable;
 use DateTimeZone;
@@ -23,9 +21,7 @@ final class StationReportsAnalyticsService
 
     public function __construct(
         private readonly AnalyticsRepository $analyticsRepo,
-        private readonly ClockWheelEventRepository $eventRepo,
         private readonly ListenerRepository $listenerRepo,
-        private readonly HourBoundaryPlanner $hourBoundaryPlanner,
         private readonly SongApiGenerator $songApiGenerator,
     ) {
     }
@@ -121,37 +117,6 @@ final class StationReportsAnalyticsService
             ),
             'cells' => $cells,
             'max_value' => round($maxValue, 2),
-        ];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    public function getClockPerformance(
-        Station $station,
-        DateRange $dateRange,
-    ): array {
-        $since = $dateRange->start;
-        $tolerance = $this->hourBoundaryPlanner->getComplianceToleranceSeconds($station);
-
-        $summary = $this->eventRepo->getStationAnalyticsSummary($station, $since);
-        $byWheel = $this->eventRepo->getStationAnalyticsByWheel($station, $since);
-        $legalIdCompliance = $this->eventRepo->getStationLegalIdComplianceSummary(
-            $station,
-            $since,
-            $tolerance,
-        );
-        $topOfHourCompliance = $this->eventRepo->getStationTopOfHourLegalIdComplianceSummary(
-            $station,
-            $since,
-            $tolerance,
-        );
-
-        return [
-            'summary' => $summary,
-            'wheels' => $byWheel,
-            'legal_id_compliance' => $legalIdCompliance,
-            'top_of_hour_compliance' => $topOfHourCompliance,
         ];
     }
 
@@ -427,33 +392,4 @@ final class StationReportsAnalyticsService
         ];
     }
 
-    /**
-     * @return array<string, mixed>
-     */
-    public function getDaypartAudience(
-        Station $station,
-        DateRange $dateRange,
-    ): array {
-        /** @var array<array{id: int, name: string, start_hour: int, end_hour: int, is_active: bool}> $dayparts */
-        $dayparts = $this->em->createQuery(
-            <<<'DQL'
-                SELECT d.id, d.name, d.start_hour, d.end_hour, d.is_active
-                FROM App\Entity\StationClockDaypart d
-                WHERE d.station = :station
-                ORDER BY d.start_hour ASC
-            DQL
-        )->setParameter('station', $station)
-            ->getArrayResult();
-
-        return [
-            'analytics_exclude_bots' => $this->shouldExcludeBots($station),
-            'dayparts' => $this->listenerRepo->getDaypartAudienceStats(
-                $station,
-                $dateRange->start,
-                $dateRange->end,
-                $dayparts,
-                $this->shouldExcludeBots($station),
-            ),
-        ];
-    }
 }

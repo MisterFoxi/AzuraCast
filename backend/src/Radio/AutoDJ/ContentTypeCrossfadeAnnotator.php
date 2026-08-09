@@ -51,7 +51,6 @@ final class ContentTypeCrossfadeAnnotator implements EventSubscriberInterface
 
         // Legal ID quick-cut (priority 9) overrides this for legal_id rows.
         if (($queue->top_of_hour_legal_id ?? false)
-            || ($queue->clock_wheel_legal_id_substitute ?? false)
             || StationMediaTypes::isStationId($media->type)
         ) {
             return;

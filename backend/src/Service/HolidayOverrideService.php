@@ -4,10 +4,8 @@ declare(strict_types=1);
 
 namespace App\Service;
 
-use App\Entity\Repository\ClockWheelEventRepository;
 use App\Entity\Station;
 use App\Entity\StationHolidayOverride;
-use App\Entity\StationClockWheel;
 use App\Entity\StationPlaylist;
 use Carbon\CarbonImmutable;
 use DateTimeImmutable;
@@ -42,18 +40,6 @@ final class HolidayOverrideService
             ->getOneOrNullResult();
 
         return $override instanceof StationHolidayOverride ? $override : null;
-    }
-
-    public function getHolidayClockWheel(Station $station, DateTimeImmutable $when): ?StationClockWheel
-    {
-        $override = $this->getActiveOverride($station, $when);
-        if ($override === null || $override->clock_wheel === null) {
-            return null;
-        }
-
-        $wheel = $override->clock_wheel;
-
-        return $wheel->is_active ? $wheel : null;
     }
 
     public function getHolidayPlaylist(Station $station, DateTimeImmutable $when): ?StationPlaylist

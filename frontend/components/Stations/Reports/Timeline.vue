@@ -85,9 +85,6 @@
             <template #cell(playlist)="row">
                 {{ row.item.playlist || '—' }}
             </template>
-            <template #cell(clock_wheel)="row">
-                {{ row.item.clock_wheel || '—' }}
-            </template>
         </data-table>
     </div>
 </template>
@@ -178,12 +175,6 @@ const fields: DataTableField[] = [
     {
         key: 'playlist',
         label: $gettext('Playlist'),
-        selectable: true,
-        sortable: false
-    },
-    {
-        key: 'clock_wheel',
-        label: $gettext('Clock Wheel'),
         selectable: true,
         sortable: false
     },

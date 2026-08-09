@@ -8,36 +8,16 @@
         @submit="doSave"
         @hidden="clearForm"
     >
-        <!-- Source -->
-        <div v-if="!isScopedMode" class="mb-3">
-            <label class="form-label fw-semibold">{{ $gettext('Source') }}</label>
-            <select
-                v-model="form.source"
-                class="form-select"
-                @change="onSourceChange"
-            >
-                <option value="clock_wheel">
-                    {{ $gettext('Clock Wheel') }}
-                </option>
-                <option value="playlist">
-                    {{ $gettext('Playlist') }}
-                </option>
-            </select>
-        </div>
-
         <!-- Entity selection -->
-        <div v-if="!isScopedMode" class="mb-3">
-            <label class="form-label fw-semibold">
-                {{ form.source === 'playlist' ? $gettext('Playlist') : $gettext('Clock Wheel') }}
-            </label>
+        <div class="mb-3">
+            <label class="form-label fw-semibold">{{ $gettext('Playlist') }}</label>
             <select
                 v-model="form.entity_id"
                 class="form-select"
-                :disabled="currentEntityOptions.length === 0"
-                @change="onEntityChange"
+                :disabled="playlists.length === 0"
             >
                 <option
-                    v-for="e in currentEntityOptions"
+                    v-for="e in playlists"
                     :key="e.id"
                     :value="e.id"
                 >
@@ -46,10 +26,7 @@
             </select>
         </div>
 
-        <div
-            v-if="form.source === 'playlist'"
-            class="mb-3"
-        >
+        <div class="mb-3">
             <div class="form-check">
                 <input
                     id="edit_form_is_emergency"
@@ -62,7 +39,7 @@
                 </label>
             </div>
             <small class="form-text text-warning">
-                {{ $gettext('While this schedule is active, clock wheel AutoDJ will not run. Use for breaking news or other must-play windows.') }}
+                {{ $gettext('While this schedule is active, automatic top-of-hour ID insertion is deferred. Use for breaking news or other must-play windows.') }}
             </small>
         </div>
 
@@ -76,10 +53,10 @@
                 :description="$gettext('To play once per day, set start and end to the same value.')"
             >
                 <template #default="{id, model, fieldClass}">
-                    <am-pm-time-input
-                        :input-id="id"
+                    <time-code
+                        :id="id"
                         v-model="model.$model"
-                        :field-class="fieldClass"
+                        :class="fieldClass"
                     />
                 </template>
             </form-group-field>
@@ -92,10 +69,10 @@
                 :description="$gettext('If end is before start, the event plays overnight. To avoid overlapping the next event, you can end at :59 (e.g. 1:59 PM before 2:00 PM).')"
             >
                 <template #default="{id, model, fieldClass}">
-                    <am-pm-time-input
-                        :input-id="id"
+                    <time-code
+                        :id="id"
                         v-model="model.$model"
-                        :field-class="fieldClass"
+                        :class="fieldClass"
                     />
                 </template>
             </form-group-field>
@@ -163,44 +140,6 @@
             />
 
             <form-markup
-                v-if="isClockWheelSchedule"
-                id="edit_form_clock_wheel_scheduling"
-                class="col-md-4"
-                :label="$gettext('Clock Wheel Timing')"
-            >
-                <div class="d-flex flex-wrap gap-3">
-                    <div class="form-check mb-0">
-                        <input
-                            id="clock_wheel_scheduling_flexible"
-                            v-model="clockWheelScheduleMode"
-                            class="form-check-input"
-                            type="radio"
-                            value="flexible"
-                        >
-                        <label class="form-check-label" for="clock_wheel_scheduling_flexible">
-                            {{ $gettext('Flexible') }}
-                        </label>
-                    </div>
-                    <div class="form-check mb-0">
-                        <input
-                            id="clock_wheel_scheduling_strict"
-                            v-model="clockWheelScheduleMode"
-                            class="form-check-input"
-                            type="radio"
-                            value="strict"
-                        >
-                        <label class="form-check-label" for="clock_wheel_scheduling_strict">
-                            {{ $gettext('Strict') }}
-                        </label>
-                    </div>
-                </div>
-                <small class="form-text text-muted d-block mt-2">
-                    {{ $gettext('Flexible prefers full songs when they fit; AutoDJ may cut at anchors only when selection cannot guarantee timing (short slots, strict mode, or no track fits the window).') }}
-                </small>
-            </form-markup>
-
-            <form-markup
-                v-if="isPlaylistSchedule"
                 id="edit_form_scheduling"
                 class="col-md-4"
                 :label="$gettext('Start Timing')"
@@ -269,101 +208,101 @@
         </div>
 
         <template v-if="isRecurring">
-        <!-- Days of Week -->
-        <form-group-multi-check
-            id="edit_form_days"
-            class="mb-3"
-            :field="r$.days"
-            :label="$gettext('Scheduled Play Days of Week')"
-            :description="daysOfWeekFieldDescription"
-            :options="dayOptions"
-            :required="!isMonthlyDatePattern"
-            :disabled="isMonthlyDatePattern"
-            stacked
-        />
-
-        <!-- Repeat section -->
-        <div class="mb-3">
-            <h6 class="text-muted mb-2">
-                {{ $gettext('Repeat') }}
-            </h6>
-        </div>
-
-        <div class="row g-3 mb-3">
-            <form-group-select
-                id="edit_form_recurrence_type"
-                class="col-md-4"
-                :field="r$.recurrence_type"
-                :label="$gettext('Repeat')"
-                :description="$gettext('Weekly = every week; Bi-weekly = every 2 weeks; Custom = every N weeks; Monthly = by date or specific day of week.')"
-                :options="recurrenceTypeOptions"
+            <!-- Days of Week -->
+            <form-group-multi-check
+                id="edit_form_days"
+                class="mb-3"
+                :field="r$.days"
+                :label="$gettext('Scheduled Play Days of Week')"
+                :description="daysOfWeekFieldDescription"
+                :options="dayOptions"
+                :required="!isMonthlyDatePattern"
+                :disabled="isMonthlyDatePattern"
+                stacked
             />
 
-            <form-group-field
-                v-if="scheduleRow.recurrence_type === 'custom'"
-                id="edit_form_recurrence_interval"
-                class="col-md-4"
-                :field="r$.recurrence_interval"
-                input-type="number"
-                min="1"
-                max="52"
-                :label="$gettext('Every (weeks)')"
-                :description="$gettext('E.g. 3 = every 3 weeks. Set Start date for correct alignment.')"
-            />
+            <!-- Repeat section -->
+            <div class="mb-3">
+                <h6 class="text-muted mb-2">
+                    {{ $gettext('Repeat') }}
+                </h6>
+            </div>
 
-            <template v-if="scheduleRow.recurrence_type === 'monthly'">
+            <div class="row g-3 mb-3">
                 <form-group-select
-                    id="edit_form_recurrence_monthly_pattern"
+                    id="edit_form_recurrence_type"
                     class="col-md-4"
-                    :field="r$.recurrence_monthly_pattern"
-                    :label="$gettext('Monthly Pattern')"
-                    :options="recurrenceMonthlyPatternOptions"
+                    :field="r$.recurrence_type"
+                    :label="$gettext('Repeat')"
+                    :description="$gettext('Weekly = every week; Bi-weekly = every 2 weeks; Custom = every N weeks; Monthly = by date or specific day of week.')"
+                    :options="recurrenceTypeOptions"
                 />
 
                 <form-group-field
-                    v-if="scheduleRow.recurrence_monthly_pattern === 'date'"
-                    id="edit_form_recurrence_monthly_day"
+                    v-if="scheduleRow.recurrence_type === 'custom'"
+                    id="edit_form_recurrence_interval"
                     class="col-md-4"
-                    :field="r$.recurrence_monthly_day"
+                    :field="r$.recurrence_interval"
                     input-type="number"
                     min="1"
-                    max="31"
-                    :label="$gettext('Day of Month')"
-                    :description="$gettext('Day of the month (1–31).')"
+                    max="52"
+                    :label="$gettext('Every (weeks)')"
+                    :description="$gettext('E.g. 3 = every 3 weeks. Set Start date for correct alignment.')"
                 />
 
-                <template v-if="scheduleRow.recurrence_monthly_pattern === 'day_of_week'">
+                <template v-if="scheduleRow.recurrence_type === 'monthly'">
                     <form-group-select
-                        id="edit_form_recurrence_monthly_week"
+                        id="edit_form_recurrence_monthly_pattern"
                         class="col-md-4"
-                        :field="r$.recurrence_monthly_week"
-                        :label="$gettext('Week of Month')"
-                        :description="$gettext('For monthly specific day of week.')"
-                        :options="recurrenceMonthlyWeekOptions"
+                        :field="r$.recurrence_monthly_pattern"
+                        :label="$gettext('Monthly Pattern')"
+                        :options="recurrenceMonthlyPatternOptions"
                     />
+
+                    <form-group-field
+                        v-if="scheduleRow.recurrence_monthly_pattern === 'date'"
+                        id="edit_form_recurrence_monthly_day"
+                        class="col-md-4"
+                        :field="r$.recurrence_monthly_day"
+                        input-type="number"
+                        min="1"
+                        max="31"
+                        :label="$gettext('Day of Month')"
+                        :description="$gettext('Day of the month (1–31).')"
+                    />
+
+                    <template v-if="scheduleRow.recurrence_monthly_pattern === 'day_of_week'">
+                        <form-group-select
+                            id="edit_form_recurrence_monthly_week"
+                            class="col-md-4"
+                            :field="r$.recurrence_monthly_week"
+                            :label="$gettext('Week of Month')"
+                            :description="$gettext('For monthly specific day of week.')"
+                            :options="recurrenceMonthlyWeekOptions"
+                        />
+                    </template>
                 </template>
-            </template>
 
-            <form-group-select
-                id="edit_form_recurrence_end_type"
-                class="col-md-4"
-                :field="r$.recurrence_end_type"
-                :label="$gettext('Stop Recurrence')"
-                :description="$gettext('Optional: stop after a number of occurrences or use End date above.')"
-                :options="recurrenceEndTypeOptions"
-            />
+                <form-group-select
+                    id="edit_form_recurrence_end_type"
+                    class="col-md-4"
+                    :field="r$.recurrence_end_type"
+                    :label="$gettext('Stop Recurrence')"
+                    :description="$gettext('Optional: stop after a number of occurrences or use End date above.')"
+                    :options="recurrenceEndTypeOptions"
+                />
 
-            <form-group-field
-                v-if="scheduleRow.recurrence_end_type === 'after'"
-                id="edit_form_recurrence_end_after"
-                class="col-md-4"
-                :field="r$.recurrence_end_after"
-                input-type="number"
-                min="1"
-                :label="$gettext('Stop After (occurrences)')"
-            />
-        </div>
-    </template>
+                <form-group-field
+                    v-if="scheduleRow.recurrence_end_type === 'after'"
+                    id="edit_form_recurrence_end_after"
+                    class="col-md-4"
+                    :field="r$.recurrence_end_after"
+                    input-type="number"
+                    min="1"
+                    :label="$gettext('Stop After (occurrences)')"
+                />
+            </div>
+        </template>
 
         <template
             v-if="editingScheduleId !== null"
@@ -398,9 +337,8 @@
 
 <script setup lang="ts">
 import ModalForm from '~/components/Common/ModalForm.vue';
-import AmPmTimeInput from '~/components/Common/AmPmTimeInput.vue';
+import TimeCode from '~/components/Common/TimeCode.vue';
 import FormGroupField from '~/components/Form/FormGroupField.vue';
-import FormGroupCheckbox from '~/components/Form/FormGroupCheckbox.vue';
 import FormGroupMultiCheck from '~/components/Form/FormGroupMultiCheck.vue';
 import FormGroupSelect from '~/components/Form/FormGroupSelect.vue';
 import FormMarkup from '~/components/Form/FormMarkup.vue';
@@ -418,7 +356,7 @@ import {
     createScheduleItemDefaults,
 } from '~/components/Stations/Common/scheduleItemDefaults.ts';
 import normalizeStationScheduleDays from '~/functions/normalizeStationScheduleDays';
-import {scheduleTimeWindowForHourOfDay} from '~/functions/amPmTime.ts';
+import type {EventImpl} from '@fullcalendar/core/internal';
 
 const {$gettext} = useTranslate();
 const {axios} = useAxios();
@@ -436,19 +374,10 @@ interface EntityOption {
     self_url: string;
 }
 
-interface ClockWheelOption extends EntityOption {
-    /** Set on daypart-generated hourly wheels (0–23). */
-    hour_of_day: number | null;
-}
-
 const playlists = ref<EntityOption[]>([]);
-const clockWheels = ref<ClockWheelOption[]>([]);
 
 onMounted(async () => {
-    const [plResp, cwResp] = await Promise.all([
-        axios.get(getStationApiUrl('/playlists').value),
-        axios.get(getStationApiUrl('/clock-wheels').value),
-    ]);
+    const plResp = await axios.get(getStationApiUrl('/playlists').value);
 
     playlists.value = (plResp.data as Array<Record<string, unknown>>).map((p) => ({
         id: p.id as number,
@@ -456,23 +385,15 @@ onMounted(async () => {
         self_url: (p.links as Record<string, string>).self,
     }));
 
-    clockWheels.value = (cwResp.data as Array<Record<string, unknown>>).map((cw) => ({
-        id: cw.id as number,
-        name: cw.name as string,
-        self_url: (cw.links as Record<string, string>).self,
-        hour_of_day: cw.hour_of_day != null ? Number(cw.hour_of_day) : null,
-    }));
 });
 
 const blankForm = () => ({
-    source: 'clock_wheel' as 'playlist' | 'clock_wheel',
     entity_id: null as number | null,
 });
 
 const form = ref(blankForm());
 
 const startTimingMode = ref<'flexible' | 'strict'>('flexible');
-const clockWheelScheduleMode = ref<'flexible' | 'strict'>('flexible');
 
 // Schedule row state - matches PlaylistScheduleRow interface
 const scheduleRow = ref<PlaylistScheduleRow>(createScheduleItemDefaults());
@@ -533,10 +454,10 @@ const updateDuration = () => {
     const endMinutes = endTotalMinutes % 60;
     const newEndTime = endHours * 100 + endMinutes;
 
-    // Write through r$.end_time.$model (the same path the End Time field itself
+    // Write through r$.end_time.$value (the same path the End Time field itself
     // writes to) rather than the raw scheduleRow object directly -- the field's
     // validation wrapper may not reactively pick up a direct object mutation.
-    r$.end_time.$model = newEndTime;
+    r$.end_time.$value = newEndTime;
     scheduleRow.value.end_time = newEndTime;
 };
 
@@ -560,82 +481,15 @@ const syncDurationFromTimes = () => {
     durationMinutes.value = diffMinutes % 60;
 };
 
-const applyClockWheelHourToSchedule = (entityId: number | null) => {
-    if (entityId == null) {
-        return;
-    }
-
-    const wheel = clockWheels.value.find((w) => w.id === entityId);
-    if (wheel?.hour_of_day == null) {
-        return;
-    }
-
-    const {start_time, end_time} = scheduleTimeWindowForHourOfDay(wheel.hour_of_day);
-    scheduleRow.value.start_time = start_time;
-    scheduleRow.value.end_time = end_time;
-    durationHours.value = 1;
-    durationMinutes.value = 0;
-};
-
-const onEntityChange = () => {
-    if (isClockWheelSchedule.value) {
-        applyClockWheelHourToSchedule(form.value.entity_id);
-    }
-};
-
-const currentEntityOptions = computed(() =>
-    form.value.source === 'playlist' ? playlists.value : clockWheels.value
-);
-
-const isPlaylistSchedule = computed(() => form.value.source === 'playlist');
-const isClockWheelSchedule = computed(() => form.value.source === 'clock_wheel');
-
-// Auto-select first entity whenever options change or source changes
-watch(currentEntityOptions, (opts) => {
+// Auto-select the first playlist whenever options change.
+watch(playlists, (opts) => {
     if (opts.length > 0 && (form.value.entity_id === null || !opts.find(e => e.id === form.value.entity_id))) {
         form.value.entity_id = opts[0].id;
     }
 }, {immediate: true});
 
-watch(
-    () => form.value.entity_id,
-    (entityId, previousId) => {
-        if (!isClockWheelSchedule.value || entityId == null) {
-            return;
-        }
-
-        // Editing an existing event: only adjust times when the user picks another wheel.
-        if (editingScheduleId.value !== null && previousId == null) {
-            return;
-        }
-
-        applyClockWheelHourToSchedule(entityId);
-    }
-);
-
 watch(startTimingMode, (mode) => {
-    if (!isPlaylistSchedule.value) {
-        return;
-    }
     scheduleRow.value.strict_start = mode === 'strict';
-});
-
-watch(
-    () => form.value.source,
-    (source) => {
-        if (source === 'clock_wheel') {
-            scheduleRow.value.loop_once = false;
-            scheduleRow.value.strict_start = false;
-            scheduleRow.value.clock_wheel_mode = clockWheelScheduleMode.value;
-            scheduleRow.value.is_emergency = false;
-        }
-    }
-);
-
-watch(clockWheelScheduleMode, (mode) => {
-    if (isClockWheelSchedule.value) {
-        scheduleRow.value.clock_wheel_mode = mode;
-    }
 });
 
 // Regle validation for schedule row
@@ -728,15 +582,6 @@ const isFormValid = computed(() =>
     !r$.$invalid
 );
 
-const onSourceChange = () => {
-    form.value.entity_id = null;
-    if (form.value.source === 'clock_wheel') {
-        scheduleRow.value.loop_once = false;
-        scheduleRow.value.strict_start = false;
-        clockWheelScheduleMode.value = scheduleRow.value.clock_wheel_mode ?? 'flexible';
-    }
-};
-
 const dayOptions = [
     {value: 1, text: $gettext('Monday')},
     {value: 2, text: $gettext('Tuesday')},
@@ -802,13 +647,12 @@ const apiScheduleItemToRow = (item: Record<string, unknown>): PlaylistScheduleRo
     const row: PlaylistScheduleRow = {
         start_time: Number(item.start_time),
         end_time: Number(item.end_time),
-        start_date: String(item.start_date ?? ''),
-        end_date: String(item.end_date ?? ''),
+        start_date: (item.start_date as string | null | undefined) ?? '',
+        end_date: (item.end_date as string | null | undefined) ?? '',
         days: normalizeStationScheduleDays(item.days),
         loop_once: Boolean(item.loop_once),
         is_emergency: Boolean(item.is_emergency),
         strict_start: Boolean(item.strict_start),
-        clock_wheel_mode: (item.clock_wheel_mode === 'strict' ? 'strict' : 'flexible') as 'flexible' | 'strict',
         recurrence_type: recurrenceType ?? null,
         recurrence_interval: Number(item.recurrence_interval ?? 1),
         recurrence_monthly_pattern: (item.recurrence_monthly_pattern as string | null) ?? null,
@@ -878,23 +722,19 @@ const buildSchedulePayload = (
     return out;
 };
 
-const isScopedMode = ref(false);
-
 const clearForm = () => {
     form.value = blankForm();
     startTimingMode.value = 'flexible';
-    clockWheelScheduleMode.value = 'flexible';
     scheduleRow.value = createScheduleItemDefaults();
     error.value = null;
     editingScheduleId.value = null;
-    isScopedMode.value = false;
 };
 
 const open = () => {
     clearForm();
     // If options are already loaded, auto-select the first one (watch won't re-fire if options didn't change)
-    if (currentEntityOptions.value.length > 0) {
-        form.value.entity_id = currentEntityOptions.value[0].id;
+    if (playlists.value.length > 0) {
+        form.value.entity_id = playlists.value[0].id;
     }
     ($modal.value as any)?.show();
 };
@@ -907,21 +747,15 @@ const openForEdit = async (event: EventImpl) => {
     const scheduleId = scheduleIdRaw !== undefined ? Number(scheduleIdRaw) : NaN;
     editingScheduleId.value = Number.isFinite(scheduleId) ? scheduleId : null;
 
-    if (editUrl?.includes('/clock-wheel/')) {
-        form.value.source = 'clock_wheel';
-    } else {
-        form.value.source = 'playlist';
-    }
-
     if (editUrl) {
-        const m = editUrl.match(/\/(playlist|clock-wheel)\/(\d+)/);
-        if (m?.[2]) {
-            form.value.entity_id = Number(m[2]);
+        const m = editUrl.match(/\/playlist\/(\d+)/);
+        if (m?.[1]) {
+            form.value.entity_id = Number(m[1]);
         }
     }
 
-    if (!form.value.entity_id && currentEntityOptions.value.length > 0) {
-        form.value.entity_id = currentEntityOptions.value[0].id;
+    if (!form.value.entity_id && playlists.value.length > 0) {
+        form.value.entity_id = playlists.value[0].id;
     }
 
     ($modal.value as any)?.show();
@@ -934,8 +768,7 @@ const openForEdit = async (event: EventImpl) => {
         error.value = null;
 
         try {
-            const entityType = form.value.source === 'playlist' ? 'playlist' : 'clock-wheel';
-            const entityApiUrl = getStationApiUrl(`/${entityType}/${form.value.entity_id}`).value;
+            const entityApiUrl = getStationApiUrl(`/playlist/${form.value.entity_id}`).value;
             const {data: entityData} = await axios.get(entityApiUrl);
             const items = (entityData.schedule_items as Record<string, unknown>[] | undefined) ?? [];
             const existing = items.find((row) => Number(row.id) === editingScheduleId.value);
@@ -944,12 +777,7 @@ const openForEdit = async (event: EventImpl) => {
                 scheduleRow.value = apiScheduleItemToRow(existing);
                 syncDurationFromTimes();
                 isRecurring.value = existing.recurrence_type != null && existing.recurrence_type !== '';
-                if (form.value.source === 'clock_wheel') {
-                    scheduleRow.value.loop_once = false;
-                    clockWheelScheduleMode.value = scheduleRow.value.clock_wheel_mode ?? 'flexible';
-                } else {
-                    startTimingMode.value = scheduleRow.value.strict_start ? 'strict' : 'flexible';
-                }
+                startTimingMode.value = scheduleRow.value.strict_start ? 'strict' : 'flexible';
             } else if (start) {
                 applyCalendarTimesToRow(start, end);
                 syncDurationFromTimes();
@@ -969,59 +797,6 @@ const openForEdit = async (event: EventImpl) => {
     }
 };
 
-// Used from the Playlist/Clock Wheel edit modals' own "Schedule" tab, where
-// we already know exactly which item we're scheduling -- no FullCalendar
-// event object involved, so no Source/Entity dropdown needed at all.
-const openScopedForCreate = (source: 'playlist' | 'clock_wheel', entityId: number) => {
-    clearForm();
-    isScopedMode.value = true;
-    form.value.source = source;
-    form.value.entity_id = entityId;
-    ($modal.value as any)?.show();
-};
-
-const openScopedForEdit = async (
-    source: 'playlist' | 'clock_wheel',
-    entityId: number,
-    scheduleId: number,
-) => {
-    clearForm();
-    isScopedMode.value = true;
-    form.value.source = source;
-    form.value.entity_id = entityId;
-    editingScheduleId.value = scheduleId;
-
-    ($modal.value as any)?.show();
-
-    loading.value = true;
-    error.value = null;
-
-    try {
-        const entityType = source === 'playlist' ? 'playlist' : 'clock-wheel';
-        const entityApiUrl = getStationApiUrl(`/${entityType}/${entityId}`).value;
-        const {data: entityData} = await axios.get(entityApiUrl);
-        const items = (entityData.schedule_items as Record<string, unknown>[] | undefined) ?? [];
-        const existing = items.find((row) => Number(row.id) === scheduleId);
-
-        if (existing) {
-            scheduleRow.value = apiScheduleItemToRow(existing);
-            syncDurationFromTimes();
-            isRecurring.value = existing.recurrence_type != null && existing.recurrence_type !== '';
-            if (source === 'clock_wheel') {
-                scheduleRow.value.loop_once = false;
-                clockWheelScheduleMode.value = scheduleRow.value.clock_wheel_mode ?? 'flexible';
-            } else {
-                startTimingMode.value = scheduleRow.value.strict_start ? 'strict' : 'flexible';
-            }
-        }
-    } catch (e: unknown) {
-        const err = e as {response?: {data?: {message?: string}}};
-        error.value = err?.response?.data?.message ?? $gettext('An error occurred.');
-    } finally {
-        loading.value = false;
-    }
-};
-
 const doSave = async () => {
     if (!form.value.entity_id) return;
 
@@ -1029,10 +804,7 @@ const doSave = async () => {
     error.value = null;
 
     try {
-        // Build URL using getStationApiUrl to avoid Docker-internal host issues
-        // Note: individual endpoints use singular: /playlist/{id} and /clock-wheel/{id}
-        const entityType = form.value.source === 'playlist' ? 'playlist' : 'clock-wheel';
-        const entityApiUrl = getStationApiUrl(`/${entityType}/${form.value.entity_id}`).value;
+        const entityApiUrl = getStationApiUrl(`/playlist/${form.value.entity_id}`).value;
 
         // Fetch current entity data
         const {data: entityData} = await axios.get(entityApiUrl);
@@ -1041,12 +813,6 @@ const doSave = async () => {
             scheduleRow.value,
             editingScheduleId.value ?? undefined
         );
-        if (form.value.source === 'clock_wheel') {
-            newScheduleItem.loop_once = false;
-            newScheduleItem.strict_start = false;
-            newScheduleItem.clock_wheel_mode = scheduleRow.value.clock_wheel_mode ?? 'flexible';
-        }
-
         const existingScheduleItems = (entityData.schedule_items as unknown[]) ?? [];
 
         let updatedScheduleItems: unknown[];
@@ -1096,7 +862,6 @@ const doDelete = async () => {
     // Capture these before closing the modal -- @hidden triggers clearForm(),
     // which resets the reactive form/editingScheduleId back to blank.
     const entityId = form.value.entity_id;
-    const source = form.value.source;
     const scheduleId = editingScheduleId.value;
 
     // Close first, matching the pattern used by MediaCategories/EditModal.vue --
@@ -1114,8 +879,7 @@ const doDelete = async () => {
     }
 
     try {
-        const entityType = source === 'playlist' ? 'playlist' : 'clock-wheel';
-        const entityApiUrl = getStationApiUrl(`/${entityType}/${entityId}`).value;
+        const entityApiUrl = getStationApiUrl(`/playlist/${entityId}`).value;
 
         const {data: entityData} = await axios.get(entityApiUrl);
         const existingScheduleItems = (entityData.schedule_items as unknown[]) ?? [];
@@ -1135,6 +899,5 @@ const doDelete = async () => {
     }
 };
 
-defineExpose({open, openForEdit, openScopedForCreate, openScopedForEdit});
+defineExpose({open, openForEdit});
 </script>
-

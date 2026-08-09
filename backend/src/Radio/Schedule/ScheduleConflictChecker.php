@@ -9,9 +9,7 @@ use App\Entity\Enums\RecurrenceEndType;
 use App\Entity\Enums\RecurrenceMonthlyPattern;
 use App\Entity\Enums\RecurrenceType;
 use App\Entity\Station;
-use App\Entity\Enums\ClockWheelScheduleMode;
 use App\Entity\Enums\PlaylistTypes;
-use App\Entity\StationClockWheel;
 use App\Entity\StationPlaylist;
 use App\Entity\StationSchedule;
 use App\Entity\StationStreamer;
@@ -25,7 +23,7 @@ use DateTimeImmutable;
 use DateTimeZone;
 
 /**
- * Ensures station calendar entries (playlists, streamers, clock wheels) do not overlap.
+ * Ensures station calendar entries (playlists and streamers) do not overlap.
  */
 final class ScheduleConflictChecker
 {
@@ -38,12 +36,12 @@ final class ScheduleConflictChecker
     }
 
     /**
-     * @param StationPlaylist|StationStreamer|StationClockWheel $relation
+     * @param StationPlaylist|StationStreamer $relation
      * @param array<int, array<string, mixed>> $items
      */
     public function assertBatchHasNoConflicts(
         Station $station,
-        StationPlaylist|StationStreamer|StationClockWheel $relation,
+        StationPlaylist|StationStreamer $relation,
         array $items,
     ): void {
         // Jingles/promos and frequency-based playlists (Once per Hour, Once per X Songs,
@@ -99,7 +97,7 @@ final class ScheduleConflictChecker
     }
 
     /**
-     * Returns true when an emergency-flagged schedule is active (clock wheel must defer).
+     * Returns true when an emergency-flagged schedule is active.
      */
     public function hasEmergencyScheduleActive(
         Station $station,
@@ -121,42 +119,18 @@ final class ScheduleConflictChecker
     }
 
     /**
-     * Returns true when a playlist or streamer schedule is active (clock wheel must defer).
-     */
-    public function hasNonClockWheelScheduleActive(
-        Station $station,
-        DateTimeImmutable $now,
-    ): bool {
-        $tz = $station->getTimezoneObject();
-
-        foreach ($this->getAllScheduledItemsForStation($station) as $schedule) {
-            if ($schedule->clock_wheel !== null) {
-                continue;
-            }
-
-            if ($this->scheduler->shouldSchedulePlayNow($schedule, $tz, $now)) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    /**
      * @return StationSchedule[]
      */
     private function getAllScheduledItemsForStation(Station $station): array
     {
         return $this->em->createQuery(
             <<<'DQL'
-                SELECT ssc, sp, sst, scw
+                SELECT ssc, sp, sst
                 FROM App\Entity\StationSchedule ssc
                 LEFT JOIN ssc.playlist sp
                 LEFT JOIN ssc.streamer sst
-                LEFT JOIN ssc.clock_wheel scw
                 WHERE (sp.station = :station AND sp.is_jingle = 0 AND sp.is_enabled = 1)
                 OR (sst.station = :station AND sst.is_active = 1)
-                OR (scw.station = :station AND scw.is_active = 1)
             DQL
         )->setParameter('station', $station)
             ->execute();
@@ -231,11 +205,11 @@ final class ScheduleConflictChecker
     }
 
   /**
-     * @param StationPlaylist|StationStreamer|StationClockWheel $relation
+     * @param StationPlaylist|StationStreamer $relation
      * @param array<string, mixed> $item
      */
     private function buildCandidateSchedule(
-        StationPlaylist|StationStreamer|StationClockWheel $relation,
+        StationPlaylist|StationStreamer $relation,
         array $item,
     ): StationSchedule {
         $record = new StationSchedule($relation);
@@ -255,16 +229,6 @@ final class ScheduleConflictChecker
 
         $record->loop_once = $item['loop_once'] ?? false;
         $record->is_emergency = (bool)($item['is_emergency'] ?? false);
-
-        if ($relation instanceof StationClockWheel) {
-            $record->loop_once = false;
-            $modeRaw = $item['clock_wheel_mode'] ?? ClockWheelScheduleMode::Flexible->value;
-            $record->clock_wheel_mode = is_string($modeRaw)
-                ? (ClockWheelScheduleMode::tryFrom($modeRaw) ?? ClockWheelScheduleMode::Flexible)
-                : ClockWheelScheduleMode::Flexible;
-        } else {
-            $record->clock_wheel_mode = null;
-        }
 
         $record->recurrence_type = isset($item['recurrence_type'])
             ? (is_string($item['recurrence_type']) ? RecurrenceType::tryFrom($item['recurrence_type']) : $item['recurrence_type'])
@@ -289,17 +253,13 @@ final class ScheduleConflictChecker
 
     private function isSameRelation(
         StationSchedule $schedule,
-        StationPlaylist|StationStreamer|StationClockWheel $relation,
+        StationPlaylist|StationStreamer $relation,
     ): bool {
         if ($relation instanceof StationPlaylist) {
             return $schedule->playlist?->id === $relation->id;
         }
 
-        if ($relation instanceof StationStreamer) {
-            return $schedule->streamer?->id === $relation->id;
-        }
-
-        return $schedule->clock_wheel?->id === $relation->id;
+        return $schedule->streamer?->id === $relation->id;
     }
 
     private function formatConflictMessage(StationSchedule $existing): string
@@ -315,13 +275,6 @@ final class ScheduleConflictChecker
             return sprintf(
                 __('This time conflicts with the scheduled streamer "%s".'),
                 $existing->streamer->display_name
-            );
-        }
-
-        if ($existing->clock_wheel !== null) {
-            return sprintf(
-                __('This time conflicts with the scheduled clock wheel "%s".'),
-                $existing->clock_wheel->name
             );
         }
 

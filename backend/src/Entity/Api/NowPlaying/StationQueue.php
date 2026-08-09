@@ -40,12 +40,6 @@ class StationQueue
     public ?string $playlist = null;
 
     #[OA\Property(
-        description: 'Indicates the clock wheel that queued the song, if available, or empty string if not.',
-        example: 'Morning Drive'
-    )]
-    public ?string $clock_wheel = null;
-
-    #[OA\Property(
         description: 'Indicates this queue row is a station-wide top-of-hour legal ID.',
     )]
     public bool $top_of_hour_legal_id = false;

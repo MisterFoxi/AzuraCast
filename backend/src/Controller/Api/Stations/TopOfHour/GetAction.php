@@ -6,7 +6,7 @@ namespace App\Controller\Api\Stations\TopOfHour;
 
 use App\Container\EntityManagerAwareTrait;
 use App\Controller\SingleActionInterface;
-use App\Entity\Repository\ClockWheelEventRepository;
+use App\Entity\Repository\StationQueueRepository;
 use App\Http\Response;
 use App\Http\ServerRequest;
 use App\OpenApi;
@@ -38,7 +38,7 @@ final class GetAction implements SingleActionInterface
     use EntityManagerAwareTrait;
 
     public function __construct(
-        private readonly ClockWheelEventRepository $eventRepo,
+        private readonly StationQueueRepository $queueRepo,
         private readonly HourBoundaryPlanner $hourBoundaryPlanner,
     ) {
     }
@@ -73,7 +73,7 @@ final class GetAction implements SingleActionInterface
             'top_of_hour_id_max_seconds' => $backendConfig->top_of_hour_id_max_seconds,
             'id_media_count' => $idMediaCount,
             'legal_id_media_count' => $idMediaCount,
-            'compliance' => $this->eventRepo->getStationTopOfHourLegalIdComplianceSummary(
+            'compliance' => $this->queueRepo->getTopOfHourLegalIdComplianceSummary(
                 $station,
                 $since,
                 $tolerance,

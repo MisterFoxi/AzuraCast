@@ -27,7 +27,7 @@ use Symfony\Component\EventDispatcher\EventSubscriberInterface;
  * Fail-safe: if history cannot be read, the song is allowed — never blocks
  * playback due to its own errors. All rejections are logged with full detail.
  *
- * Priority -5: runs AFTER selectors (QueueBuilder / ClockWheel / etc.) pick a
+ * Priority -5: runs AFTER selectors (QueueBuilder, etc.) pick a
  * song. Selectors must not stopPropagation on success so this listener can
  * clear a violating pick via setNextSongs(null); the next AutoDJ BuildQueue
  * attempt then retries with a different track.

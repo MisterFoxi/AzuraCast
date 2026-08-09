@@ -40,7 +40,7 @@
                             {{ $gettext('This page mirrors the client dashboard while staying connected to the current AzuraCast AI News APIs.') }}
                         </p>
                         <p class="mb-0">
-                            {{ $gettext('Active hours format: start and end times use 12-hour text like 01:00 AM. Leave both blank to run all day. Source URLs should be one per line, and regular website pages will be scraped before feed fallback is attempted.') }}
+                            {{ $gettext('Active hours use your selected time display format. Leave both blank to run all day. Source URLs should be one per line, and regular website pages will be scraped before feed fallback is attempted.') }}
                         </p>
                     </div>
 
@@ -343,15 +343,13 @@
                                         >
                                             {{ $gettext('Start Time') }}
                                         </label>
-                                        <input
+                                        <time-code
                                             id="edit_ai_news_start_time"
                                             v-model="activeHoursStartInput"
-                                            class="form-control form-control-dark"
-                                            type="text"
-                                            :placeholder="$gettext('01:00 AM')"
-                                        >
+                                            class="form-control-dark"
+                                        />
                                         <div class="field-note">
-                                            {{ $gettext('Format: 01:00 AM') }}
+                                            {{ timeFormatDescription }}
                                         </div>
                                         <div
                                             v-if="activeHoursStartError"
@@ -367,15 +365,13 @@
                                         >
                                             {{ $gettext('End Time') }}
                                         </label>
-                                        <input
+                                        <time-code
                                             id="edit_ai_news_end_time"
                                             v-model="activeHoursEndInput"
-                                            class="form-control form-control-dark"
-                                            type="text"
-                                            :placeholder="$gettext('01:00 AM')"
-                                        >
+                                            class="form-control-dark"
+                                        />
                                         <div class="field-note">
-                                            {{ $gettext('Format: 01:00 AM') }}
+                                            {{ timeFormatDescription }}
                                         </div>
                                         <div
                                             v-if="activeHoursEndError"
@@ -505,6 +501,7 @@ import FormGroupField from "~/components/Form/FormGroupField.vue";
 import FormGroupMultiCheck from "~/components/Form/FormGroupMultiCheck.vue";
 import FormSelect from "~/components/Form/FormSelect.vue";
 import Loading from "~/components/Common/Loading.vue";
+import TimeCode from "~/components/Common/TimeCode.vue";
 import mergeExisting from "~/functions/mergeExisting";
 import normalizeStationScheduleDays from "~/functions/normalizeStationScheduleDays";
 import {useResettableRef} from "~/functions/useResettableRef.ts";
@@ -515,6 +512,8 @@ import {useApiRouter} from "~/functions/useApiRouter.ts";
 import {useAppRegle} from "~/vendor/regle.ts";
 import {ApiStatus} from "~/entities/ApiInterfaces.ts";
 import {useLuxon} from "~/vendor/luxon.ts";
+import useTimeDisplay, {parseTimeCode, timeCodeTo24HourString} from "~/functions/useTimeDisplay.ts";
+import {useAzuraCast} from "~/vendor/azuracast.ts";
 
 interface AiNewsForm {
     ai_news_enabled: boolean;
@@ -626,40 +625,32 @@ const {record: form, reset: resetForm} = useResettableRef<AiNewsForm>(() => ({
 }));
 
 const {r$} = useAppRegle(form, {}, {});
-const activeHoursStartInput = ref('');
-const activeHoursEndInput = ref('');
+const activeHoursStartInput = ref<number | null>(null);
+const activeHoursEndInput = ref<number | null>(null);
 const activeHoursStartError = computed(() => {
-    const start = activeHoursStartInput.value.trim();
-    const end = activeHoursEndInput.value.trim();
+    const start = activeHoursStartInput.value;
+    const end = activeHoursEndInput.value;
 
-    if (!start && !end) {
+    if (start === null && end === null) {
         return '';
     }
 
-    if (!start) {
+    if (start === null) {
         return $gettext('Enter a start time or leave both fields blank.');
-    }
-
-    if (!parseMeridiemTimeInput(start)) {
-        return $gettext('Use format 01:00 AM.');
     }
 
     return '';
 });
 const activeHoursEndError = computed(() => {
-    const start = activeHoursStartInput.value.trim();
-    const end = activeHoursEndInput.value.trim();
+    const start = activeHoursStartInput.value;
+    const end = activeHoursEndInput.value;
 
-    if (!start && !end) {
+    if (start === null && end === null) {
         return '';
     }
 
-    if (!end) {
+    if (end === null) {
         return $gettext('Enter an end time or leave both fields blank.');
-    }
-
-    if (!parseMeridiemTimeInput(end)) {
-        return $gettext('Use format 01:00 AM.');
     }
 
     return '';
@@ -670,6 +661,11 @@ const {notifySuccess, notifyError} = useNotify();
 const {mayNeedRestart} = useMayNeedRestart();
 const {$gettext} = useGettext();
 const {DateTime, Duration} = useLuxon();
+const {timeConfig} = useAzuraCast();
+const {uses24HourTime, formatTimeString} = useTimeDisplay();
+const timeFormatDescription = computed(() => uses24HourTime.value
+    ? $gettext('Format: 14:30')
+    : $gettext('Format: 2:30 PM'));
 
 const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 const displayDateTimeFormat = {
@@ -679,14 +675,14 @@ const displayDateTimeFormat = {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    hour12: true
-} as const;
+    ...(timeConfig ?? {})
+} as Intl.DateTimeFormatOptions;
 const displayTimeFormat = {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    hour12: true
-} as const;
+    ...(timeConfig ?? {})
+} as Intl.DateTimeFormatOptions;
 
 const formatBrowserDateTime = (value: string | null | undefined, fallback = '—') => {
     if (!value) {
@@ -709,51 +705,6 @@ const formatBrowserNow = (value: DateTimeMaybeValid | null, fallback = '—') =>
     return value.toLocaleString(displayDateTimeFormat);
 };
 
-const formatStoredClockTime = (value: string, fallback = '—') => {
-    if (!value) {
-        return fallback;
-    }
-
-    const parsed = DateTime.fromFormat(value, 'HH:mm');
-    if (!parsed.isValid) {
-        return fallback;
-    }
-
-    return parsed.toLocaleString(displayTimeFormat);
-};
-
-const parseMeridiemTimeInput = (value: string) => {
-    const trimmedValue = value.trim();
-    if (!trimmedValue) {
-        return null;
-    }
-
-    const parsed = DateTime.fromFormat(trimmedValue.toUpperCase(), 'hh:mm a');
-    if (!parsed.isValid) {
-        return null;
-    }
-
-    return parsed;
-};
-
-const formatStoredTimeForInput = (value: string) => {
-    if (!value) {
-        return '';
-    }
-
-    const parsed = DateTime.fromFormat(value, 'HH:mm');
-    if (!parsed.isValid) {
-        return value;
-    }
-
-    return parsed.toFormat('hh:mm a');
-};
-
-const normalizeMeridiemTimeInput = (value: string) => {
-    const parsed = parseMeridiemTimeInput(value);
-    return parsed ? parsed.toFormat('HH:mm') : null;
-};
-
 const formatActiveHoursRange = (value: string | null | undefined, fallback = '—') => {
     const trimmedValue = value?.trim() ?? '';
     if (!trimmedValue) {
@@ -765,7 +716,7 @@ const formatActiveHoursRange = (value: string | null | undefined, fallback = '�
         return trimmedValue;
     }
 
-    return `${formatStoredClockTime(start, start)} - ${formatStoredClockTime(end, end)}`;
+    return `${formatTimeString(start)} - ${formatTimeString(end)}`;
 };
 
 const formatRelativeDuration = (targetIso: string | null | undefined) => {
@@ -960,7 +911,9 @@ const nextBulletinText = computed(() => {
             : datetime;
     }
 
-    return form.value.ai_news_active_hours?.trim() ?? $gettext('Within active window');
+    return form.value.ai_news_active_hours?.trim()
+        ? formatActiveHoursRange(form.value.ai_news_active_hours, form.value.ai_news_active_hours)
+        : $gettext('Within active window');
 });
 
 const currentTimeText = computed(() => {
@@ -1209,8 +1162,8 @@ const hydrateFromResponse = (data: AiNewsResponse) => {
     r$.$reset();
     form.value = mergeExisting(form.value, data);
     form.value.ai_news_active_days = normalizeStationScheduleDays(form.value.ai_news_active_days);
-    activeHoursStartInput.value = formatStoredTimeForInput(activeHoursStart.value);
-    activeHoursEndInput.value = formatStoredTimeForInput(activeHoursEnd.value);
+    activeHoursStartInput.value = parseTimeCode(activeHoursStart.value);
+    activeHoursEndInput.value = parseTimeCode(activeHoursEnd.value);
 
     lastStatus.value = data.ai_news_last_generation_status ?? null;
     lastTime.value = data.ai_news_last_generation_time ?? null;
@@ -1317,20 +1270,17 @@ const runTest = async () => {
     }
 };
 
-const updateActiveHours = (start: string, end: string) => {
-    const normalizedStart = normalizeMeridiemTimeInput(start);
-    const normalizedEnd = normalizeMeridiemTimeInput(end);
-
-    if (!start.trim() && !end.trim()) {
+const updateActiveHours = (start: number | null, end: number | null) => {
+    if (start === null && end === null) {
         form.value.ai_news_active_hours = null;
         return;
     }
 
-    if (!normalizedStart || !normalizedEnd) {
+    if (start === null || end === null) {
         return;
     }
 
-    form.value.ai_news_active_hours = `${normalizedStart}-${normalizedEnd}`;
+    form.value.ai_news_active_hours = `${timeCodeTo24HourString(start)}-${timeCodeTo24HourString(end)}`;
 };
 
 const refreshHeadlinePreview = () => {
@@ -2063,4 +2013,3 @@ const refreshHeadlinePreview = () => {
     }
 }
 </style>
-

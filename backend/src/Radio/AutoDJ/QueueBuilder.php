@@ -21,8 +21,6 @@ use App\Entity\StationPlaylist;
 use App\Entity\StationPlaylistMedia;
 use App\Entity\StationQueue;
 use App\Event\Radio\BuildQueue;
-use App\Radio\AutoDJ\ClockWheel\ClockWheelSeparationSettings;
-use App\Radio\AutoDJ\ClockWheel\ClockWheelStretchCalculator;
 use App\Radio\PlaylistParser;
 use App\Service\HolidayOverrideService;
 use DateTimeImmutable;
@@ -49,7 +47,6 @@ final class QueueBuilder implements EventSubscriberInterface
         private readonly StationQueueRepository $queueRepo,
         private readonly SongHistoryRepository $historyRepo,
         private readonly HolidayOverrideService $holidayOverrideService,
-        private readonly ClockWheelStretchCalculator $stretchCalculator,
     ) {
     }
 
@@ -117,18 +114,6 @@ final class QueueBuilder implements EventSubscriberInterface
             $expectedPlayTime,
             $station->backend_config->duplicate_prevention_time_range
         );
-
-        $daypartSettings = ClockWheelSeparationSettings::resolveForStationHour($station, $expectedPlayTime);
-        if ($daypartSettings !== null && ($daypartSettings->enabled || $daypartSettings->burnRateMaxPlays24h !== null)) {
-            $recentSongHistoryForDuplicatePrevention = $this->queueRepo->getRecentlyPlayedByTimeRange(
-                $station,
-                $expectedPlayTime,
-                max(
-                    $station->backend_config->duplicate_prevention_time_range,
-                    $daypartSettings->historyLookbackMinutes()
-                )
-            );
-        }
 
         $holidayPlaylist = $this->holidayOverrideService->getHolidayPlaylist($station, $expectedPlayTime);
         if ($holidayPlaylist !== null) {
@@ -388,62 +373,39 @@ final class QueueBuilder implements EventSubscriberInterface
         $stationQueueEntry = StationQueue::fromMedia($playlist->station, $mediaToPlay);
         $stationQueueEntry->playlist = $playlist;
 
-        // Soft-strict scheduling: the same "must finish before the next boundary"
-        // protection that guards the top-of-hour legal ID now applies to EVERY
-        // scheduled transition station-wide (e.g. a talk show starting at 5:01pm).
-        // Whichever boundary is sooner wins. Still never a hard cut -- the existing
-        // graceful cue_out fade (below) is the only enforcement mechanism.
+        // Soft-strict scheduling for normal scheduled transitions (e.g. a talk show
+        // starting at 5:01pm). TOPH itself is handled by the interrupting queue at
+        // the absolute hour boundary and must not shorten normal queue entries here.
         //
         // Defensively wrapped: if anything here throws for an edge case, queue
-        // building must never break station-wide because of it -- fall back to
-        // the original top-of-hour-only behavior instead.
+        // building must never break station-wide; leave this track uncapped.
         $maxDuration = null;
 
         try {
-            $topOfHourMaxDuration = $this->hourBoundaryPlanner->maxMusicDurationBeforeTopOfHour(
-                $playlist->station,
-                $expectedPlayTime,
-            );
-
             $secondsToNextScheduledStart = $this->scheduler->secondsUntilNextScheduledStart(
                 $playlist->station,
                 $expectedPlayTime,
             );
 
-            $maxDuration = $topOfHourMaxDuration;
-            if (null !== $secondsToNextScheduledStart
-                && (null === $maxDuration || $secondsToNextScheduledStart < $maxDuration)
-            ) {
+            if (null !== $secondsToNextScheduledStart) {
                 $maxDuration = (float)$secondsToNextScheduledStart;
             }
         } catch (\Throwable $e) {
             $this->logger->warning(
-                'Soft-strict boundary calculation failed; falling back to no boundary cap for this track.',
+                'Scheduled boundary calculation failed; falling back to no boundary cap for this track.',
                 ['exception' => $e->getMessage()]
             );
             $maxDuration = null;
         }
 
         if (null !== $maxDuration && $mediaToPlay->getCalculatedLength() > $maxDuration) {
+            $maxPlaySeconds = (int)floor($maxDuration);
             $stationQueueEntry->hour_boundary_enforce_cap = true;
-            $stationQueueEntry->hour_boundary_max_play_seconds = (int)floor($maxDuration);
-        }
+            $stationQueueEntry->hour_boundary_max_play_seconds = $maxPlaySeconds;
 
-        // Stretch target: same combined boundary as above.
-        $stretchTargetSeconds = (null !== $maxDuration) ? (int)floor($maxDuration) : null;
-
-        if (null !== $stretchTargetSeconds) {
-            try {
-                $stationQueueEntry->clock_wheel_stretch_ratio = $this->stretchCalculator->calculate(
-                    $mediaToPlay->getCalculatedLength(),
-                    $stretchTargetSeconds,
-                );
-            } catch (\Throwable $e) {
-                $this->logger->warning(
-                    'Stretch ratio calculation failed; leaving track unstretched.',
-                    ['exception' => $e->getMessage()]
-                );
-            }
+            // Queue::buildQueue() must advance using the same capped duration
+            // that Liquidsoap will enforce for scheduled transitions.
+            $stationQueueEntry->duration = (float)$maxPlaySeconds;
         }
 
         $this->em->persist($stationQueueEntry);

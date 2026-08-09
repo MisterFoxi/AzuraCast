@@ -5,17 +5,18 @@ declare(strict_types=1);
 namespace App\Controller\Api\Stations\Reports\Overview;
 
 use App\Entity\Api\Status;
+use App\Entity\Repository\StationQueueRepository;
 use App\Http\Response;
 use App\Http\ServerRequest;
 use App\OpenApi;
-use App\Service\StationReportsAnalyticsService;
+use App\Radio\AutoDJ\HourBoundaryPlanner;
 use OpenApi\Attributes as OA;
 use Psr\Http\Message\ResponseInterface;
 
 #[OA\Get(
-    path: '/station/{station_id}/reports/overview/daypart-audience',
-    operationId: 'getStationReportDaypartAudience',
-    summary: 'Get audience stats grouped by clock wheel daypart.',
+    path: '/station/{station_id}/reports/overview/top-of-hour-performance',
+    operationId: 'getStationReportTopOfHourPerformance',
+    summary: 'Get station-wide Top of Hour ID compliance.',
     tags: [OpenApi::TAG_STATIONS_REPORTS],
     parameters: [
         new OA\Parameter(ref: OpenApi::REF_STATION_ID_REQUIRED),
@@ -27,10 +28,11 @@ use Psr\Http\Message\ResponseInterface;
         new OpenApi\Response\GenericError(),
     ]
 )]
-final class DaypartAudienceAction extends AbstractReportAction
+final class TopOfHourPerformanceAction extends AbstractReportAction
 {
     public function __construct(
-        private readonly StationReportsAnalyticsService $analyticsService,
+        private readonly StationQueueRepository $queueRepo,
+        private readonly HourBoundaryPlanner $hourBoundaryPlanner,
     ) {
     }
 
@@ -47,8 +49,13 @@ final class DaypartAudienceAction extends AbstractReportAction
         $station = $request->getStation();
         $dateRange = $this->getDateRange($request, $station->getTimezoneObject());
 
-        return $response->withJson(
-            $this->analyticsService->getDaypartAudience($station, $dateRange),
-        );
+        return $response->withJson([
+            'compliance' => $this->queueRepo->getTopOfHourLegalIdComplianceSummary(
+                $station,
+                $dateRange->start,
+                $this->hourBoundaryPlanner->getComplianceToleranceSeconds($station),
+                $dateRange->end,
+            ),
+        ]);
     }
 }
