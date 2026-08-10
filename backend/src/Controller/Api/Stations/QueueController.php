@@ -147,13 +147,9 @@ final class QueueController extends AbstractStationApiCrudController
         $apiResponse->is_played = $record->is_played;
         $apiResponse->autodj_custom_uri = $record->autodj_custom_uri;
 
-        $playlist = $record->playlist;
-        if ($playlist instanceof StationPlaylist) {
-            $groupLists = [];
-            foreach ($playlist->group_memberships as $membership) {
-                $groupLists[$membership->group->name] = $membership->group->name;
-            }
-            $apiResponse->group_lists = array_values($groupLists);
+        $groupPlaylist = $record->group_playlist;
+        if ($groupPlaylist instanceof StationPlaylist) {
+            $apiResponse->group_lists = [$groupPlaylist->name];
         }
 
         $apiResponse->log = $this->queueLogCache->getLog($record);

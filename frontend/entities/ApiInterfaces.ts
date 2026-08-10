@@ -1312,7 +1312,7 @@ export type ApiStationQueueDetailed = HasLinks & {
    * @example ""
    */
   autodj_custom_uri?: string | null;
-  /** Group Lists containing the source playlist. */
+  /** Group List that queued this specific item. */
   group_lists?: string[];
   /** Log entries on how the specific queue item was picked by the AutoDJ. */
   log?: any[] | null;

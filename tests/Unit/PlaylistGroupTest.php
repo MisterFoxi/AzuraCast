@@ -44,12 +44,14 @@ final class PlaylistGroupTest extends Unit
             $event = $this->calculateNextSong($fixture['station']);
 
             self::assertSame(['A1', 'B', 'C'], $this->getTitles($event->getNextSongs()));
+            $this->assertGroupOrigin($fixture['group'], $event->getNextSongs());
 
             $nextEvent = $this->calculateNextSong(
                 $fixture['station'],
                 CarbonImmutable::parse('2026-08-09 10:03:00', 'UTC'),
             );
             self::assertSame(['A2', 'B', 'C'], $this->getTitles($nextEvent->getNextSongs()));
+            $this->assertGroupOrigin($fixture['group'], $nextEvent->getNextSongs());
         } finally {
             $this->harness->cleanUp();
         }
@@ -70,6 +72,34 @@ final class PlaylistGroupTest extends Unit
             $event = $this->calculateNextSong($fixture['station']);
 
             self::assertSame(['Jingle', 'Hot', 'Music', 'Hot'], $this->getTitles($event->getNextSongs()));
+        } finally {
+            $this->harness->cleanUp();
+        }
+    }
+
+    public function testShuffleMemberDuplicateFallbackDoesNotTruncateGroupBlock(): void
+    {
+        $fixture = $this->harness->createSequentialGroup(
+            [
+                'A' => ['A'],
+                'B' => ['B'],
+            ],
+            ['A', 'B'],
+        );
+        $fixture['playlists']['A']->order = PlaylistOrders::Shuffle;
+        $fixture['playlists']['A']->avoid_duplicates = false;
+        $fixture['playlists']['B']->order = PlaylistOrders::Shuffle;
+        $fixture['playlists']['B']->avoid_duplicates = true;
+
+        try {
+            $firstEvent = $this->calculateNextSong($fixture['station']);
+            self::assertSame(['A', 'B'], $this->getTitles($firstEvent->getNextSongs()));
+
+            $secondEvent = $this->calculateNextSong(
+                $fixture['station'],
+                CarbonImmutable::parse('2026-08-09 10:03:00', 'UTC'),
+            );
+            self::assertSame(['A', 'B'], $this->getTitles($secondEvent->getNextSongs()));
         } finally {
             $this->harness->cleanUp();
         }
@@ -162,6 +192,75 @@ final class PlaylistGroupTest extends Unit
         }
     }
 
+    public function testOncePerXSongsCountsAWholeGroupAsOneProgrammedPassage(): void
+    {
+        $fixture = $this->harness->createSequentialGroup(
+            [
+                'A' => ['A'],
+                'B' => ['B'],
+            ],
+            ['A', 'B'],
+        );
+        $this->harness->addSequentialPlaylist($fixture['station'], 'Independent Root', ['Root']);
+
+        $fixture['group']->type = PlaylistTypes::OncePerXSongs;
+        $fixture['group']->play_per_songs = 5;
+
+        try {
+            $groupEvent = $this->calculateNextSong($fixture['station']);
+            self::assertSame(['A', 'B'], $this->getTitles($groupEvent->getNextSongs()));
+            $this->assertGroupOrigin($fixture['group'], $groupEvent->getNextSongs());
+
+            for ($song = 1; $song <= 5; $song++) {
+                $rootEvent = $this->calculateNextSong(
+                    $fixture['station'],
+                    CarbonImmutable::parse('2026-08-09 10:00:00', 'UTC')->addMinutes($song * 3),
+                );
+                self::assertSame(['Root'], $this->getTitles($rootEvent->getNextSongs()));
+            }
+
+            $nextGroupEvent = $this->calculateNextSong(
+                $fixture['station'],
+                CarbonImmutable::parse('2026-08-09 10:18:00', 'UTC'),
+            );
+            self::assertSame(['A', 'B'], $this->getTitles($nextGroupEvent->getNextSongs()));
+            $this->assertGroupOrigin($fixture['group'], $nextGroupEvent->getNextSongs());
+        } finally {
+            $this->harness->cleanUp();
+        }
+    }
+
+    public function testGroupOriginIsRecordedForEverySupportedRotationType(): void
+    {
+        foreach (
+            [
+                PlaylistTypes::Standard,
+                PlaylistTypes::OncePerXSongs,
+                PlaylistTypes::OncePerXMinutes,
+                PlaylistTypes::OncePerHour,
+            ] as $type
+        ) {
+            $fixture = $this->harness->createSequentialGroup(
+                [
+                    'A' => ['A'],
+                    'B' => ['B'],
+                ],
+                ['A', 'B'],
+            );
+            $fixture['group']->type = $type;
+            $fixture['group']->play_per_hour_minute = 0;
+
+            try {
+                $event = $this->calculateNextSong($fixture['station']);
+
+                self::assertSame(['A', 'B'], $this->getTitles($event->getNextSongs()));
+                $this->assertGroupOrigin($fixture['group'], $event->getNextSongs());
+            } finally {
+                $this->harness->cleanUp();
+            }
+        }
+    }
+
     private function calculateNextSong(
         Station $station,
         ?CarbonImmutable $time = null,
@@ -181,5 +280,15 @@ final class PlaylistGroupTest extends Unit
             static fn(StationQueue $queueEntry): ?string => $queueEntry->media?->title,
             $queueEntries,
         );
+    }
+
+    /**
+     * @param list<StationQueue> $queueEntries
+     */
+    private function assertGroupOrigin(StationPlaylist $group, array $queueEntries): void
+    {
+        foreach ($queueEntries as $queueEntry) {
+            self::assertSame($group, $queueEntry->group_playlist);
+        }
     }
 }

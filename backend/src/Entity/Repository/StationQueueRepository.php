@@ -44,7 +44,7 @@ final class StationQueueRepository extends AbstractStationBasedRepository
         $this->em->createQuery(
             <<<'DQL'
                 DELETE FROM App\Entity\StationQueue sq
-                WHERE sq.playlist = :playlist
+                WHERE (sq.playlist = :playlist OR sq.group_playlist = :playlist)
                 AND sq.is_played = 0
             DQL
         )->setParameter('playlist', $playlist)
@@ -98,10 +98,17 @@ final class StationQueueRepository extends AbstractStationBasedRepository
 
         $recentPlayedQuery = $this->em->createQuery(
             <<<'DQL'
-                SELECT IDENTITY(sq.playlist) AS playlist_id
+                SELECT COALESCE(
+                    IDENTITY(sq.group_playlist),
+                    IDENTITY(sq.playlist)
+                ) AS playlist_id
                 FROM App\Entity\StationQueue sq
                 WHERE sq.station = :station
-                AND (sq.playlist = :playlist OR sq.is_visible = 1)
+                AND (
+                    sq.group_playlist = :playlist
+                    OR sq.playlist = :playlist
+                    OR sq.is_visible = 1
+                )
                 ORDER BY sq.id DESC
             DQL
         )->setParameters([
@@ -328,10 +335,11 @@ final class StationQueueRepository extends AbstractStationBasedRepository
     private function getBaseQuery(Station $station): QueryBuilder
     {
         return $this->em->createQueryBuilder()
-            ->select('sq, sm, sp')
+            ->select('sq, sm, sp, gp')
             ->from(StationQueue::class, 'sq')
             ->leftJoin('sq.media', 'sm')
             ->leftJoin('sq.playlist', 'sp')
+            ->leftJoin('sq.group_playlist', 'gp')
             ->where('sq.station = :station')
             ->setParameter('station', $station);
     }

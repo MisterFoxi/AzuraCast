@@ -32,7 +32,7 @@ final class StationQueueDetailed
     public ?string $autodj_custom_uri = null;
 
     #[OA\Property(
-        description: 'Group Lists containing the source playlist.',
+        description: 'Group List that queued this specific item.',
         type: 'array',
         items: new OA\Items(type: 'string')
     )]

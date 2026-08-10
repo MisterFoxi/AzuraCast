@@ -432,15 +432,33 @@ final class QueueBuilder implements EventSubscriberInterface
                     true,
                     true,
                 );
+
+                // A group is selected as one programmed passage. If duplicate
+                // prevention rejects a member, retry that member immediately
+                // with the normal duplicate fallback instead of accepting a
+                // block that stops at the preceding member.
+                if (null === $selection && !$allowDuplicates) {
+                    $selection = $this->playSongFromPlaylist(
+                        $member->playlist,
+                        $recentSongHistory,
+                        $expectedPlayTime,
+                        true,
+                        true,
+                        true,
+                    );
+                }
+
                 if (null === $selection) {
                     break;
                 }
 
                 if (is_array($selection)) {
                     foreach ($selection as $queueEntry) {
+                        $queueEntry->group_playlist = $group;
                         $queueEntries[] = $queueEntry;
                     }
                 } else {
+                    $selection->group_playlist = $group;
                     $queueEntries[] = $selection;
                 }
 
