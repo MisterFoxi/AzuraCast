@@ -26,7 +26,7 @@ final class Scheduler
     use LoggerAwareTrait;
     use EntityManagerAwareTrait;
 
-    /** Legacy fuzzy window for once-per-hour playlists when top-of-hour protection is off. */
+    /** Late-selection window for once-per-hour playlists. */
     private const int ONCE_PER_HOUR_FUZZY_WINDOW_MINUTES = 15;
 
     public function __construct(
@@ -201,22 +201,7 @@ final class Scheduler
 
         $now = CarbonImmutable::instance($now);
 
-        if ($this->hourBoundaryPlanner->isTopOfHourProtectionEnabled($playlist->station)) {
-            return $this->shouldPlaylistPlayNowPerHourStrict($playlist, $now);
-        }
-
         return $this->shouldPlaylistPlayNowPerHourFuzzy($playlist, $now);
-    }
-
-    private function shouldPlaylistPlayNowPerHourStrict(
-        StationPlaylist $playlist,
-        CarbonImmutable $now,
-    ): bool {
-        if ($now->minute !== $playlist->play_per_hour_minute) {
-            return false;
-        }
-
-        return !$this->wasPlaylistPlayedInLastXMinutes($playlist, $now, 30);
     }
 
     private function shouldPlaylistPlayNowPerHourFuzzy(

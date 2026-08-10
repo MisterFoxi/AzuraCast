@@ -192,6 +192,32 @@ final class PlaylistGroupTest extends Unit
         }
     }
 
+    public function testOncePerHourGroupCanBeQueuedAfterItsTargetMinuteWithTopOfHourProtection(): void
+    {
+        $fixture = $this->harness->createSequentialGroup(
+            [
+                'A' => ['A'],
+                'B' => ['B'],
+            ],
+            ['A', 'B'],
+        );
+        $fixture['station']->backend_config->top_of_hour_id_enabled = true;
+        $fixture['group']->type = PlaylistTypes::OncePerHour;
+        $fixture['group']->play_per_hour_minute = 50;
+
+        try {
+            $event = $this->calculateNextSong(
+                $fixture['station'],
+                CarbonImmutable::parse('2026-08-09 10:52:00', 'UTC'),
+            );
+
+            self::assertSame(['A', 'B'], $this->getTitles($event->getNextSongs()));
+            $this->assertGroupOrigin($fixture['group'], $event->getNextSongs());
+        } finally {
+            $this->harness->cleanUp();
+        }
+    }
+
     public function testOncePerXSongsCountsAWholeGroupAsOneProgrammedPassage(): void
     {
         $fixture = $this->harness->createSequentialGroup(

@@ -132,7 +132,7 @@ class StationPlaylistTest extends Unit
         self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testTime));
     }
 
-    public function testOncePerHourPlaylistStrictWhenTopOfHourProtectionEnabled(): void
+    public function testOncePerHourPlaylistUsesFuzzyWindowWhenTopOfHourProtectionEnabled(): void
     {
         $station = $this->makeStation();
         $station->backend_config->top_of_hour_id_enabled = true;
@@ -145,10 +145,11 @@ class StationPlaylistTest extends Unit
         $utc = new DateTimeZone('UTC');
         $testDay = CarbonImmutable::create(2018, 1, 15, 0, 0, 0, $utc);
 
-        // Strict: only at :50, not within 15-minute fuzzy window.
+        // TOPH only owns :00. Other hourly playlists keep the normal late window.
         self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(12, 50)));
-        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(12, 4)));
-        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(23, 59)));
+        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(12, 52)));
+        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(12, 49)));
+        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(13, 6)));
     }
 
     public function testOncePerHourAtTopOfHourSuppressedWhenProtectionEnabled(): void

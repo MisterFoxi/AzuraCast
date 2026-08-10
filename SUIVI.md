@@ -648,3 +648,18 @@ Ferme la boucle TOPH côté **pose** de la ligne legal ID. État lu après le pa
   `HourBoundaryLegalIdResolver`), lue après le patch TOPH. Boucle TOPH complète côté pose. Nouvelle
   garde relevée : `ScheduleConflictChecker::hasEmergencyScheduleActive`. ⚠️ Logs `[TOPH DEBUG]`
   niveau info présents dans le scheduler → à retirer après validation. Aucune modif de code.
+- **2026-08-10** — Chaîne de traitement audio Liquidsoap cartographiée (lecture directe
+  `ConfigWriter.php`, aucune modif). Deux étages : (1) pré-crossfade toujours actif
+  (`apply_amplify` sur ReplayGain → `replaygain()` si `enable_replaygain_metadata` → crossfade
+  simple/smart via `CrossfadeModes`) ; (2) post-processing `writePostProcessingSection` avec 4
+  méthodes exposées par `AudioProcessingMethods` : **None** ; **Liquidsoap** (`normalize` target=0,
+  gain_min=-16 + `compress.exponential mu=1.0`) ; **MasterMe** (`ladspa.master_me` + presets +
+  `master_me_loudness_target`) ; **StereoTool** (pipe binaire `stereo_tool` ou opérateur natif
+  `stereotool()`).
+- **2026-08-10** — Décision « faut-il Stereo Tool pour le stream ? » → NON requis pour un
+  webstream. MasterMe (LADSPA, gratuit, déjà embarqué dans la base) couvre le rendu « on-air »
+  (gate/AGC → multibande → limiteur + cible LUFS) — l'essentiel de ce pour quoi on installe Stereo
+  Tool, sans licence ni binaire tiers. Stereo Tool réservé au widening stéréo poussé, déclipping,
+  ou FM/MPX (hors périmètre webstream). Ordre de préférence retenu : ReplayGain+crossfade seuls <
+  MasterMe < Stereo Tool. ⚠️ À vérifier avant toute bascule MasterMe : présence du plugin LADSPA
+  `master_me` dans l'image Liquidsoap d'azuradev (non confirmée). Aucune modif de code.
