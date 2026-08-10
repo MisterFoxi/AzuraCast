@@ -40,18 +40,19 @@
         </div>
 
         <section
-            v-show="form.source === 'songs'"
+            v-show="form.source === 'songs' || form.source === 'group'"
             class="card mb-3"
             role="region"
         >
             <div class="card-header text-bg-primary">
                 <h2 class="card-title">
-                    {{ $gettext('Song-Based Playlist') }}
+                    {{ form.source === 'group' ? $gettext('Playlist Group Rotation') : $gettext('Song-Based Playlist') }}
                 </h2>
             </div>
             <div class="card-body">
                 <div class="row g-3 mb-3">
                     <form-group-checkbox
+                        v-if="form.source === 'songs'"
                         id="form_edit_avoid_duplicates"
                         class="col-md-6"
                         :field="r$.avoid_duplicates"
@@ -60,6 +61,7 @@
                     />
 
                     <form-group-checkbox
+                        v-if="form.source === 'songs'"
                         id="form_edit_include_in_on_demand"
                         class="col-md-6"
                         :field="r$.include_in_on_demand"
@@ -68,6 +70,7 @@
                     />
 
                     <form-group-checkbox
+                        v-if="form.source === 'songs'"
                         id="form_edit_include_in_requests"
                         class="col-md-6"
                         :field="r$.include_in_requests"
@@ -76,6 +79,7 @@
                     />
 
                     <form-group-checkbox
+                        v-if="form.source === 'songs'"
                         id="form_edit_is_jingle"
                         class="col-md-6"
                         :field="r$.is_jingle"
@@ -90,7 +94,7 @@
                         id="edit_form_type"
                         class="col-md-6"
                         :field="r$.type"
-                        :options="typeOptions"
+                        :options="availableTypeOptions"
                         stacked
                         radio
                         :label="$gettext('Playlist Type')"
@@ -106,6 +110,7 @@
                     </form-group-multi-check>
 
                     <form-group-multi-check
+                        v-if="form.source === 'songs'"
                         id="edit_form_order"
                         class="col-md-6"
                         :field="r$.order"
@@ -116,6 +121,7 @@
                     />
 
                     <form-group-field
+                        v-if="form.source === 'songs'"
                         id="form_edit_rotation_goal_days"
                         class="col-md-6"
                         :field="r$.rotation_goal_days"
@@ -125,6 +131,7 @@
                     />
 
                     <form-group-field
+                        v-if="form.source === 'songs'"
                         id="form_edit_aging_threshold_days"
                         class="col-md-6"
                         :field="r$.aging_threshold_days"
@@ -134,6 +141,7 @@
                     />
 
                     <form-group-field
+                        v-if="form.source === 'songs'"
                         id="form_edit_crossfade_profile"
                         class="col-md-6"
                         :field="r$.crossfade_profile"
@@ -271,8 +279,9 @@ import {useTranslate} from "~/vendor/gettext";
 import Tab from "~/components/Common/Tab.vue";
 import {storeToRefs} from "pinia";
 import {useFormTabClass} from "~/functions/useFormTabClass.ts";
-import {computed} from "vue";
+import {computed, watch} from "vue";
 import {useStationsPlaylistsForm} from "~/components/Stations/Playlists/Form/form.ts";
+import {PlaylistSources, PlaylistTypes} from "~/entities/ApiInterfaces.ts";
 
 const {r$, form} = storeToRefs(useStationsPlaylistsForm());
 
@@ -300,31 +309,46 @@ const sourceOptions = [
 
 const typeOptions = [
     {
-        value: 'default',
+        value: PlaylistTypes.Standard,
         text: $gettext('General Rotation'),
         description: $gettext('Standard playlist, shuffles with other standard playlists based on weight.')
     },
     {
-        value: 'once_per_x_songs',
+        value: PlaylistTypes.OncePerXSongs,
         text: $gettext('Once per x Songs'),
         description: $gettext('Play once every $x songs.')
     },
     {
-        value: 'once_per_x_minutes',
+        value: PlaylistTypes.OncePerXMinutes,
         text: $gettext('Once per x Minutes'),
         description: $gettext('Play once every $x minutes.')
     },
     {
-        value: 'once_per_hour',
+        value: PlaylistTypes.OncePerHour,
         text: $gettext('Once per Hour'),
         description: $gettext('Play once per hour at the specified minute.')
     },
     {
-        value: 'custom',
+        value: PlaylistTypes.Advanced,
         text: $gettext('Advanced'),
         description: $gettext('Manually define how this playlist is used in Liquidsoap configuration.')
     }
 ];
+
+const availableTypeOptions = computed(() => {
+    return form.value.source === PlaylistSources.Group
+        ? typeOptions.filter((option) => option.value !== PlaylistTypes.Advanced)
+        : typeOptions;
+});
+
+watch(
+    () => form.value.source,
+    (source) => {
+        if (source === PlaylistSources.Group && form.value.type === PlaylistTypes.Advanced) {
+            form.value.type = PlaylistTypes.Standard;
+        }
+    }
+);
 
 const orderOptions = [
     {

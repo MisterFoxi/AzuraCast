@@ -111,9 +111,6 @@
                                 <template v-else-if="item.source === 'remote_url'">
                                     {{ $gettext('Remote URL') }}
                                 </template>
-                                <template v-else-if="item.source === 'group'">
-                                    {{ $gettext('Sequential Group') }}
-                                </template>
                                 <template v-else-if="item.type === 'default'">
                                     {{ $gettext('General Rotation') }}<br>
                                     {{ $gettext('Weight') }}: {{ item.weight }}

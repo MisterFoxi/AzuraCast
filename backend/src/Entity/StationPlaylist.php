@@ -91,7 +91,7 @@ final class StationPlaylist implements
         set {
             $this->source = $value;
 
-            if (in_array($value, [PlaylistSources::RemoteUrl, PlaylistSources::Group], true)) {
+            if (PlaylistSources::RemoteUrl === $value) {
                 $this->type = PlaylistTypes::Standard;
             }
 

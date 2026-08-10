@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Unit;
 
+use App\Entity\Enums\PlaylistSources;
 use App\Entity\Enums\PlaylistTypes;
 use App\Entity\Station;
 use App\Entity\StationPlaylist;
@@ -20,6 +21,16 @@ class StationPlaylistTest extends Unit
     protected UnitTester $tester;
 
     protected Scheduler $scheduler;
+
+    public function testGroupSourcePreservesAutoDjRotationType(): void
+    {
+        $playlist = new StationPlaylist(new Station());
+        $playlist->type = PlaylistTypes::OncePerXSongs;
+
+        $playlist->source = PlaylistSources::Group;
+
+        self::assertSame(PlaylistTypes::OncePerXSongs, $playlist->type);
+    }
 
     protected function _inject(Module $testsModule): void
     {
