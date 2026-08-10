@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Controller\Api\Stations\Playlists;
 
 use App\Controller\SingleActionInterface;
+use App\Entity\Enums\PlaylistOrders;
 use App\Entity\Enums\PlaylistSources;
 use App\Entity\Repository\StationPlaylistGroupMemberRepository;
 use App\Entity\Repository\StationPlaylistRepository;
@@ -65,6 +66,12 @@ final readonly class GetGroupMembersAction implements SingleActionInterface
                 'playlist_id' => $member->playlist->id,
                 'name' => $member->playlist->name,
                 'position' => $member->position,
+                'source' => $member->playlist->source->value,
+                'order' => $member->playlist->order->value,
+                'consecutive_plays' => $member->consecutive_plays,
+                'play_full_cycle' => $member->play_full_cycle,
+                'supports_full_cycle' => PlaylistSources::Songs === $member->playlist->source
+                    && PlaylistOrders::Random !== $member->playlist->order,
             ],
             $this->memberRepo->getMembers($group)
         );

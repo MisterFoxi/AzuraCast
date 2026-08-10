@@ -66,7 +66,12 @@ final class AutoDjTestHarness
     /**
      * @param array<string, non-empty-list<string>> $playlists
      * @param non-empty-list<string> $memberOrder
-     * @return array{station: Station, group: StationPlaylist, playlists: array<string, StationPlaylist>}
+     * @return array{
+     *     station: Station,
+     *     group: StationPlaylist,
+     *     playlists: array<string, StationPlaylist>,
+     *     members: list<StationPlaylistGroupMember>
+     * }
      */
     public function createSequentialGroup(array $playlists, array $memberOrder): array
     {
@@ -114,6 +119,10 @@ final class AutoDjTestHarness
             'station' => $station,
             'group' => $group,
             'playlists' => $createdPlaylists,
+            'members' => array_values(array_filter(
+                $this->groupMembers,
+                static fn(StationPlaylistGroupMember $member): bool => $member->group === $group,
+            )),
         ];
     }
 

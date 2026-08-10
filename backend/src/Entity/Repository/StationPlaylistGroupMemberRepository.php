@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Entity\Repository;
 
 use App\Doctrine\Repository;
+use App\Entity\Enums\PlaylistOrders;
 use App\Entity\Station;
 use App\Entity\StationPlaylist;
 use App\Entity\StationPlaylistGroupMember;
@@ -29,16 +30,31 @@ final class StationPlaylistGroupMemberRepository extends Repository
 
     /**
      * @param list<StationPlaylist> $playlists
+     * @param list<array{consecutive_plays: int, play_full_cycle: bool}> $playbackSettings
+     * @param array<int, PlaylistOrders> $playlistOrders
      * @return list<StationPlaylistGroupMember>
      */
-    public function setMembers(StationPlaylist $group, array $playlists): array
+    public function setMembers(
+        StationPlaylist $group,
+        array $playlists,
+        array $playbackSettings = [],
+        array $playlistOrders = [],
+    ): array
     {
         if (count($playlists) > self::MAX_MEMBERS) {
             throw new \InvalidArgumentException('A playlist group cannot contain more than 32768 members.');
         }
 
         return $this->em->wrapInTransaction(
-            function () use ($group, $playlists): array {
+            function () use ($group, $playlists, $playbackSettings, $playlistOrders): array {
+                foreach ($playlists as $playlist) {
+                    $order = $playlistOrders[$playlist->id] ?? null;
+                    if ($order instanceof PlaylistOrders) {
+                        $playlist->order = $order;
+                        $this->em->persist($playlist);
+                    }
+                }
+
                 $existingMembers = $this->getMembers($group);
                 $membersByPlaylistId = [];
 
@@ -65,6 +81,12 @@ final class StationPlaylistGroupMemberRepository extends Repository
                         $this->em->persist($member);
                     } else {
                         $member->position = $position;
+                    }
+
+                    $settings = $playbackSettings[$position] ?? null;
+                    if (null !== $settings) {
+                        $member->consecutive_plays = $settings['consecutive_plays'];
+                        $member->play_full_cycle = $settings['play_full_cycle'];
                     }
 
                     $newMembers[] = $member;

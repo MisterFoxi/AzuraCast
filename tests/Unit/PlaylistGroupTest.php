@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Unit;
 
+use App\Entity\Enums\PlaylistOrders;
 use App\Entity\Enums\PlaylistTypes;
 use App\Entity\Station;
 use App\Entity\StationPlaylist;
@@ -69,6 +70,64 @@ final class PlaylistGroupTest extends Unit
             $event = $this->calculateNextSong($fixture['station']);
 
             self::assertSame(['Jingle', 'Hot', 'Music', 'Hot'], $this->getTitles($event->getNextSongs()));
+        } finally {
+            $this->harness->cleanUp();
+        }
+    }
+
+    public function testConsecutivePlaysAreConfiguredPerOccurrence(): void
+    {
+        $fixture = $this->harness->createSequentialGroup(
+            [
+                'A' => ['A1', 'A2', 'A3'],
+                'B' => ['B'],
+            ],
+            ['A', 'B', 'A'],
+        );
+        $fixture['members'][0]->consecutive_plays = 2;
+
+        try {
+            $event = $this->calculateNextSong($fixture['station']);
+
+            self::assertSame(['A1', 'A2', 'B', 'A3'], $this->getTitles($event->getNextSongs()));
+        } finally {
+            $this->harness->cleanUp();
+        }
+    }
+
+    public function testFullCyclePlaysTheRestOfTheCurrentSequentialCycle(): void
+    {
+        $fixture = $this->harness->createSequentialGroup(
+            [
+                'A' => ['A1', 'A2', 'A3'],
+                'B' => ['B'],
+            ],
+            ['A', 'B', 'A'],
+        );
+        $fixture['members'][2]->play_full_cycle = true;
+
+        try {
+            $event = $this->calculateNextSong($fixture['station']);
+
+            self::assertSame(['A1', 'B', 'A2', 'A3'], $this->getTitles($event->getNextSongs()));
+        } finally {
+            $this->harness->cleanUp();
+        }
+    }
+
+    public function testFullCyclePlaysACompleteShuffleCycle(): void
+    {
+        $fixture = $this->harness->createSequentialGroup(
+            ['A' => ['A1', 'A2', 'A3']],
+            ['A'],
+        );
+        $fixture['playlists']['A']->order = PlaylistOrders::Shuffle;
+        $fixture['members'][0]->play_full_cycle = true;
+
+        try {
+            $event = $this->calculateNextSong($fixture['station']);
+
+            self::assertSame(['A1', 'A2', 'A3'], $this->getTitles($event->getNextSongs()));
         } finally {
             $this->harness->cleanUp();
         }

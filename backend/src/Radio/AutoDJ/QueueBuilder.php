@@ -19,6 +19,7 @@ use App\Entity\Repository\SongHistoryRepository;
 use App\Entity\Song;
 use App\Entity\StationMedia;
 use App\Entity\StationPlaylist;
+use App\Entity\StationPlaylistGroupMember;
 use App\Entity\StationPlaylistMedia;
 use App\Entity\StationQueue;
 use App\Event\Radio\BuildQueue;
@@ -281,6 +282,7 @@ final class QueueBuilder implements EventSubscriberInterface
      * @param DateTimeImmutable $expectedPlayTime
      * @param bool $allowDuplicates Whether to return a media ID even if duplicates can't be prevented.
      * @param bool $singleTrackOnly Whether an array-producing playlist should return only its first track.
+     * @param bool $deferQueuePersistence Whether StationQueue rows should be persisted by the caller.
      * @return StationQueue|StationQueue[]|null
      */
     private function playSongFromPlaylist(
@@ -289,6 +291,7 @@ final class QueueBuilder implements EventSubscriberInterface
         DateTimeImmutable $expectedPlayTime,
         bool $allowDuplicates = false,
         bool $singleTrackOnly = false,
+        bool $deferQueuePersistence = false,
     ): StationQueue|array|null {
         if (PlaylistSources::Group === $playlist->source) {
             return $this->playSongFromGroup(
@@ -300,7 +303,11 @@ final class QueueBuilder implements EventSubscriberInterface
         }
 
         if (PlaylistSources::RemoteUrl === $playlist->source) {
-            return $this->getSongFromRemotePlaylist($playlist, $expectedPlayTime);
+            return $this->getSongFromRemotePlaylist(
+                $playlist,
+                $expectedPlayTime,
+                $deferQueuePersistence,
+            );
         }
 
         if ($playlist->backendMerge() && !$singleTrackOnly) {
@@ -308,8 +315,17 @@ final class QueueBuilder implements EventSubscriberInterface
 
             $queueEntries = array_filter(
                 array_map(
-                    function (StationPlaylistQueue $validTrack) use ($playlist, $expectedPlayTime) {
-                        return $this->makeQueueFromApi($validTrack, $playlist, $expectedPlayTime);
+                    function (StationPlaylistQueue $validTrack) use (
+                        $playlist,
+                        $expectedPlayTime,
+                        $deferQueuePersistence,
+                    ) {
+                        return $this->makeQueueFromApi(
+                            $validTrack,
+                            $playlist,
+                            $expectedPlayTime,
+                            $deferQueuePersistence,
+                        );
                     },
                     $this->spmRepo->getQueue($playlist)
                 )
@@ -355,7 +371,12 @@ final class QueueBuilder implements EventSubscriberInterface
                     return null;
                 }
 
-                $queueEntry = $this->makeQueueFromApi($validTrack, $playlist, $expectedPlayTime);
+                $queueEntry = $this->makeQueueFromApi(
+                    $validTrack,
+                    $playlist,
+                    $expectedPlayTime,
+                    $deferQueuePersistence,
+                );
 
                 if (null !== $queueEntry) {
                     $playlist->played_at = $expectedPlayTime;
@@ -397,23 +418,37 @@ final class QueueBuilder implements EventSubscriberInterface
                 continue;
             }
 
-            $selection = $this->playSongFromPlaylist(
-                $member->playlist,
-                $recentSongHistory,
-                $expectedPlayTime,
-                $allowDuplicates,
-                true,
-            );
-            if (null === $selection) {
+            $selectionCount = $this->getGroupMemberSelectionCount($member);
+            if (0 === $selectionCount) {
                 continue;
             }
 
-            if (is_array($selection)) {
-                foreach ($selection as $queueEntry) {
-                    $queueEntries[] = $queueEntry;
+            for ($play = 0; $play < $selectionCount; $play++) {
+                $selection = $this->playSongFromPlaylist(
+                    $member->playlist,
+                    $recentSongHistory,
+                    $expectedPlayTime,
+                    $allowDuplicates,
+                    true,
+                    true,
+                );
+                if (null === $selection) {
+                    break;
                 }
-            } else {
-                $queueEntries[] = $selection;
+
+                if (is_array($selection)) {
+                    foreach ($selection as $queueEntry) {
+                        $queueEntries[] = $queueEntry;
+                    }
+                } else {
+                    $queueEntries[] = $selection;
+                }
+
+                // A group builds several selections in one pass. Persist the
+                // playlist cursor before selecting the next track, while the
+                // StationQueue rows themselves remain deferred until the block
+                // is complete.
+                $this->em->flush();
             }
         }
 
@@ -425,13 +460,50 @@ final class QueueBuilder implements EventSubscriberInterface
         $group->played_at = $expectedPlayTime;
         $this->em->persist($group);
 
+        foreach ($queueEntries as $queueEntry) {
+            $this->em->persist($queueEntry);
+        }
+
         return $queueEntries;
+    }
+
+    private function getGroupMemberSelectionCount(StationPlaylistGroupMember $member): int
+    {
+        if (!$member->play_full_cycle) {
+            return max(1, $member->consecutive_plays);
+        }
+
+        $playlist = $member->playlist;
+        if (
+            PlaylistSources::Songs !== $playlist->source
+            || PlaylistOrders::Random === $playlist->order
+        ) {
+            $this->logger->warning(
+                'Full-cycle playback is not supported for this playlist member.',
+                [
+                    'member_id' => $member->id,
+                    'playlist_id' => $playlist->id,
+                    'playlist_source' => $playlist->source->value,
+                    'playlist_order' => $playlist->order->value,
+                ]
+            );
+            return 0;
+        }
+
+        $cycleSize = count($this->spmRepo->getQueue($playlist));
+        if (0 === $cycleSize) {
+            $this->spmRepo->resetQueue($playlist);
+            $cycleSize = count($this->spmRepo->getQueue($playlist));
+        }
+
+        return $cycleSize;
     }
 
     private function makeQueueFromApi(
         StationPlaylistQueue $validTrack,
         StationPlaylist $playlist,
         DateTimeImmutable $expectedPlayTime,
+        bool $deferQueuePersistence = false,
     ): ?StationQueue {
         $mediaToPlay = $this->em->find(StationMedia::class, $validTrack->media_id);
         if (!$mediaToPlay instanceof StationMedia) {
@@ -482,14 +554,17 @@ final class QueueBuilder implements EventSubscriberInterface
             $stationQueueEntry->duration = (float)$maxPlaySeconds;
         }
 
-        $this->em->persist($stationQueueEntry);
+        if (!$deferQueuePersistence) {
+            $this->em->persist($stationQueueEntry);
+        }
 
         return $stationQueueEntry;
     }
 
     private function getSongFromRemotePlaylist(
         StationPlaylist $playlist,
-        DateTimeImmutable $expectedPlayTime
+        DateTimeImmutable $expectedPlayTime,
+        bool $deferQueuePersistence = false,
     ): ?StationQueue {
         $mediaToPlay = $this->getMediaFromRemoteUrl($playlist);
 
@@ -508,7 +583,9 @@ final class QueueBuilder implements EventSubscriberInterface
             $stationQueueEntry->autodj_custom_uri = $mediaUri;
             $stationQueueEntry->duration = $mediaDuration;
 
-            $this->em->persist($stationQueueEntry);
+            if (!$deferQueuePersistence) {
+                $this->em->persist($stationQueueEntry);
+            }
 
             return $stationQueueEntry;
         }

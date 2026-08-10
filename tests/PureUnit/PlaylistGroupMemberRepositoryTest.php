@@ -57,7 +57,14 @@ final class PlaylistGroupMemberRepositoryTest extends TestCase
         $repository = new StationPlaylistGroupMemberRepository();
         $repository->setEntityManager($em);
 
-        $members = $repository->setMembers($group, [$playlistA, $playlistA]);
+        $members = $repository->setMembers(
+            $group,
+            [$playlistA, $playlistA],
+            [
+                ['consecutive_plays' => 2, 'play_full_cycle' => false],
+                ['consecutive_plays' => 1, 'play_full_cycle' => true],
+            ],
+        );
 
         self::assertSame([$firstA, $secondA], $members);
         self::assertSame([100, 102], array_map(
@@ -66,6 +73,14 @@ final class PlaylistGroupMemberRepositoryTest extends TestCase
         ));
         self::assertSame([0, 1], array_map(
             static fn(StationPlaylistGroupMember $member): int => $member->position,
+            $members
+        ));
+        self::assertSame([2, 1], array_map(
+            static fn(StationPlaylistGroupMember $member): int => $member->consecutive_plays,
+            $members
+        ));
+        self::assertSame([false, true], array_map(
+            static fn(StationPlaylistGroupMember $member): bool => $member->play_full_cycle,
             $members
         ));
         self::assertSame(0, $group->group_next_position);

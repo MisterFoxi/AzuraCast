@@ -30,6 +30,12 @@ final class StationPlaylistGroupMember implements Interfaces\IdentifiableEntityI
     #[ORM\Column(type: 'smallint', options: ['unsigned' => true])]
     public int $position;
 
+    #[ORM\Column(type: 'smallint', options: ['unsigned' => true, 'default' => 1])]
+    public int $consecutive_plays = 1;
+
+    #[ORM\Column(options: ['default' => false])]
+    public bool $play_full_cycle = false;
+
     public function __construct(StationPlaylist $group, StationPlaylist $playlist, int $position)
     {
         $this->group = $group;

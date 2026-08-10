@@ -10,6 +10,7 @@
     >
         <p class="text-muted">
             {{ $gettext('Add playlists in the order they should be selected by this group. The same playlist can be added more than once.') }}
+            {{ $gettext('Each occurrence can play a fixed number of consecutive tracks or finish its current Sequential or Shuffle cycle.') }}
         </p>
 
         <div class="row g-2 align-items-end mb-3">
@@ -52,6 +53,15 @@
                         <th>
                             {{ $gettext('Playlist') }}
                         </th>
+                        <th class="shrink text-nowrap">
+                            {{ $gettext('Playback Order') }}
+                        </th>
+                        <th class="shrink text-nowrap">
+                            {{ $gettext('Consecutive Tracks') }}
+                        </th>
+                        <th class="shrink text-nowrap">
+                            {{ $gettext('Full Cycle') }}
+                        </th>
                         <th class="shrink">
                             {{ $gettext('Actions') }}
                         </th>
@@ -64,6 +74,50 @@
                     >
                         <td>{{ index + 1 }}</td>
                         <td>{{ member.name }}</td>
+                        <td>
+                            <select
+                                v-if="member.source === PlaylistSources.Songs"
+                                :id="`group_member_order_${member.key}`"
+                                v-model="member.order"
+                                class="form-select form-select-sm"
+                                :aria-label="$gettext('Playback Order')"
+                                @change="changeMemberOrder(member)"
+                            >
+                                <option
+                                    v-for="option in orderOptions"
+                                    :key="option.value"
+                                    :value="option.value"
+                                >
+                                    {{ option.text }}
+                                </option>
+                            </select>
+                            <span v-else class="text-muted">
+                                {{ $gettext('Not applicable') }}
+                            </span>
+                        </td>
+                        <td>
+                            <input
+                                :id="`group_member_consecutive_${member.key}`"
+                                v-model.number="member.consecutive_plays"
+                                class="form-control form-control-sm"
+                                type="number"
+                                min="1"
+                                max="65535"
+                                :disabled="member.play_full_cycle"
+                                :aria-label="$gettext('Consecutive Tracks')"
+                            >
+                        </td>
+                        <td class="text-center">
+                            <input
+                                :id="`group_member_full_cycle_${member.key}`"
+                                v-model="member.play_full_cycle"
+                                class="form-check-input"
+                                type="checkbox"
+                                :disabled="!member.supports_full_cycle"
+                                :title="fullCycleTitle(member)"
+                                :aria-label="$gettext('Play Full Cycle')"
+                            >
+                        </td>
                         <td>
                             <div class="btn-group btn-group-sm">
                                 <button
@@ -109,7 +163,7 @@ import IconBiChevronUp from "~icons/bi/chevron-up";
 import IconBiTrash from "~icons/bi/trash";
 import ModalForm from "~/components/Common/ModalForm.vue";
 import FormGroupSelect from "~/components/Form/FormGroupSelect.vue";
-import {PlaylistSources} from "~/entities/ApiInterfaces.ts";
+import {PlaylistOrders, PlaylistSources} from "~/entities/ApiInterfaces.ts";
 import type {ApiError, StationPlaylist} from "~/entities/ApiInterfaces.ts";
 import {useAxios} from "~/vendor/axios";
 import {useNotify} from "~/components/Common/Toasts/useNotify.ts";
@@ -119,14 +173,19 @@ type GroupMemberResponse = {
     id: number,
     playlist_id: number,
     name: string,
-    position: number
+    position: number,
+    source: PlaylistSources,
+    order: PlaylistOrders,
+    consecutive_plays: number,
+    play_full_cycle: boolean,
+    supports_full_cycle: boolean
 }
 
 type GroupMember = GroupMemberResponse & {
     key: string
 }
 
-type PlaylistListItem = Required<Pick<StationPlaylist, 'id' | 'name' | 'source'>>
+type PlaylistListItem = Required<Pick<StationPlaylist, 'id' | 'name' | 'source' | 'order'>>
 
 const props = defineProps<{
     playlistsUrl: string
@@ -160,6 +219,18 @@ const playlistOptions = computed(() => [
     }))
 ]);
 
+const orderOptions = [
+    {value: PlaylistOrders.Sequential, text: $gettext('Sequential')},
+    {value: PlaylistOrders.Shuffle, text: $gettext('Shuffle')},
+    {value: PlaylistOrders.Random, text: $gettext('Random')}
+];
+
+const normalizeOrder = (order: PlaylistOrders): PlaylistOrders => {
+    return order === PlaylistOrders.SmartShuffle
+        ? PlaylistOrders.Shuffle
+        : order;
+};
+
 const clear = () => {
     loading.value = false;
     error.value = null;
@@ -184,10 +255,16 @@ const open = async (newMembersUrl: string) => {
             })
         ]);
 
-        members.value = membersResponse.data.map((member) => ({
-            ...member,
-            key: `existing-${member.id}`
-        }));
+        members.value = membersResponse.data.map((member) => {
+            const order = normalizeOrder(member.order);
+            return {
+                ...member,
+                order,
+                supports_full_cycle: member.source === PlaylistSources.Songs
+                    && order !== PlaylistOrders.Random,
+                key: `existing-${member.id}`
+            };
+        });
         playlists.value = (playlistsResponse.data.rows ?? []).filter(
             (playlist) => playlist.source !== PlaylistSources.Group
         );
@@ -211,12 +288,23 @@ const addMember = () => {
         return;
     }
 
+    const existingMember = members.value.find(
+        (member) => member.playlist_id === playlist.id
+    );
+    const order = existingMember?.order ?? normalizeOrder(playlist.order);
+
     nextKey++;
     members.value.push({
         id: 0,
         playlist_id: playlist.id,
         name: playlist.name,
         position: members.value.length,
+        source: playlist.source,
+        order,
+        consecutive_plays: 1,
+        play_full_cycle: false,
+        supports_full_cycle: playlist.source === PlaylistSources.Songs
+            && order !== PlaylistOrders.Random,
         key: `new-${nextKey}`
     });
 };
@@ -243,6 +331,31 @@ const removeMember = (index: number) => {
     members.value.splice(index, 1);
 };
 
+const changeMemberOrder = (changedMember: GroupMember) => {
+    const order = normalizeOrder(changedMember.order);
+
+    members.value.forEach((member) => {
+        if (member.playlist_id !== changedMember.playlist_id) {
+            return;
+        }
+
+        member.order = order;
+        member.supports_full_cycle = member.source === PlaylistSources.Songs
+            && order !== PlaylistOrders.Random;
+        if (!member.supports_full_cycle) {
+            member.play_full_cycle = false;
+        }
+    });
+};
+
+const fullCycleTitle = (member: GroupMember): string => {
+    if (member.supports_full_cycle) {
+        return $gettext('Play one complete playlist cycle before continuing to the next member.');
+    }
+
+    return $gettext('Full-cycle playback is only available for Sequential or Shuffle song playlists.');
+};
+
 const save = async () => {
     if (!membersUrl.value) {
         return;
@@ -253,7 +366,14 @@ const save = async () => {
 
     try {
         const {data} = await axios.put<GroupMemberResponse[]>(membersUrl.value, {
-            playlist_ids: members.value.map((member) => member.playlist_id)
+            members: members.value.map((member) => ({
+                playlist_id: member.playlist_id,
+                order: member.source === PlaylistSources.Songs
+                    ? normalizeOrder(member.order)
+                    : undefined,
+                consecutive_plays: member.consecutive_plays,
+                play_full_cycle: member.play_full_cycle
+            }))
         });
 
         members.value = data.map((member) => ({

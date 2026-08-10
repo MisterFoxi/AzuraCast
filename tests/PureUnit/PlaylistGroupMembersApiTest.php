@@ -7,6 +7,7 @@ namespace PureUnit;
 use App\Controller\Api\Stations\Playlists\GetGroupMembersAction;
 use App\Controller\Api\Stations\Playlists\PutGroupMembersAction;
 use App\Doctrine\ReloadableEntityManagerInterface;
+use App\Entity\Enums\PlaylistOrders;
 use App\Entity\Enums\PlaylistSources;
 use App\Entity\Repository\StationPlaylistGroupMemberRepository;
 use App\Entity\Repository\StationPlaylistRepository;
@@ -56,9 +57,39 @@ final class PlaylistGroupMembersApiTest extends TestCase
 
         self::assertSame(
             [
-                ['id' => 100, 'playlist_id' => 20, 'name' => 'A', 'position' => 0],
-                ['id' => 101, 'playlist_id' => 30, 'name' => 'B', 'position' => 1],
-                ['id' => 102, 'playlist_id' => 20, 'name' => 'A', 'position' => 2],
+                [
+                    'id' => 100,
+                    'playlist_id' => 20,
+                    'name' => 'A',
+                    'position' => 0,
+                    'source' => 'songs',
+                    'order' => 'shuffle',
+                    'consecutive_plays' => 1,
+                    'play_full_cycle' => false,
+                    'supports_full_cycle' => true,
+                ],
+                [
+                    'id' => 101,
+                    'playlist_id' => 30,
+                    'name' => 'B',
+                    'position' => 1,
+                    'source' => 'songs',
+                    'order' => 'shuffle',
+                    'consecutive_plays' => 1,
+                    'play_full_cycle' => false,
+                    'supports_full_cycle' => true,
+                ],
+                [
+                    'id' => 102,
+                    'playlist_id' => 20,
+                    'name' => 'A',
+                    'position' => 2,
+                    'source' => 'songs',
+                    'order' => 'shuffle',
+                    'consecutive_plays' => 1,
+                    'play_full_cycle' => false,
+                    'supports_full_cycle' => true,
+                ],
             ],
             json_decode((string)$result->getBody(), true, flags: JSON_THROW_ON_ERROR)
         );
@@ -80,7 +111,7 @@ final class PlaylistGroupMembersApiTest extends TestCase
         );
     }
 
-    public function testPutAcceptsRepeatedPlaylistIdsAndReturnsNewOrder(): void
+    public function testPutAcceptsPerOccurrencePlaybackSettingsAndReturnsNewOrder(): void
     {
         $station = new Station();
         $group = $this->makePlaylist($station, 10, 'Group', PlaylistSources::Group);
@@ -103,20 +134,73 @@ final class PlaylistGroupMembersApiTest extends TestCase
 
         $action = new PutGroupMembersAction($playlistRepo, $memberRepo);
         $result = $action(
-            $this->makeRequest($station, ['playlist_ids' => [20, 30, 20]]),
+            $this->makeRequest($station, [
+                'members' => [
+                    [
+                        'playlist_id' => 20,
+                        'order' => 'sequential',
+                        'consecutive_plays' => 2,
+                        'play_full_cycle' => false,
+                    ],
+                    [
+                        'playlist_id' => 30,
+                        'order' => 'shuffle',
+                        'consecutive_plays' => 1,
+                        'play_full_cycle' => true,
+                    ],
+                    [
+                        'playlist_id' => 20,
+                        'order' => 'sequential',
+                        'consecutive_plays' => 3,
+                        'play_full_cycle' => false,
+                    ],
+                ],
+            ]),
             $this->makeResponse(),
             ['id' => '10']
         );
 
         self::assertSame(
             [
-                ['id' => 100, 'playlist_id' => 20, 'name' => 'A', 'position' => 0],
-                ['id' => 101, 'playlist_id' => 30, 'name' => 'B', 'position' => 1],
-                ['id' => 1000, 'playlist_id' => 20, 'name' => 'A', 'position' => 2],
+                [
+                    'id' => 100,
+                    'playlist_id' => 20,
+                    'name' => 'A',
+                    'position' => 0,
+                    'source' => 'songs',
+                    'order' => 'sequential',
+                    'consecutive_plays' => 2,
+                    'play_full_cycle' => false,
+                    'supports_full_cycle' => true,
+                ],
+                [
+                    'id' => 101,
+                    'playlist_id' => 30,
+                    'name' => 'B',
+                    'position' => 1,
+                    'source' => 'songs',
+                    'order' => 'shuffle',
+                    'consecutive_plays' => 1,
+                    'play_full_cycle' => true,
+                    'supports_full_cycle' => true,
+                ],
+                [
+                    'id' => 1000,
+                    'playlist_id' => 20,
+                    'name' => 'A',
+                    'position' => 2,
+                    'source' => 'songs',
+                    'order' => 'sequential',
+                    'consecutive_plays' => 3,
+                    'play_full_cycle' => false,
+                    'supports_full_cycle' => true,
+                ],
             ],
             json_decode((string)$result->getBody(), true, flags: JSON_THROW_ON_ERROR)
         );
         self::assertSame(0, $group->group_next_position);
+        self::assertSame(PlaylistOrders::Sequential, $playlistA->order);
+        self::assertSame(PlaylistOrders::Shuffle, $playlistB->order);
     }
 
     public function testPutRejectsInvalidPlaylistIdWithoutStartingTransaction(): void
@@ -139,7 +223,7 @@ final class PlaylistGroupMembersApiTest extends TestCase
         );
     }
 
-    public function testPutRequiresPlaylistIds(): void
+    public function testPutRequiresMembers(): void
     {
         $station = new Station();
         $group = $this->makePlaylist($station, 10, 'Group', PlaylistSources::Group);
@@ -147,7 +231,7 @@ final class PlaylistGroupMembersApiTest extends TestCase
 
         $action = new PutGroupMembersAction($playlistRepo, $memberRepo);
 
-        $this->expectValidation('playlist_ids is required.');
+        $this->expectValidation('members is required.');
         $action(
             $this->makeRequest($station, []),
             $this->makeResponse(),
@@ -223,6 +307,70 @@ final class PlaylistGroupMembersApiTest extends TestCase
         $this->expectValidation('Nested playlist groups are not supported.');
         $action(
             $this->makeRequest($station, ['playlist_ids' => [20]]),
+            $this->makeResponse(),
+            ['id' => '10']
+        );
+    }
+
+    public function testPutRejectsFullCycleForRandomPlaylist(): void
+    {
+        $station = new Station();
+        $group = $this->makePlaylist($station, 10, 'Group', PlaylistSources::Group);
+        $randomPlaylist = $this->makePlaylist($station, 20, 'Random');
+        [$playlistRepo, $memberRepo] = $this->makeRepositories([
+            10 => $group,
+            20 => $randomPlaylist,
+        ]);
+
+        $action = new PutGroupMembersAction($playlistRepo, $memberRepo);
+
+        $this->expectValidation(
+            'play_full_cycle is only supported for Sequential or Shuffle song playlists.'
+        );
+        $action(
+            $this->makeRequest($station, [
+                'members' => [[
+                    'playlist_id' => 20,
+                    'order' => 'random',
+                    'consecutive_plays' => 1,
+                    'play_full_cycle' => true,
+                ]],
+            ]),
+            $this->makeResponse(),
+            ['id' => '10']
+        );
+    }
+
+    public function testPutRejectsConflictingOrdersForRepeatedPlaylist(): void
+    {
+        $station = new Station();
+        $group = $this->makePlaylist($station, 10, 'Group', PlaylistSources::Group);
+        $playlist = $this->makePlaylist($station, 20, 'Songs');
+        [$playlistRepo, $memberRepo] = $this->makeRepositories([
+            10 => $group,
+            20 => $playlist,
+        ]);
+
+        $action = new PutGroupMembersAction($playlistRepo, $memberRepo);
+
+        $this->expectValidation('All occurrences of the same playlist must use the same order.');
+        $action(
+            $this->makeRequest($station, [
+                'members' => [
+                    [
+                        'playlist_id' => 20,
+                        'order' => 'sequential',
+                        'consecutive_plays' => 1,
+                        'play_full_cycle' => false,
+                    ],
+                    [
+                        'playlist_id' => 20,
+                        'order' => 'random',
+                        'consecutive_plays' => 1,
+                        'play_full_cycle' => false,
+                    ],
+                ],
+            ]),
             $this->makeResponse(),
             ['id' => '10']
         );
