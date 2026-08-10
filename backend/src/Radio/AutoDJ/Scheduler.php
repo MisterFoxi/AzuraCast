@@ -26,9 +26,6 @@ final class Scheduler
     use LoggerAwareTrait;
     use EntityManagerAwareTrait;
 
-    /** Late-selection window for once-per-hour playlists. */
-    private const int ONCE_PER_HOUR_FUZZY_WINDOW_MINUTES = 15;
-
     public function __construct(
         private readonly StationPlaylistMediaRepository $spmRepo,
         private readonly StationQueueRepository $queueRepo,
@@ -199,31 +196,26 @@ final class Scheduler
             return false;
         }
 
-        $now = CarbonImmutable::instance($now);
+        $stationNow = CarbonImmutable::instance($now)
+            ->setTimezone($playlist->station->getTimezoneObject());
+        $targetTime = $stationNow
+            ->startOfHour()
+            ->addMinutes($playlist->play_per_hour_minute);
 
-        return $this->shouldPlaylistPlayNowPerHourFuzzy($playlist, $now);
-    }
-
-    private function shouldPlaylistPlayNowPerHourFuzzy(
-        StationPlaylist $playlist,
-        CarbonImmutable $now,
-    ): bool {
-        $currentMinute = $now->minute;
-        $targetMinute = $playlist->play_per_hour_minute;
-
-        if ($currentMinute < $targetMinute) {
-            $targetTime = $now->subHour()->minute($targetMinute);
-        } else {
-            $targetTime = $now->minute($targetMinute);
+        $playedAt = $playlist->played_at;
+        if (null === $playedAt) {
+            // A newly-created playlist must wait for its first target minute,
+            // but remains due if the queue is not rebuilt exactly at that minute.
+            return !$targetTime->isAfter($stationNow);
         }
 
-        $playlistDiff = $targetTime->diffInMinutes($now);
-
-        if ($playlistDiff < 0 || $playlistDiff > self::ONCE_PER_HOUR_FUZZY_WINDOW_MINUTES) {
-            return false;
+        if ($targetTime->isAfter($stationNow)) {
+            $targetTime = $targetTime->subHour();
         }
 
-        return !$this->wasPlaylistPlayedInLastXMinutes($playlist, $now, 30);
+        // played_at records when this playlist was last put in the queue. The
+        // latest hourly occurrence remains due until it has actually been queued.
+        return CarbonImmutable::instance($playedAt)->isBefore($targetTime);
     }
 
     private function wasPlaylistPlayedInLastXMinutes(

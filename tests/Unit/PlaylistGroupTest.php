@@ -192,7 +192,7 @@ final class PlaylistGroupTest extends Unit
         }
     }
 
-    public function testOncePerHourGroupCanBeQueuedAfterItsTargetMinuteWithTopOfHourProtection(): void
+    public function testOncePerHourGroupAtMinute25TracksItsHourlyOccurrence(): void
     {
         $fixture = $this->harness->createSequentialGroup(
             [
@@ -203,16 +203,29 @@ final class PlaylistGroupTest extends Unit
         );
         $fixture['station']->backend_config->top_of_hour_id_enabled = true;
         $fixture['group']->type = PlaylistTypes::OncePerHour;
-        $fixture['group']->play_per_hour_minute = 50;
+        $fixture['group']->play_per_hour_minute = 25;
+        $fixture['group']->played_at = CarbonImmutable::parse('2026-08-09 09:30:00', 'UTC');
 
         try {
             $event = $this->calculateNextSong(
                 $fixture['station'],
-                CarbonImmutable::parse('2026-08-09 10:52:00', 'UTC'),
+                CarbonImmutable::parse('2026-08-09 10:42:00', 'UTC'),
             );
 
             self::assertSame(['A', 'B'], $this->getTitles($event->getNextSongs()));
             $this->assertGroupOrigin($fixture['group'], $event->getNextSongs());
+
+            $sameOccurrence = $this->calculateNextSong(
+                $fixture['station'],
+                CarbonImmutable::parse('2026-08-09 10:45:00', 'UTC'),
+            );
+            self::assertSame([], $sameOccurrence->getNextSongs());
+
+            $nextOccurrence = $this->calculateNextSong(
+                $fixture['station'],
+                CarbonImmutable::parse('2026-08-09 11:25:00', 'UTC'),
+            );
+            self::assertSame(['A', 'B'], $this->getTitles($nextOccurrence->getNextSongs()));
         } finally {
             $this->harness->cleanUp();
         }
