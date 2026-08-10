@@ -55,20 +55,23 @@ final class AiDjScheduleRepository extends Repository
             ->andWhere('dj.is_enabled = :isEnabled')
             ->andWhere(
                 '(' .
-                    // Normal schedule (same day): start <= time < end, day matches today
-                    '(schedule.start_time <= schedule.end_time AND schedule.start_time <= :time AND schedule.end_time > :time AND schedule.loop_days LIKE :dayOfWeek)' .
+                    // Normal schedule (same day): start <= time < end, day matches today.
+                    // Empty loop_days ([]) means "every day" (matches the schedule form's
+                    // "Leave all unchecked to run every day.").
+                    '(schedule.start_time <= schedule.end_time AND schedule.start_time <= :time AND schedule.end_time > :time AND (schedule.loop_days LIKE :dayOfWeek OR schedule.loop_days = :emptyDays))' .
                     ' OR ' .
                     // Cross-midnight: time >= start on the start day
-                    '(schedule.start_time > schedule.end_time AND schedule.start_time <= :time AND schedule.loop_days LIKE :dayOfWeek)' .
+                    '(schedule.start_time > schedule.end_time AND schedule.start_time <= :time AND (schedule.loop_days LIKE :dayOfWeek OR schedule.loop_days = :emptyDays))' .
                     ' OR ' .
                     // Cross-midnight: time < end (we are past midnight, started previous day)
-                    '(schedule.start_time > schedule.end_time AND schedule.end_time > :time AND schedule.loop_days LIKE :previousDay)' .
+                    '(schedule.start_time > schedule.end_time AND schedule.end_time > :time AND (schedule.loop_days LIKE :previousDay OR schedule.loop_days = :emptyDays))' .
                 ')'
             )
             ->setParameter('stationId', $stationId)
             ->setParameter('isEnabled', true)
             ->setParameter('dayOfWeek', '%' . $dayOfWeek . '%')
             ->setParameter('previousDay', '%' . $previousDay . '%')
+            ->setParameter('emptyDays', '[]')
             ->setParameter('time', $time)
             ->orderBy('schedule.start_time', 'DESC')
             ->setMaxResults(1)
@@ -115,7 +118,15 @@ final class AiDjScheduleRepository extends Repository
 
         $newDays = $schedule->getLoopDays();
         foreach ($existingSchedules as $existing) {
-            if (!empty(array_intersect($newDays, $existing->getLoopDays()))) {
+            $existingDays = $existing->getLoopDays();
+
+            // Empty loop_days ([]) means "every day" (see findActiveForTimeSlot), so an
+            // every-day schedule overlaps any time-overlapping schedule regardless of days.
+            if (
+                [] === $newDays
+                || [] === $existingDays
+                || !empty(array_intersect($newDays, $existingDays))
+            ) {
                 return true;
             }
         }

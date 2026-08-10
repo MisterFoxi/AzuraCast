@@ -1,7 +1,7 @@
 # Suivi des points à traiter — AzuraCast (fork)
 
 **Base :** `origin/FoxDev` (`MisterFoxi/AzuraCast`)
-**Dernière MAJ :** 2026-08-08
+**Dernière MAJ :** 2026-08-10
 
 > On repart de zéro. Ce fichier ne contient que des faits établis cette session.
 > Rien n'est présumé à partir de sessions antérieures.
@@ -663,3 +663,23 @@ Ferme la boucle TOPH côté **pose** de la ligne legal ID. État lu après le pa
   ou FM/MPX (hors périmètre webstream). Ordre de préférence retenu : ReplayGain+crossfade seuls <
   MasterMe < Stereo Tool. ⚠️ À vérifier avant toute bascule MasterMe : présence du plugin LADSPA
   `master_me` dans l'image Liquidsoap d'azuradev (non confirmée). Aucune modif de code.
+- **2026-08-10** — Bug AI DJ « configuré mais ne se déclenche pas » diagnostiqué et corrigé.
+  Verrou runtime unique = `AiDjScheduler::findActiveDj` -> `AiDjScheduleRepository::findActiveForTimeSlot`,
+  qui impose `loop_days LIKE '%N%'` (N = jour ISO courant, fuseau station). Le planning unique
+  (`morning shift`, DJ `adam`, 07:00-12:00 UTC) avait `loop_days = []`, alors que l'UI annonce
+  « Leave all unchecked to run every day. ». `'[]' LIKE '%1%'` = faux -> aucun match ->
+  `findActiveDj` renvoie null -> skip silencieux (`No active DJ for this time slot`, niveau debug).
+  Le bouton test ne passe pas par le planning -> voix OK au test. DB confirmée (station 2, UTC,
+  lundi 09:10, dj_enabled=1, sched_enabled=1, fenêtre horaire couverte). Aucun flag station-level
+  « AI DJ enabled » : le planning est le seul gate.
+  Correctif : `findActiveForTimeSlot` accepte désormais `loop_days = '[]'` comme « tous les jours »
+  sur les trois branches (normale + 2 cross-minuit), via param `:emptyDays = '[]'` en OR de chaque
+  test de jour. Corps de méthode uniquement (pas de constructeur) -> pas de `cache:clear`, pas de
+  reload Liquidsoap, effet au prochain BuildQueue. Patch `aidj-empty-loopdays-everyday.patch` posé
+  à la racine `Z:`, validé `git apply --check` sur arbre vierge, ASCII/LF strict. `Z:` (le code)
+  laissé à l'original -> patch à appliquer par lc. Lint PHP à faire côté Docker.
+  hasOverlap() : même sémantique inversée alignée dans la foulée (`array_intersect` sur `[]` = aucun
+  chevauchement détecté pour un planning every-day). Patch séparé `aidj-hasoverlap-empty-loopdays.patch`
+  posé à la racine `Z:`, validé `git apply --check` sur arbre vierge, ASCII/LF, indépendant de P1
+  (applicable dans n'importe quel ordre ; les deux corrigent le même fichier, corps de méthodes
+  uniquement). `Z:` (code) laissé à l'original -> deux patches à appliquer par lc, lint PHP côté Docker.
