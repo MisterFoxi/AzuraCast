@@ -154,7 +154,7 @@ class Icecast extends AbstractFrontend
             'limits' => [
                 'clients' => !empty($frontendConfig->max_listeners) ? $frontendConfig->max_listeners * 2 : 2500,
                 'max-listeners' => $frontendConfig->max_listeners ?? -1,
-                'sources' => $station->mounts->count(),
+                'sources' => IcecastConfig::getSourceLimit($station->mounts->count()),
                 'queue-size' => 524288,
                 'client-timeout' => 30,
                 'header-timeout' => 15,
@@ -261,13 +261,13 @@ class Icecast extends AbstractFrontend
 
             if (!empty($mountRow->fallback_mount)) {
                 $mount['fallback-mount'] = $mountRow->fallback_mount;
-                $mount['fallback-override'] = 1;
+                $mount['fallback-override'] = IcecastConfig::getFallbackOverride();
             } elseif ($mountRow->enable_autodj) {
                 $autoDjFormat = $mountRow->autodj_format ?? StreamFormats::default();
                 $autoDjBitrate = $mountRow->autodj_bitrate;
 
                 $mount['fallback-mount'] = '/fallback-[' . $autoDjBitrate . '].' . $autoDjFormat->getExtension();
-                $mount['fallback-override'] = 1;
+                $mount['fallback-override'] = IcecastConfig::getFallbackOverride();
             }
 
             if ($mountRow->max_listener_duration) {

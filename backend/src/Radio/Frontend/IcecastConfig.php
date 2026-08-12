@@ -11,6 +11,20 @@ final class IcecastConfig
     private const string PROXY_CLIENT_ADDRESS = '127.0.0.1';
 
     /**
+     * Icecast 2.5 reserves one source slot for the fallback file associated
+     * with each configured station mount.
+     */
+    public static function getSourceLimit(int $mountCount): int
+    {
+        return $mountCount * 2;
+    }
+
+    public static function getFallbackOverride(): string
+    {
+        return 'all';
+    }
+
+    /**
      * @return array<int, array<string, int|string>>
      */
     public static function getListenSockets(int $port): array

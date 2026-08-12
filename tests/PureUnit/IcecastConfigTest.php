@@ -10,6 +10,17 @@ use PHPUnit\Framework\TestCase;
 
 final class IcecastConfigTest extends TestCase
 {
+    public function testIcecast25ReservesSourceSlotsForMountsAndFallbackFiles(): void
+    {
+        self::assertSame(2, IcecastConfig::getSourceLimit(1));
+        self::assertSame(6, IcecastConfig::getSourceLimit(3));
+    }
+
+    public function testIcecast25UsesNamedFallbackOverrideMode(): void
+    {
+        self::assertSame('all', IcecastConfig::getFallbackOverride());
+    }
+
     public function testTrustedProxyVirtualSocketConfiguration(): void
     {
         $xml = Writer::toString(
