@@ -12,6 +12,9 @@ use Psr\Container\ContainerInterface;
 
 return [
 
+    App\Radio\SmartBlock\SmartBlockSynchronizerInterface::class =>
+        DI\Get(App\Radio\SmartBlock\SmartBlockSynchronizer::class),
+
     // Slim interface
     Slim\Interfaces\RouteCollectorInterface::class => static fn(Slim\App $app) => $app->getRouteCollector(),
 

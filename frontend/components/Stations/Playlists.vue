@@ -26,8 +26,10 @@
                 destroy-on-hide
             >
                 <tab
-                    id="all_playlists"
-                    :label="$gettext('All Playlists')"
+                    v-for="playlistTab in playlistTabs"
+                    :id="playlistTab.id"
+                    :key="playlistTab.id"
+                    :label="$gettext(playlistTab.label)"
                 >
                     <div class="card-body-flush">
                         <div class="card-body buttons">
@@ -38,10 +40,10 @@
                         </div>
                         
                         <data-table
-                            id="station_playlists"
+                            :id="playlistTab.tableId"
                             paginated
                             :fields="fields"
-                            :provider="listItemProvider"
+                            :provider="playlistTab.provider"
                             detailed
                         >
                             <template #cell(name)="row">
@@ -56,8 +58,11 @@
                                         <template v-if="row.item.source === 'songs'">
                                             {{ $gettext('Song-based') }}
                                         </template>
-                                        <template v-else>
+                                        <template v-else-if="row.item.source === 'remote_url'">
                                             {{ $gettext('Remote URL') }}
+                                        </template>
+                                        <template v-else-if="row.item.source === 'group'">
+                                            {{ $gettext('Playlist Group') }}
                                         </template>
                                     </span>
                                     <span
@@ -90,13 +95,20 @@
                                     >
                                         {{ $gettext('Disabled') }}
                                     </span>
+                                    <span
+                                        v-for="group in row.item.member_of_groups"
+                                        :key="group.id"
+                                        class="badge text-bg-warning"
+                                    >
+                                        {{ $gettext('Member of: %{group}', {group: group.name}) }}
+                                    </span>
                                 </div>
                             </template>
                             <template #cell(scheduling)="{ item }">
                                 <template v-if="!item.is_enabled">
                                     {{ $gettext('Disabled') }}
                                 </template>
-                                <template v-else-if="item.source !== 'songs'">
+                                <template v-else-if="item.source === 'remote_url'">
                                     {{ $gettext('Remote URL') }}
                                 </template>
                                 <template v-else-if="item.type === 'default'">
@@ -137,7 +149,7 @@
                                         :to="{
                                             name: 'stations:files:index',
                                             params: {
-                                                path: 'playlist:'+row.item.short_name
+                                                path: 'playlist:'+row.item.id
                                             }
                                         }"
                                     >
@@ -191,6 +203,14 @@
                                         @click="doReorder(item.links.order)"
                                     >
                                         {{ $gettext('Reorder') }}
+                                    </button>
+                                    <button
+                                        v-if="item.links.members"
+                                        type="button"
+                                        class="btn btn-sm btn-primary"
+                                        @click="doManageMembers(item.links.members)"
+                                    >
+                                        {{ $gettext('Manage Members') }}
                                     </button>
                                     <button
                                         type="button"
@@ -278,6 +298,11 @@
         @needs-restart="() => mayNeedRestart()"
     />
     <reorder-modal ref="$reorderModal" />
+    <group-members-modal
+        ref="$groupMembersModal"
+        :playlists-url="listUrl"
+        @saved="relist"
+    />
     <queue-modal ref="$queueModal" />
     <reorder-modal ref="$reorderModal" />
     <import-modal
@@ -300,12 +325,13 @@
 import DataTable, {DataTableField} from "~/components/Common/DataTable.vue";
 import EditModal from "~/components/Stations/Playlists/EditModal.vue";
 import ReorderModal from "~/components/Stations/Playlists/ReorderModal.vue";
+import GroupMembersModal from "~/components/Stations/Playlists/GroupMembersModal.vue";
 import ImportModal from "~/components/Stations/Playlists/ImportModal.vue";
 import QueueModal from "~/components/Stations/Playlists/QueueModal.vue";
 import CloneModal from "~/components/Stations/Playlists/CloneModal.vue";
 import ApplyToModal from "~/components/Stations/Playlists/ApplyToModal.vue";
 import {useTranslate} from "~/vendor/gettext";
-import {useTemplateRef} from "vue";
+import {computed, useTemplateRef} from "vue";
 import useHasEditModal from "~/functions/useHasEditModal";
 import {useMayNeedRestart} from "~/functions/useMayNeedRestart";
 import {useNotify} from "~/components/Common/Toasts/useNotify.ts";
@@ -317,17 +343,55 @@ import Tabs from "~/components/Common/Tabs.vue";
 import Tab from "~/components/Common/Tab.vue";
 import AddButton from "~/components/Common/AddButton.vue";
 
-import {useApiItemProvider} from "~/functions/dataTable/useApiItemProvider.ts";
+import {useClientItemProvider} from "~/functions/dataTable/useClientItemProvider.ts";
 import {QueryKeys, queryKeyWithStation} from "~/entities/Queries.ts";
 import IconBiContract from "~icons/bi/chevron-contract";
 import IconBiExpand from "~icons/bi/chevron-expand";
 import {useApiRouter} from "~/functions/useApiRouter.ts";
+import {useQuery} from "@tanstack/vue-query";
+import {PlaylistSources} from "~/entities/ApiInterfaces.ts";
+import type {StationPlaylist} from "~/entities/ApiInterfaces.ts";
+import type {DataTableItemProvider} from "~/functions/useHasDatatable.ts";
 
 const {getStationApiUrl} = useApiRouter();
 const listUrl = getStationApiUrl('/playlists');
 
 
 const {$gettext} = useTranslate();
+const {axios} = useAxios();
+
+type GroupMemberResponse = {
+    playlist_id: number,
+}
+
+type PlaylistGroupReference = {
+    id: number,
+    name: string,
+}
+
+type PlaylistRow = StationPlaylist & {
+    id: number,
+    name: string,
+    source: PlaylistSources,
+    links: {
+        self: string,
+        toggle: string,
+        clone: string,
+        export: Record<string, string>,
+        order?: string,
+        members?: string,
+        empty?: string,
+        reshuffle?: string,
+        import?: string,
+        queue?: string,
+        applyto?: string,
+    },
+    member_of_groups: PlaylistGroupReference[],
+}
+
+type PlaylistListResponse = {
+    rows: PlaylistRow[],
+}
 
 const fields: DataTableField[] = [
     {key: 'name', isRowHeader: true, label: $gettext('Playlist'), sortable: true},
@@ -336,10 +400,103 @@ const fields: DataTableField[] = [
     {key: 'actions', label: $gettext('Actions'), sortable: false, class: 'shrink'}
 ];
 
-const listItemProvider = useApiItemProvider(
-    listUrl,
-    queryKeyWithStation([QueryKeys.StationPlaylists])
+const playlistsQuery = useQuery<PlaylistRow[]>({
+    queryKey: queryKeyWithStation([QueryKeys.StationPlaylists]),
+    queryFn: async ({signal}) => {
+        const {data} = await axios.get<PlaylistListResponse>(listUrl.value, {
+            params: {
+                internal: true,
+                rowCount: 0,
+            },
+            signal,
+        });
+
+        const rows = data.rows ?? [];
+        const membershipGroups = new Map<number, Map<number, PlaylistGroupReference>>();
+
+        await Promise.all(
+            rows
+                .filter((playlist) => (
+                    playlist.source === PlaylistSources.Group
+                    && playlist.links.members !== undefined
+                ))
+                .map(async (group) => {
+                    const {data: members} = await axios.get<GroupMemberResponse[]>(
+                        group.links.members as string,
+                        {signal}
+                    );
+
+                    members.forEach((member) => {
+                        const groups = membershipGroups.get(member.playlist_id) ?? new Map();
+                        groups.set(group.id, {
+                            id: group.id,
+                            name: group.name,
+                        });
+                        membershipGroups.set(member.playlist_id, groups);
+                    });
+                })
+        );
+
+        return rows.map((playlist) => ({
+            ...playlist,
+            member_of_groups: Array.from(
+                membershipGroups.get(playlist.id)?.values() ?? []
+            ),
+        }));
+    },
+});
+
+const standardPlaylists = computed(() =>
+    (playlistsQuery.data.value ?? []).filter(
+        (playlist) => playlist.source !== PlaylistSources.Group
+    )
 );
+
+const groupLists = computed(() =>
+    (playlistsQuery.data.value ?? []).filter(
+        (playlist) => playlist.source === PlaylistSources.Group
+    )
+);
+
+const refreshPlaylists = async (): Promise<void> => {
+    await playlistsQuery.refetch();
+};
+
+const standardPlaylistProvider = useClientItemProvider(
+    standardPlaylists,
+    playlistsQuery.isFetching,
+    undefined,
+    refreshPlaylists
+);
+
+const groupListProvider = useClientItemProvider(
+    groupLists,
+    playlistsQuery.isFetching,
+    undefined,
+    refreshPlaylists
+);
+
+type PlaylistTab = {
+    id: string,
+    tableId: string,
+    label: string,
+    provider: DataTableItemProvider<PlaylistRow>,
+}
+
+const playlistTabs: PlaylistTab[] = [
+    {
+        id: 'playlists',
+        tableId: 'station_playlists',
+        label: 'Playlists',
+        provider: standardPlaylistProvider,
+    },
+    {
+        id: 'group_lists',
+        tableId: 'station_group_lists',
+        label: 'Group Lists',
+        provider: groupListProvider,
+    },
+];
 
 const {Duration} = useLuxon();
 
@@ -353,7 +510,7 @@ const formatLength = (length: number) => {
 };
 
 const relist = () => {
-    void listItemProvider.refresh();
+    void refreshPlaylists();
 }
 
 const $editModal = useTemplateRef('$editModal');
@@ -364,6 +521,12 @@ const $reorderModal = useTemplateRef('$reorderModal');
 
 const doReorder = (url: string) => {
     $reorderModal.value?.open(url);
+};
+
+const $groupMembersModal = useTemplateRef('$groupMembersModal');
+
+const doManageMembers = (url: string) => {
+    void $groupMembersModal.value?.open(url);
 };
 
 const $queueModal = useTemplateRef('$queueModal');
@@ -397,7 +560,6 @@ const doApplyTo = (url: string) => {
 const {mayNeedRestart} = useMayNeedRestart();
 
 const {notifySuccess} = useNotify();
-const {axios} = useAxios();
 
 const doModify = async (url: string) => {
     const {data} = await axios.put(url);

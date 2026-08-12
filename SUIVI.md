@@ -1,7 +1,7 @@
 # Suivi des points à traiter — AzuraCast (fork)
 
 **Base :** `origin/FoxDev` (`MisterFoxi/AzuraCast`)
-**Dernière MAJ :** 2026-08-08
+**Dernière MAJ :** 2026-08-10
 
 > On repart de zéro. Ce fichier ne contient que des faits établis cette session.
 > Rien n'est présumé à partir de sessions antérieures.
@@ -648,3 +648,38 @@ Ferme la boucle TOPH côté **pose** de la ligne legal ID. État lu après le pa
   `HourBoundaryLegalIdResolver`), lue après le patch TOPH. Boucle TOPH complète côté pose. Nouvelle
   garde relevée : `ScheduleConflictChecker::hasEmergencyScheduleActive`. ⚠️ Logs `[TOPH DEBUG]`
   niveau info présents dans le scheduler → à retirer après validation. Aucune modif de code.
+- **2026-08-10** — Chaîne de traitement audio Liquidsoap cartographiée (lecture directe
+  `ConfigWriter.php`, aucune modif). Deux étages : (1) pré-crossfade toujours actif
+  (`apply_amplify` sur ReplayGain → `replaygain()` si `enable_replaygain_metadata` → crossfade
+  simple/smart via `CrossfadeModes`) ; (2) post-processing `writePostProcessingSection` avec 4
+  méthodes exposées par `AudioProcessingMethods` : **None** ; **Liquidsoap** (`normalize` target=0,
+  gain_min=-16 + `compress.exponential mu=1.0`) ; **MasterMe** (`ladspa.master_me` + presets +
+  `master_me_loudness_target`) ; **StereoTool** (pipe binaire `stereo_tool` ou opérateur natif
+  `stereotool()`).
+- **2026-08-10** — Décision « faut-il Stereo Tool pour le stream ? » → NON requis pour un
+  webstream. MasterMe (LADSPA, gratuit, déjà embarqué dans la base) couvre le rendu « on-air »
+  (gate/AGC → multibande → limiteur + cible LUFS) — l'essentiel de ce pour quoi on installe Stereo
+  Tool, sans licence ni binaire tiers. Stereo Tool réservé au widening stéréo poussé, déclipping,
+  ou FM/MPX (hors périmètre webstream). Ordre de préférence retenu : ReplayGain+crossfade seuls <
+  MasterMe < Stereo Tool. ⚠️ À vérifier avant toute bascule MasterMe : présence du plugin LADSPA
+  `master_me` dans l'image Liquidsoap d'azuradev (non confirmée). Aucune modif de code.
+- **2026-08-10** — Bug AI DJ « configuré mais ne se déclenche pas » diagnostiqué et corrigé.
+  Verrou runtime unique = `AiDjScheduler::findActiveDj` -> `AiDjScheduleRepository::findActiveForTimeSlot`,
+  qui impose `loop_days LIKE '%N%'` (N = jour ISO courant, fuseau station). Le planning unique
+  (`morning shift`, DJ `adam`, 07:00-12:00 UTC) avait `loop_days = []`, alors que l'UI annonce
+  « Leave all unchecked to run every day. ». `'[]' LIKE '%1%'` = faux -> aucun match ->
+  `findActiveDj` renvoie null -> skip silencieux (`No active DJ for this time slot`, niveau debug).
+  Le bouton test ne passe pas par le planning -> voix OK au test. DB confirmée (station 2, UTC,
+  lundi 09:10, dj_enabled=1, sched_enabled=1, fenêtre horaire couverte). Aucun flag station-level
+  « AI DJ enabled » : le planning est le seul gate.
+  Correctif : `findActiveForTimeSlot` accepte désormais `loop_days = '[]'` comme « tous les jours »
+  sur les trois branches (normale + 2 cross-minuit), via param `:emptyDays = '[]'` en OR de chaque
+  test de jour. Corps de méthode uniquement (pas de constructeur) -> pas de `cache:clear`, pas de
+  reload Liquidsoap, effet au prochain BuildQueue. Patch `aidj-empty-loopdays-everyday.patch` posé
+  à la racine `Z:`, validé `git apply --check` sur arbre vierge, ASCII/LF strict. `Z:` (le code)
+  laissé à l'original -> patch à appliquer par lc. Lint PHP à faire côté Docker.
+  hasOverlap() : même sémantique inversée alignée dans la foulée (`array_intersect` sur `[]` = aucun
+  chevauchement détecté pour un planning every-day). Patch séparé `aidj-hasoverlap-empty-loopdays.patch`
+  posé à la racine `Z:`, validé `git apply --check` sur arbre vierge, ASCII/LF, indépendant de P1
+  (applicable dans n'importe quel ordre ; les deux corrigent le même fichier, corps de méthodes
+  uniquement). `Z:` (code) laissé à l'original -> deux patches à appliquer par lc, lint PHP côté Docker.

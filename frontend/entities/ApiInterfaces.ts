@@ -200,6 +200,7 @@ export enum PlaylistTypes {
 export enum PlaylistSources {
   Songs = "songs",
   RemoteUrl = "remote_url",
+  Group = "group",
 }
 
 export enum PlaylistRemoteTypes {
@@ -213,6 +214,42 @@ export enum PlaylistOrders {
   Shuffle = "shuffle",
   Sequential = "sequential",
   SmartShuffle = "smart_shuffle",
+}
+
+export enum SmartBlockCriteriaField {
+  Genre = "genre",
+  Category = "category",
+  Artist = "artist",
+  Album = "album",
+  Title = "title",
+  Duration = "duration",
+  CustomField = "custom_field",
+  LastPlayed = "last_played_days_ago",
+}
+
+export enum SmartBlockCriteriaComparison {
+  Is = "is",
+  IsNot = "is_not",
+  Contains = "contains",
+  NotContains = "not_contains",
+  GreaterThan = "greater_than",
+  LessThan = "less_than",
+  Between = "between",
+}
+
+export enum SmartBlockMatchType {
+  All = "all",
+  Any = "any",
+}
+
+export enum SmartBlockLimitType {
+  Tracks = "tracks",
+  Duration = "duration",
+}
+
+export enum SmartBlockType {
+  Static = "static",
+  Dynamic = "dynamic",
 }
 
 export enum LoginTokenTypes {
@@ -1311,6 +1348,8 @@ export type ApiStationQueueDetailed = HasLinks & {
    * @example ""
    */
   autodj_custom_uri?: string | null;
+  /** Group List that queued this specific item. */
+  group_lists?: string[];
   /** Log entries on how the specific queue item was picked by the AutoDJ. */
   log?: any[] | null;
 };
@@ -2461,6 +2500,17 @@ export type StationPlaylist = HasAutoIncrementId & {
   schedule_items?: any[];
   /** Podcast> */
   podcasts?: any[];
+};
+
+export type StationPlaylistSmartBlockCriterion = {
+  id?: number | null;
+  field: SmartBlockCriteriaField;
+  custom_field_id?: number | null;
+  custom_field_name?: string | null;
+  comparison: SmartBlockCriteriaComparison;
+  value: string | null;
+  value2?: string | null;
+  weight?: number;
 };
 
 export type StationRemote = HasAutoIncrementId & {

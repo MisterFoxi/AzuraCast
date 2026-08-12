@@ -11,4 +11,5 @@ enum PlaylistSources: string
 {
     case Songs = 'songs';
     case RemoteUrl = 'remote_url';
+    case Group = 'group';
 }

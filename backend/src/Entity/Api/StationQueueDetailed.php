@@ -32,6 +32,13 @@ final class StationQueueDetailed
     public ?string $autodj_custom_uri = null;
 
     #[OA\Property(
+        description: 'Group List that queued this specific item.',
+        type: 'array',
+        items: new OA\Items(type: 'string')
+    )]
+    public array $group_lists = [];
+
+    #[OA\Property(
         description: 'Log entries on how the specific queue item was picked by the AutoDJ.',
         items: new OA\Items(type: 'any')
     )]

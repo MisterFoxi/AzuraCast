@@ -139,7 +139,7 @@ final class Version
         $channelText = (ReleaseChannel::Stable === $releaseChannel) ? 'Stable' : 'Rolling Release';
 
         if ($asHtml && isset($details['commit'])) {
-            $commitLink = 'https://github.com/eternityready2/Azura-Cast-Custom/commit/' . $details['commit'];
+            $commitLink = ' https://github.com/MisterFoxi/AzuraCast/commit' . $details['commit'];
             
             return sprintf(
                 'Release <strong>%s</strong> (%s) #<a href="%s" target="_blank">%s</a>',

@@ -9,6 +9,7 @@ use App\Entity\Api\StationQueueDetailed;
 use App\Entity\Api\Status;
 use App\Entity\ApiGenerator\StationQueueApiGenerator;
 use App\Entity\Repository\StationQueueRepository;
+use App\Entity\StationPlaylist;
 use App\Entity\StationQueue;
 use App\Http\Response;
 use App\Http\ServerRequest;
@@ -145,6 +146,12 @@ final class QueueController extends AbstractStationApiCrudController
         $apiResponse->sent_to_autodj = $record->sent_to_autodj;
         $apiResponse->is_played = $record->is_played;
         $apiResponse->autodj_custom_uri = $record->autodj_custom_uri;
+
+        $groupPlaylist = $record->group_playlist;
+        if ($groupPlaylist instanceof StationPlaylist) {
+            $apiResponse->group_lists = [$groupPlaylist->name];
+        }
+
         $apiResponse->log = $this->queueLogCache->getLog($record);
 
         $apiResponse->links = [

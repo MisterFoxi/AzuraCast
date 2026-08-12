@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Unit;
 
+use App\Entity\Enums\PlaylistSources;
 use App\Entity\Enums\PlaylistTypes;
 use App\Entity\Station;
 use App\Entity\StationPlaylist;
@@ -20,6 +21,16 @@ class StationPlaylistTest extends Unit
     protected UnitTester $tester;
 
     protected Scheduler $scheduler;
+
+    public function testGroupSourcePreservesAutoDjRotationType(): void
+    {
+        $playlist = new StationPlaylist(new Station());
+        $playlist->type = PlaylistTypes::OncePerXSongs;
+
+        $playlist->source = PlaylistSources::Group;
+
+        self::assertSame(PlaylistTypes::OncePerXSongs, $playlist->type);
+    }
 
     protected function _inject(Module $testsModule): void
     {
@@ -92,36 +103,30 @@ class StationPlaylistTest extends Unit
         self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay));
     }
 
-    public function testOncePerHourPlaylist()
+    public function testOncePerHourPlaylistTracksItsTargetOccurrence(): void
     {
         $station = $this->makeStation();
 
         $playlist = new StationPlaylist($station);
         $playlist->name = 'Test Playlist';
         $playlist->type = PlaylistTypes::OncePerHour;
-        $playlist->play_per_hour_minute = 50;
+        $playlist->play_per_hour_minute = 25;
 
         $utc = new DateTimeZone('UTC');
         $testDay = CarbonImmutable::create(2018, 1, 15, 0, 0, 0, $utc);
 
-        // Playlist SHOULD try to play at 11:59 PM.
-        $testTime = $testDay->setTime(23, 59);
-        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testTime));
+        // A new playlist waits for its first :25 occurrence.
+        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(10, 20)));
+        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(10, 25)));
+        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(10, 42)));
 
-        // Playlist SHOULD try to play at 12:04 PM.
-        $testTime = $testDay->setTime(12, 4);
-        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testTime));
-
-        // Playlist SHOULD NOT try to play at 11:49 PM.
-        $testTime = $testDay->setTime(23, 49);
-        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testTime));
-
-        // Playlist SHOULD NOT try to play at 12:06 PM.
-        $testTime = $testDay->setTime(12, 6);
-        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testTime));
+        // Once queued, the same occurrence cannot be selected twice.
+        $playlist->played_at = $testDay->setTime(10, 42);
+        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(11, 24)));
+        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(11, 25)));
     }
 
-    public function testOncePerHourPlaylistStrictWhenTopOfHourProtectionEnabled(): void
+    public function testOncePerHourPlaylistTracksOccurrencesWithTopOfHourProtectionEnabled(): void
     {
         $station = $this->makeStation();
         $station->backend_config->top_of_hour_id_enabled = true;
@@ -129,15 +134,21 @@ class StationPlaylistTest extends Unit
         $playlist = new StationPlaylist($station);
         $playlist->name = 'Hourly Promo';
         $playlist->type = PlaylistTypes::OncePerHour;
-        $playlist->play_per_hour_minute = 50;
+        $playlist->play_per_hour_minute = 25;
 
         $utc = new DateTimeZone('UTC');
         $testDay = CarbonImmutable::create(2018, 1, 15, 0, 0, 0, $utc);
 
-        // Strict: only at :50, not within 15-minute fuzzy window.
-        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(12, 50)));
-        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(12, 4)));
-        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(23, 59)));
+        $playlist->played_at = $testDay->setTime(11, 30);
+
+        // TOPH only owns :00. The :25 occurrence stays due until queued.
+        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(12, 24)));
+        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(12, 25)));
+        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(12, 42)));
+
+        $playlist->played_at = $testDay->setTime(12, 42);
+        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(13, 24)));
+        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(13, 25)));
     }
 
     public function testOncePerHourAtTopOfHourSuppressedWhenProtectionEnabled(): void

@@ -13,7 +13,7 @@
                     folder: playlist.folder
                 }
             )"
-            @click.prevent="emit('filter', 'playlist:'+playlist.short_name)"
+            @click.prevent="emit('filter', 'playlist:'+playlist.id)"
         >
             <icon-ic-folder class="sm me-1"/>
 
@@ -26,7 +26,7 @@
             class="btn-search"
             href="#"
             :title="$gettext('View tracks in playlist')"
-            @click.prevent="emit('filter', 'playlist:'+playlist.short_name)"
+            @click.prevent="emit('filter', 'playlist:'+playlist.id)"
         >
             {{ playlist.name }}
         </a>

@@ -274,6 +274,12 @@ final class PlaylistsController extends AbstractScheduledEntityController
         ];
 
         if (PlaylistSources::Songs === $record->source) {
+            $return['links']['smart_block'] = $router->fromHere(
+                routeName: 'api:stations:playlist:smart-block',
+                routeParams: ['id' => $record->id],
+                absolute: !$isInternal
+            );
+
             if (PlaylistOrders::Sequential === $record->order) {
                 $return['links']['order'] = $router->fromHere(
                     routeName: 'api:stations:playlist:order',
@@ -310,6 +316,12 @@ final class PlaylistsController extends AbstractScheduledEntityController
 
             $return['links']['empty'] = $router->fromHere(
                 routeName: 'api:stations:playlist:empty',
+                routeParams: ['id' => $record->id],
+                absolute: !$isInternal
+            );
+        } elseif (PlaylistSources::Group === $record->source) {
+            $return['links']['members'] = $router->fromHere(
+                routeName: 'api:stations:playlist:members',
                 routeParams: ['id' => $record->id],
                 absolute: !$isInternal
             );

@@ -44,6 +44,19 @@ final class StationQueue implements
     public private(set) ?int $playlist_id = null;
 
     #[ORM\ManyToOne]
+    #[ORM\JoinColumn(
+        name: 'group_playlist_id',
+        referencedColumnName: 'id',
+        nullable: true,
+        onDelete: 'SET NULL'
+    )]
+    public ?StationPlaylist $group_playlist = null;
+
+    /* TODO Remove direct identifier access. */
+    #[ORM\Column(nullable: true, insertable: false, updatable: false)]
+    public private(set) ?int $group_playlist_id = null;
+
+    #[ORM\ManyToOne]
     #[ORM\JoinColumn(name: 'media_id', referencedColumnName: 'id', nullable: true, onDelete: 'CASCADE')]
     public ?StationMedia $media = null {
         set {

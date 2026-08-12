@@ -203,7 +203,7 @@ const {$gettext} = useTranslate();
 const frontendTypeOptions = computed<SimpleFormOptionInput>(() => {
     const frontendOptions: SimpleFormOptionInput = [
         {
-            text: $gettext('Use Icecast 2.4 on this server.'),
+            text: $gettext('Use Icecast 2.5 on this server.'),
             value: FrontendAdapters.Icecast
         },
     ];
