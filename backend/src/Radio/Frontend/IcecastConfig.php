@@ -8,6 +8,7 @@ final class IcecastConfig
 {
     private const string PUBLIC_SOCKET_ID = 'public';
     private const string PROXY_SOCKET_ID = 'azuracast-proxy';
+    private const string EXTERNAL_PROXY_SOCKET_ID = 'external-proxy';
     private const string DEFAULT_PROXY_CLIENT_ADDRESS = '127.0.0.1';
 
     /**
@@ -25,26 +26,37 @@ final class IcecastConfig
     }
 
     /**
-     * @return array<int, array<string, int|string>>
+     * @return array<int, array<string, int|string|array<int, string>>>
      */
     public static function getListenSockets(int $port, ?string $proxyClientAddress = null): array
     {
         $proxyClientAddress = trim($proxyClientAddress ?? '');
-        if ('' === $proxyClientAddress) {
-            $proxyClientAddress = self::DEFAULT_PROXY_CLIENT_ADDRESS;
+
+        $trustedProxies = ['#' . self::PROXY_SOCKET_ID];
+        $proxySockets = [
+            [
+                '@id' => self::PROXY_SOCKET_ID,
+                '@type' => 'virtual',
+                'client-address' => self::DEFAULT_PROXY_CLIENT_ADDRESS,
+            ],
+        ];
+
+        if ('' !== $proxyClientAddress && self::DEFAULT_PROXY_CLIENT_ADDRESS !== $proxyClientAddress) {
+            $trustedProxies[] = '#' . self::EXTERNAL_PROXY_SOCKET_ID;
+            $proxySockets[] = [
+                '@id' => self::EXTERNAL_PROXY_SOCKET_ID,
+                '@type' => 'virtual',
+                'client-address' => $proxyClientAddress,
+            ];
         }
 
         return [
             [
                 '@id' => self::PUBLIC_SOCKET_ID,
                 'port' => $port,
-                'trusted-proxy' => '#' . self::PROXY_SOCKET_ID,
+                'trusted-proxy' => $trustedProxies,
             ],
-            [
-                '@id' => self::PROXY_SOCKET_ID,
-                '@type' => 'virtual',
-                'client-address' => $proxyClientAddress,
-            ],
+            ...$proxySockets,
         ];
     }
 }

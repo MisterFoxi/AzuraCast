@@ -48,7 +48,7 @@ final class IcecastConfigTest extends TestCase
         );
     }
 
-    public function testTrustedProxyVirtualSocketUsesConfiguredExternalProxyAddress(): void
+    public function testConfiguredExternalProxyIsAddedWithoutRemovingBuiltInProxy(): void
     {
         $xml = Writer::toString(
             ['listen-socket' => IcecastConfig::getListenSockets(8000, '192.168.1.50')],
@@ -58,11 +58,41 @@ final class IcecastConfigTest extends TestCase
 
         self::assertStringContainsString(
             <<<'XML'
+            <listen-socket id="public">
+                    <port>8000</port>
+                    <trusted-proxy>#azuracast-proxy</trusted-proxy>
+                    <trusted-proxy>#external-proxy</trusted-proxy>
+                </listen-socket>
+            XML,
+            $xml
+        );
+        self::assertStringContainsString(
+            <<<'XML'
             <listen-socket id="azuracast-proxy" type="virtual">
+                    <client-address>127.0.0.1</client-address>
+                </listen-socket>
+            XML,
+            $xml
+        );
+        self::assertStringContainsString(
+            <<<'XML'
+            <listen-socket id="external-proxy" type="virtual">
                     <client-address>192.168.1.50</client-address>
                 </listen-socket>
             XML,
             $xml
         );
+    }
+
+    public function testLoopbackAddressDoesNotCreateDuplicateTrustedProxy(): void
+    {
+        $xml = Writer::toString(
+            ['listen-socket' => IcecastConfig::getListenSockets(8000, '127.0.0.1')],
+            'icecast',
+            false
+        );
+
+        self::assertSame(1, substr_count($xml, '<trusted-proxy>'));
+        self::assertSame(1, substr_count($xml, '<client-address>127.0.0.1</client-address>'));
     }
 }
