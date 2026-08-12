@@ -216,6 +216,42 @@ export enum PlaylistOrders {
   SmartShuffle = "smart_shuffle",
 }
 
+export enum SmartBlockCriteriaField {
+  Genre = "genre",
+  Category = "category",
+  Artist = "artist",
+  Album = "album",
+  Title = "title",
+  Duration = "duration",
+  CustomField = "custom_field",
+  LastPlayed = "last_played_days_ago",
+}
+
+export enum SmartBlockCriteriaComparison {
+  Is = "is",
+  IsNot = "is_not",
+  Contains = "contains",
+  NotContains = "not_contains",
+  GreaterThan = "greater_than",
+  LessThan = "less_than",
+  Between = "between",
+}
+
+export enum SmartBlockMatchType {
+  All = "all",
+  Any = "any",
+}
+
+export enum SmartBlockLimitType {
+  Tracks = "tracks",
+  Duration = "duration",
+}
+
+export enum SmartBlockType {
+  Static = "static",
+  Dynamic = "dynamic",
+}
+
 export enum LoginTokenTypes {
   ResetPassword = "reset_password",
   Login = "login",
@@ -2464,6 +2500,17 @@ export type StationPlaylist = HasAutoIncrementId & {
   schedule_items?: any[];
   /** Podcast> */
   podcasts?: any[];
+};
+
+export type StationPlaylistSmartBlockCriterion = {
+  id?: number | null;
+  field: SmartBlockCriteriaField;
+  custom_field_id?: number | null;
+  custom_field_name?: string | null;
+  comparison: SmartBlockCriteriaComparison;
+  value: string | null;
+  value2?: string | null;
+  weight?: number;
 };
 
 export type StationRemote = HasAutoIncrementId & {

@@ -24,6 +24,7 @@ use App\Entity\StationPlaylistMedia;
 use App\Entity\StationQueue;
 use App\Event\Radio\BuildQueue;
 use App\Radio\PlaylistParser;
+use App\Radio\SmartBlock\SmartBlockPlaybackPreparer;
 use App\Service\HolidayOverrideService;
 use DateTimeImmutable;
 use DateTimeZone;
@@ -50,6 +51,7 @@ final class QueueBuilder implements EventSubscriberInterface
         private readonly StationQueueRepository $queueRepo,
         private readonly SongHistoryRepository $historyRepo,
         private readonly HolidayOverrideService $holidayOverrideService,
+        private readonly SmartBlockPlaybackPreparer $smartBlockPlaybackPreparer,
     ) {
     }
 
@@ -78,6 +80,8 @@ final class QueueBuilder implements EventSubscriberInterface
         }
 
         $this->logger->info('AzuraCast AutoDJ is calculating the next song to play...');
+
+        $this->smartBlockPlaybackPreparer->beginQueueBuild();
 
         $station = $event->getStation();
         $expectedPlayTime = $event->getExpectedPlayTime();
@@ -293,6 +297,10 @@ final class QueueBuilder implements EventSubscriberInterface
         bool $singleTrackOnly = false,
         bool $deferQueuePersistence = false,
     ): StationQueue|array|null {
+        if (!$this->smartBlockPlaybackPreparer->prepare($playlist)) {
+            return null;
+        }
+
         if (PlaylistSources::Group === $playlist->source) {
             return $this->playSongFromGroup(
                 $playlist,
@@ -492,6 +500,10 @@ final class QueueBuilder implements EventSubscriberInterface
         }
 
         $playlist = $member->playlist;
+        if (!$this->smartBlockPlaybackPreparer->prepare($playlist)) {
+            return 0;
+        }
+
         if (
             PlaylistSources::Songs !== $playlist->source
             || PlaylistOrders::Random === $playlist->order
@@ -993,6 +1005,11 @@ final class QueueBuilder implements EventSubscriberInterface
         array $recentSongHistory,
         bool $allowDuplicates = false,
     ): ?StationPlaylistQueue {
+        $this->smartBlockPlaybackPreparer->beginQueueBuild();
+        if (!$this->smartBlockPlaybackPreparer->prepare($playlist)) {
+            return null;
+        }
+
         if (PlaylistSources::RemoteUrl === $playlist->source) {
             return null;
         }

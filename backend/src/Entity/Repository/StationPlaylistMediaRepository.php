@@ -210,6 +210,33 @@ final class StationPlaylistMediaRepository extends Repository
         return true;
     }
 
+    /**
+     * @return list<StationPlaylistMedia>
+     */
+    public function getDirectMediaMemberships(StationPlaylist $playlist): array
+    {
+        return $this->repository->findBy(
+            [
+                'playlist' => $playlist,
+                'folder' => null,
+            ],
+            ['weight' => 'ASC']
+        );
+    }
+
+    public function removeDirectMediaMembership(StationPlaylistMedia $membership): void
+    {
+        if (null !== $membership->folder) {
+            throw new InvalidArgumentException('Only direct playlist memberships can be removed here.');
+        }
+
+        $this->queueRepo->clearForMediaAndPlaylist(
+            $membership->media,
+            $membership->playlist
+        );
+        $this->em->remove($membership);
+    }
+
     public function getHighestSongWeight(StationPlaylist $playlist): int
     {
         try {

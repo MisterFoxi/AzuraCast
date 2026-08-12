@@ -274,6 +274,12 @@ final class PlaylistsController extends AbstractScheduledEntityController
         ];
 
         if (PlaylistSources::Songs === $record->source) {
+            $return['links']['smart_block'] = $router->fromHere(
+                routeName: 'api:stations:playlist:smart-block',
+                routeParams: ['id' => $record->id],
+                absolute: !$isInternal
+            );
+
             if (PlaylistOrders::Sequential === $record->order) {
                 $return['links']['order'] = $router->fromHere(
                     routeName: 'api:stations:playlist:order',
