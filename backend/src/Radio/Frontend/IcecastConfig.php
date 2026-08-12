@@ -8,7 +8,7 @@ final class IcecastConfig
 {
     private const string PUBLIC_SOCKET_ID = 'public';
     private const string PROXY_SOCKET_ID = 'azuracast-proxy';
-    private const string PROXY_CLIENT_ADDRESS = '127.0.0.1';
+    private const string DEFAULT_PROXY_CLIENT_ADDRESS = '127.0.0.1';
 
     /**
      * Icecast 2.5 reserves one source slot for the fallback file associated
@@ -27,8 +27,13 @@ final class IcecastConfig
     /**
      * @return array<int, array<string, int|string>>
      */
-    public static function getListenSockets(int $port): array
+    public static function getListenSockets(int $port, ?string $proxyClientAddress = null): array
     {
+        $proxyClientAddress = trim($proxyClientAddress ?? '');
+        if ('' === $proxyClientAddress) {
+            $proxyClientAddress = self::DEFAULT_PROXY_CLIENT_ADDRESS;
+        }
+
         return [
             [
                 '@id' => self::PUBLIC_SOCKET_ID,
@@ -38,7 +43,7 @@ final class IcecastConfig
             [
                 '@id' => self::PROXY_SOCKET_ID,
                 '@type' => 'virtual',
-                'client-address' => self::PROXY_CLIENT_ADDRESS,
+                'client-address' => $proxyClientAddress,
             ],
         ];
     }

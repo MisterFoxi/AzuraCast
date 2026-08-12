@@ -21,7 +21,7 @@ final class IcecastConfigTest extends TestCase
         self::assertSame('all', IcecastConfig::getFallbackOverride());
     }
 
-    public function testTrustedProxyVirtualSocketConfiguration(): void
+    public function testTrustedProxyVirtualSocketDefaultsToBuiltInProxy(): void
     {
         $xml = Writer::toString(
             ['listen-socket' => IcecastConfig::getListenSockets(8000)],
@@ -42,6 +42,24 @@ final class IcecastConfigTest extends TestCase
             <<<'XML'
             <listen-socket id="azuracast-proxy" type="virtual">
                     <client-address>127.0.0.1</client-address>
+                </listen-socket>
+            XML,
+            $xml
+        );
+    }
+
+    public function testTrustedProxyVirtualSocketUsesConfiguredExternalProxyAddress(): void
+    {
+        $xml = Writer::toString(
+            ['listen-socket' => IcecastConfig::getListenSockets(8000, '192.168.1.50')],
+            'icecast',
+            false
+        );
+
+        self::assertStringContainsString(
+            <<<'XML'
+            <listen-socket id="azuracast-proxy" type="virtual">
+                    <client-address>192.168.1.50</client-address>
                 </listen-socket>
             XML,
             $xml
