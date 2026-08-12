@@ -2350,6 +2350,7 @@ export interface StationFrontendConfiguration {
   streamer_pw?: string;
   port?: number | null;
   max_listeners?: number | null;
+  trusted_proxy_address?: string | null;
   banned_ips?: string | null;
   banned_user_agents?: string | null;
   banned_countries?: string[] | null;

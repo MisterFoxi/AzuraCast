@@ -10,6 +10,10 @@ AzuraCast image.
   address.
 - Know the station short name, mount name and generated Icecast port.
 
+If an external reverse proxy connects directly to the Icecast port, set its address in **Edit Station → Broadcasting →
+Advanced Configuration → Trusted Proxy Address** before restarting the station. Leave this field blank when listeners
+reach Icecast through AzuraCast's built-in nginx proxy.
+
 ## Runtime and configuration
 
 ```bash
@@ -22,7 +26,8 @@ Expected results:
 
 - The binary reports Icecast `2.5.0`.
 - The public socket contains `<trusted-proxy>#azuracast-proxy</trusted-proxy>`.
-- The virtual `azuracast-proxy` socket contains `<client-address>127.0.0.1</client-address>`.
+- The virtual `azuracast-proxy` socket contains the configured proxy address. It defaults to
+  `<client-address>127.0.0.1</client-address>` for the built-in proxy.
 - The station starts and its public HTTPS URL without `:port` plays normally.
 
 ## Distinct listener addresses
@@ -52,8 +57,8 @@ curl --max-time 10 \
 ```
 
 Expected result: Icecast records client A's real public address, not the documentation-only address `203.0.113.77`.
-nginx appends its peer address to the right of the incoming XFF chain; Icecast 2.5 walks that chain from right to left
-and accepts it only because the immediate peer is the configured loopback proxy.
+The trusted reverse proxy replaces or safely extends the XFF chain; Icecast accepts it only because the immediate peer
+matches the configured proxy address.
 
 If the direct Icecast port is intentionally exposed for the test, repeat the forged request against
 `http://PUBLIC_HOST:ICECAST_PORT/MOUNT`. Expected result: the forged XFF value is ignored because a direct client is not

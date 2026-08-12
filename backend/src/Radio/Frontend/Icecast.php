@@ -168,7 +168,10 @@ class Icecast extends AbstractFrontend
                 'admin-password' => $frontendConfig->admin_pw,
             ],
 
-            'listen-socket' => IcecastConfig::getListenSockets($frontendConfig->port),
+            'listen-socket' => IcecastConfig::getListenSockets(
+                $frontendConfig->port,
+                $frontendConfig->trusted_proxy_address
+            ),
 
             'mount' => [],
             'fileserve' => 1,
