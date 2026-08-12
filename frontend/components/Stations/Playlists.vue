@@ -149,7 +149,7 @@
                                         :to="{
                                             name: 'stations:files:index',
                                             params: {
-                                                path: 'playlist:'+row.item.short_name
+                                                path: 'playlist:'+row.item.id
                                             }
                                         }"
                                     >

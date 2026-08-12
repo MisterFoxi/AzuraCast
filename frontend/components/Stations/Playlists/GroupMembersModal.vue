@@ -73,7 +73,19 @@
                         :key="member.key"
                     >
                         <td>{{ index + 1 }}</td>
-                        <td>{{ member.name }}</td>
+                        <td>
+                            <router-link
+                                :to="{
+                                    name: 'stations:files:index',
+                                    params: {
+                                        path: 'playlist:'+member.playlist_id
+                                    }
+                                }"
+                                :title="$gettext('View tracks in playlist')"
+                            >
+                                {{ member.name }}
+                            </router-link>
+                        </td>
                         <td>
                             <select
                                 v-if="member.source === PlaylistSources.Songs"

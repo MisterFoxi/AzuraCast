@@ -1,0 +1,60 @@
+diff --git a/frontend/components/Stations/Media/MediaPlaylists.vue b/frontend/components/Stations/Media/MediaPlaylists.vue
+index a9ee5af..f6616b3 100644
+--- a/frontend/components/Stations/Media/MediaPlaylists.vue
++++ b/frontend/components/Stations/Media/MediaPlaylists.vue
+@@ -13,7 +13,7 @@
+                     folder: playlist.folder
+                 }
+             )"
+-            @click.prevent="emit('filter', 'playlist:'+playlist.short_name)"
++            @click.prevent="emit('filter', 'playlist:'+playlist.id)"
+         >
+             <icon-ic-folder class="sm me-1"/>
+ 
+@@ -26,7 +26,7 @@
+             class="btn-search"
+             href="#"
+             :title="$gettext('View tracks in playlist')"
+-            @click.prevent="emit('filter', 'playlist:'+playlist.short_name)"
++            @click.prevent="emit('filter', 'playlist:'+playlist.id)"
+         >
+             {{ playlist.name }}
+         </a>
+diff --git a/frontend/components/Stations/Playlists.vue b/frontend/components/Stations/Playlists.vue
+index a4fd909..df3b3b5 100644
+--- a/frontend/components/Stations/Playlists.vue
++++ b/frontend/components/Stations/Playlists.vue
+@@ -149,7 +149,7 @@
+                                         :to="{
+                                             name: 'stations:files:index',
+                                             params: {
+-                                                path: 'playlist:'+row.item.short_name
++                                                path: 'playlist:'+row.item.id
+                                             }
+                                         }"
+                                     >
+diff --git a/frontend/components/Stations/Playlists/GroupMembersModal.vue b/frontend/components/Stations/Playlists/GroupMembersModal.vue
+index 9b5c6a6..de2989f 100644
+--- a/frontend/components/Stations/Playlists/GroupMembersModal.vue
++++ b/frontend/components/Stations/Playlists/GroupMembersModal.vue
+@@ -73,7 +73,19 @@
+                         :key="member.key"
+                     >
+                         <td>{{ index + 1 }}</td>
+-                        <td>{{ member.name }}</td>
++                        <td>
++                            <router-link
++                                :to="{
++                                    name: 'stations:files:index',
++                                    params: {
++                                        path: 'playlist:'+member.playlist_id
++                                    }
++                                }"
++                                :title="$gettext('View tracks in playlist')"
++                            >
++                                {{ member.name }}
++                            </router-link>
++                        </td>
+                         <td>
+                             <select
+                                 v-if="member.source === PlaylistSources.Songs"
