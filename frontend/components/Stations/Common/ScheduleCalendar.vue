@@ -26,11 +26,12 @@
 <script setup lang="ts">
 import Schedule from "~/components/Common/ScheduleView.vue";
 import IconIcAdd from "~icons/ic/baseline-add";
-import {Calendar, EventClickArg} from "@fullcalendar/core";
+import {Calendar, EventClickArg, SlotLabelContentArg} from "@fullcalendar/core";
 import {EventImpl} from "@fullcalendar/core/internal";
 import {computed, nextTick, useTemplateRef, toValue} from "vue";
 import {useStationData} from "~/functions/useStationQuery.ts";
 import {toRefs} from "@vueuse/core";
+import {useLuxon} from "~/vendor/luxon.ts";
 
 const props = withDefaults(defineProps<{
     scheduleUrl: string | string[],
@@ -46,6 +47,19 @@ const emit = defineEmits<{
 
 const stationData = useStationData();
 const {timezone} = toRefs(stationData);
+const {DateTime} = useLuxon();
+
+const renderSlotLabel = (arg: SlotLabelContentArg): string => {
+    const slotTime = DateTime.fromJSDate(arg.date);
+    const utcTime = slotTime.setZone('UTC').toFormat('HH:mm');
+    const stationTime = slotTime.setZone(timezone.value).toFormat('HH:mm');
+
+    if (timezone.value === 'UTC') {
+        return `${stationTime} UTC`;
+    }
+
+    return `${stationTime} · ${utcTime} UTC`;
+};
 
 const calendarOptions = computed(() => {
     const rawUrls = props.scheduleUrl;
@@ -59,6 +73,7 @@ const calendarOptions = computed(() => {
             right: 'timeGridWeek,timeGridDay'
         },
         timeZone: timezone.value,
+        slotLabelContent: renderSlotLabel,
         eventSources: urls,
         eventClick: onClick
     };
