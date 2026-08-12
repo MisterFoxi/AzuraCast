@@ -89,18 +89,6 @@ cd "$CLONE_DIR"
 git checkout -b "$WORK_BRANCH" 2>/dev/null || git checkout "$WORK_BRANCH"
 echo "   Branche active : $(git rev-parse --abbrev-ref HEAD)  (base : ${BRANCH:-défaut})"
 
-# ─── 6. Corriger le double binding des ports 80/443 ─────────────────
-# Le docker-compose.yml de base publie 80/443 sur 0.0.0.0 ET l'override
-# les redéclare → Compose concatène → "address already in use".
-# On commente les lignes de la base pour ne garder que celles de l'override.
-echo "→ Correction du double binding des ports 80/443…"
-sed -i -E "/AZURACAST_HTTP_PORT:-80/  s/^([[:space:]]*)-/\1#-/" docker-compose.yml
-sed -i -E "/AZURACAST_HTTPS_PORT:-443/ s/^([[:space:]]*)-/\1#-/" docker-compose.yml
-
-# ─── 6bis. IP d'écoute dans l'override (si BIND_IP != 127.0.0.1) ────
-if [[ -f docker-compose.override.yml ]]; then
-  sed -i -E "s|127\.0\.0\.1:80:80|${BIND_IP}:80:80|;   s|127\.0\.0\.1:443:443|${BIND_IP}:443:443|" docker-compose.override.yml
-fi
 
 # ─── 7. Recréer les volumes vides (override les exige en external) ──
 echo "→ Recréation des volumes vides…"
