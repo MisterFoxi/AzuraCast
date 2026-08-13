@@ -38,7 +38,7 @@
                                 @click="doCreate"
                             />
                         </div>
-                        
+
                         <data-table
                             :id="playlistTab.tableId"
                             paginated
@@ -54,7 +54,16 @@
                                     {{ row.item.description }}
                                 </p>
                                 <div class="badges">
-                                    <span class="badge text-bg-secondary">
+                                    <span
+                                        v-if="isDynamicList(row.item)"
+                                        class="badge text-bg-success"
+                                    >
+                                        {{ $gettext('Dynamic List') }}
+                                    </span>
+                                    <span
+                                        v-else
+                                        class="badge text-bg-secondary"
+                                    >
                                         <template v-if="row.item.source === 'songs'">
                                             {{ $gettext('Song-based') }}
                                         </template>
@@ -144,7 +153,7 @@
                                 </template>
                             </template>
                             <template #cell(num_songs)="row">
-                                <template v-if="row.item.source === 'songs'">
+                                <template v-if="row.item.source === 'songs' && !isDynamicList(row.item)">
                                     <router-link
                                         :to="{
                                             name: 'stations:files:index',
@@ -446,10 +455,17 @@ const playlistsQuery = useQuery<PlaylistRow[]>({
     },
 });
 
+const isDynamicList = (playlist: PlaylistRow): boolean =>
+    playlist.is_smart_block === true && playlist.smart_block_type === 'dynamic';
+
 const standardPlaylists = computed(() =>
     (playlistsQuery.data.value ?? []).filter(
-        (playlist) => playlist.source !== PlaylistSources.Group
+        (playlist) => playlist.source !== PlaylistSources.Group && !isDynamicList(playlist)
     )
+);
+
+const dynamicLists = computed(() =>
+    (playlistsQuery.data.value ?? []).filter(isDynamicList)
 );
 
 const groupLists = computed(() =>
@@ -464,6 +480,13 @@ const refreshPlaylists = async (): Promise<void> => {
 
 const standardPlaylistProvider = useClientItemProvider(
     standardPlaylists,
+    playlistsQuery.isFetching,
+    undefined,
+    refreshPlaylists
+);
+
+const dynamicListProvider = useClientItemProvider(
+    dynamicLists,
     playlistsQuery.isFetching,
     undefined,
     refreshPlaylists
@@ -489,6 +512,12 @@ const playlistTabs: PlaylistTab[] = [
         tableId: 'station_playlists',
         label: 'Playlists',
         provider: standardPlaylistProvider,
+    },
+    {
+        id: 'dynamic_lists',
+        tableId: 'station_dynamic_lists',
+        label: 'Dynamic Lists',
+        provider: dynamicListProvider,
     },
     {
         id: 'group_lists',
