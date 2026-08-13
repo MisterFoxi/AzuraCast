@@ -1,0 +1,416 @@
+From ec2b94995c48000acbafae10b44e0057ae292836 Mon Sep 17 00:00:00 2001
+From: Johannes Nagy <johannes.nagy@icloud.com>
+Date: Thu, 13 Aug 2026 06:43:51 +0000
+Subject: [PATCH 1/2] Upgrade to Icecast 2.5
+
+---
+ Dockerfile                                    | 50 +++++++++++++-
+ backend/src/Radio/AbstractLocalAdapter.php    |  1 +
+ backend/src/Radio/Enums/FrontendAdapters.php  |  2 +-
+ backend/src/Radio/Frontend/Icecast.php        | 36 +++++-----
+ backend/src/Radio/Frontend/IcecastConfig.php  | 45 ++++++++++++
+ docs/icecast-2.5-xff-integration-test.md      | 69 +++++++++++++++++++
+ .../Admin/Stations/Form/FrontendForm.vue      |  2 +-
+ tests/PureUnit/IcecastConfigTest.php          | 50 ++++++++++++++
+ util/docker/stations/setup/icecast.sh         |  2 +-
+ 9 files changed, 236 insertions(+), 21 deletions(-)
+ create mode 100644 backend/src/Radio/Frontend/IcecastConfig.php
+ create mode 100644 docs/icecast-2.5-xff-integration-test.md
+ create mode 100644 tests/PureUnit/IcecastConfigTest.php
+
+diff --git a/Dockerfile b/Dockerfile
+index abf6085..994241f 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -11,9 +11,51 @@ FROM mariadb:lts-noble AS mariadb
+ FROM ghcr.io/azuracast/azuracast.com:builtin@sha256:f7c41278613d113375ca285ba85f770c6f1daf2a08d8a3da42540389b15a2647 AS docs
+ 
+ #
+-# Icecast-KH with AzuraCast customizations build step
++# AzuraCast Icecast web assets (pinned image digest)
+ #
+-FROM ghcr.io/azuracast/icecast-ac:2025-12-29 AS icecast
++FROM ghcr.io/azuracast/icecast-ac:2025-12-29@sha256:4a6b7cdfa5382e1e71a9e97d27c13ce3e188f73e13cb499117db39d7ce73b52a AS icecast-assets
++
++#
++# Icecast 2.5 stable build step
++#
++FROM debian:trixie-slim AS icecast
++
++ARG LIBIGLOO_VERSION=0.9.5
++ARG LIBIGLOO_SHA256=ea22e9119f7a2188810f99100c5155c6762d4595ae213b9ac29e69b4f0b87289
++ARG ICECAST_VERSION=2.5.0
++ARG ICECAST_SHA512=d92ce5d8ae1cd011eaa8c7424adea744f35e5c2d3e8244d362743be1c6bbc8fc44d76d7a212cf1eebe79da9b7d83b2ed5ab8659fb97929af316674b5ddf590b5
++
++RUN apt-get update \
++    && apt-get install -q -y --no-install-recommends \
++        build-essential ca-certificates curl pkg-config \
++        libcurl4-openssl-dev librhash-dev libssl-dev libvorbis-dev libxml2-dev libxslt1-dev \
++    && curl -fsSL \
++        "https://downloads.xiph.org/releases/igloo/libigloo-${LIBIGLOO_VERSION}.tar.gz" \
++        -o /tmp/libigloo.tar.gz \
++    && echo "${LIBIGLOO_SHA256}  /tmp/libigloo.tar.gz" | sha256sum --check --strict \
++    && mkdir /tmp/libigloo \
++    && tar -xzf /tmp/libigloo.tar.gz --strip-components=1 -C /tmp/libigloo \
++    && cd /tmp/libigloo \
++    && ./configure --prefix=/usr/local \
++    && make -j"$(nproc)" \
++    && make install \
++    && curl -fsSL \
++        "https://downloads.xiph.org/releases/icecast/icecast-${ICECAST_VERSION}.tar.gz" \
++        -o /tmp/icecast.tar.gz \
++    && echo "${ICECAST_SHA512}  /tmp/icecast.tar.gz" | sha512sum --check --strict \
++    && mkdir /tmp/icecast \
++    && tar -xzf /tmp/icecast.tar.gz --strip-components=1 -C /tmp/icecast \
++    && cd /tmp/icecast \
++    && PKG_CONFIG_PATH=/usr/local/lib/pkgconfig ./configure --prefix=/usr/local \
++    && make -j"$(nproc)" \
++    && make install \
++    && ldconfig
++
++# Preserve only AzuraCast's custom status/fallback assets, not the KH binary or KH web UI.
++COPY --from=icecast-assets /usr/local/share/icecast/web/error.mp3 /usr/local/share/icecast/web/error.mp3
++COPY --from=icecast-assets /usr/local/share/icecast/web/fallback* /usr/local/share/icecast/web/
++COPY --from=icecast-assets /usr/local/share/icecast/web/status-json.xsl /usr/local/share/icecast/web/status-json.xsl
++COPY --from=icecast-assets /usr/local/share/icecast/web/xml2json.xslt /usr/local/share/icecast/web/xml2json.xslt
+ 
+ #
+ # PHP Extension Installer build step
+@@ -34,6 +76,7 @@ COPY --from=mariadb /usr/local/bin/docker-entrypoint.sh /usr/local/bin/db_entryp
+ # Add Icecast
+ COPY --from=icecast /usr/local/bin/icecast /usr/local/bin/icecast
+ COPY --from=icecast /usr/local/share/icecast /usr/local/share/icecast
++COPY --from=icecast /usr/local/lib/libigloo* /usr/local/lib/
+ 
+ #
+ # Final build image
+@@ -48,6 +91,9 @@ ENV TZ="UTC" \
+ 
+ COPY --link --from=dependencies / /
+ 
++# Register the libigloo shared libraries copied from the Icecast build stage.
++RUN ldconfig
++
+ # Run base build process
+ RUN --mount=type=bind,source=./util/docker/common,target=/bd_build,rw \
+     bash /bd_build/prepare.sh && \
+diff --git a/backend/src/Radio/AbstractLocalAdapter.php b/backend/src/Radio/AbstractLocalAdapter.php
+index 5e4aeb0..6fc0db5 100644
+--- a/backend/src/Radio/AbstractLocalAdapter.php
++++ b/backend/src/Radio/AbstractLocalAdapter.php
+@@ -63,6 +63,7 @@ abstract class AbstractLocalAdapter
+             $configPath,
+             $newConfig
+         );
++        $fsUtils->chmod($configPath, 0o600);
+ 
+         return 0 !== strcmp($currentConfig, $newConfig);
+     }
+diff --git a/backend/src/Radio/Enums/FrontendAdapters.php b/backend/src/Radio/Enums/FrontendAdapters.php
+index ce7ecbc..df1f4f6 100644
+--- a/backend/src/Radio/Enums/FrontendAdapters.php
++++ b/backend/src/Radio/Enums/FrontendAdapters.php
+@@ -26,7 +26,7 @@ enum FrontendAdapters: string implements AdapterTypeInterface
+     public function getName(): string
+     {
+         return match ($this) {
+-            self::Icecast => 'Icecast 2.4',
++            self::Icecast => 'Icecast 2.5',
+             self::Shoutcast => 'Shoutcast DNAS 2',
+             self::Rsas => 'Rocket Streaming Audio Server (RSAS)',
+             self::Remote => 'Remote',
+diff --git a/backend/src/Radio/Frontend/Icecast.php b/backend/src/Radio/Frontend/Icecast.php
+index 6e4c773..61db5d3 100644
+--- a/backend/src/Radio/Frontend/Icecast.php
++++ b/backend/src/Radio/Frontend/Icecast.php
+@@ -154,7 +154,7 @@ class Icecast extends AbstractFrontend
+             'limits' => [
+                 'clients' => !empty($frontendConfig->max_listeners) ? $frontendConfig->max_listeners * 2 : 2500,
+                 'max-listeners' => $frontendConfig->max_listeners ?? -1,
+-                'sources' => $station->mounts->count(),
++                'sources' => IcecastConfig::getSourceLimit($station->mounts->count()),
+                 'queue-size' => 524288,
+                 'client-timeout' => 30,
+                 'header-timeout' => 15,
+@@ -168,9 +168,7 @@ class Icecast extends AbstractFrontend
+                 'admin-password' => $frontendConfig->admin_pw,
+             ],
+ 
+-            'listen-socket' => [
+-                'port' => $frontendConfig->port,
+-            ],
++            'listen-socket' => IcecastConfig::getListenSockets($frontendConfig->port),
+ 
+             'mount' => [],
+             'fileserve' => 1,
+@@ -186,30 +184,36 @@ class Icecast extends AbstractFrontend
+                         '@dest' => '/status.xsl',
+                     ],
+                 ],
+-                'ssl-private-key' => $certKey,
+-                'ssl-certificate' => $certPath,
+-                // phpcs:disable Generic.Files.LineLength
+-                'ssl-allowed-ciphers' => 'ECDH+AESGCM:DH+AESGCM:ECDH+AES256:DH+AES256:ECDH+AES128:DH+AES:RSA+AESGCM:RSA+AES:!aNULL:!MD5:!DSS',
+-                // phpcs:enable
+                 'deny-ip' => $this->writeIpBansFile($station),
+-                'deny-agents' => $this->writeUserAgentBansFile($station),
+-                'x-forwarded-for' => '127.0.0.1',
+             ],
+             'logging' => [
+                 'accesslog' => 'icecast_access.log',
+-                'errorlog' => '/dev/stderr',
++                'errorlog' => '-',
+                 'loglevel' => $this->environment->isProduction() ? self::LOGLEVEL_WARN : self::LOGLEVEL_INFO,
+                 'logsize' => 10000,
+             ],
+             'security' => [
+-                'chroot' => 0,
++                'chroot' => 'false',
++                'tls-context' => [
++                    // phpcs:disable Generic.Files.LineLength
++                    'tls-allowed-ciphers' => 'ECDH+AESGCM:DH+AESGCM:ECDH+AES256:DH+AES256:ECDH+AES128:DH+AES:RSA+AESGCM:RSA+AES:!aNULL:!MD5:!DSS',
++                    // phpcs:enable
++                    'tls-certificate' => $certPath,
++                    'tls-key' => $certKey,
++                ],
++                'prng-seed' => [
++                    '@type' => 'read-write',
++                    '@size' => '1024',
++                    '_' => $configDir . '/icecast.prng-seed',
++                ],
+             ],
+         ];
+ 
+         $bannedCountries = $frontendConfig->banned_countries ?? [];
++        $bannedUserAgents = trim($frontendConfig->banned_user_agents ?? '');
+         $allowedIps = $this->getIpsAsArray($frontendConfig->allowed_ips);
+ 
+-        $useListenerAuth = !empty($bannedCountries) || !empty($allowedIps);
++        $useListenerAuth = !empty($bannedCountries) || '' !== $bannedUserAgents || !empty($allowedIps);
+         $charset = match ($station->backend_config->charset) {
+             'ISO-8859-1' => 'ISO8859-1',
+             default => 'UTF8',
+@@ -257,13 +261,13 @@ class Icecast extends AbstractFrontend
+ 
+             if (!empty($mountRow->fallback_mount)) {
+                 $mount['fallback-mount'] = $mountRow->fallback_mount;
+-                $mount['fallback-override'] = 1;
++                $mount['fallback-override'] = IcecastConfig::getFallbackOverride();
+             } elseif ($mountRow->enable_autodj) {
+                 $autoDjFormat = $mountRow->autodj_format ?? StreamFormats::default();
+                 $autoDjBitrate = $mountRow->autodj_bitrate;
+ 
+                 $mount['fallback-mount'] = '/fallback-[' . $autoDjBitrate . '].' . $autoDjFormat->getExtension();
+-                $mount['fallback-override'] = 1;
++                $mount['fallback-override'] = IcecastConfig::getFallbackOverride();
+             }
+ 
+             if ($mountRow->max_listener_duration) {
+diff --git a/backend/src/Radio/Frontend/IcecastConfig.php b/backend/src/Radio/Frontend/IcecastConfig.php
+new file mode 100644
+index 0000000..ba551ce
+--- /dev/null
++++ b/backend/src/Radio/Frontend/IcecastConfig.php
+@@ -0,0 +1,45 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Radio\Frontend;
++
++final class IcecastConfig
++{
++    private const string PUBLIC_SOCKET_ID = 'public';
++    private const string PROXY_SOCKET_ID = 'azuracast-proxy';
++    private const string PROXY_CLIENT_ADDRESS = '127.0.0.1';
++
++    /**
++     * Icecast 2.5 reserves one source slot for the fallback file associated
++     * with each configured station mount.
++     */
++    public static function getSourceLimit(int $mountCount): int
++    {
++        return $mountCount * 2;
++    }
++
++    public static function getFallbackOverride(): string
++    {
++        return 'all';
++    }
++
++    /**
++     * @return array<int, array<string, int|string>>
++     */
++    public static function getListenSockets(int $port): array
++    {
++        return [
++            [
++                '@id' => self::PUBLIC_SOCKET_ID,
++                'port' => $port,
++                'trusted-proxy' => '#' . self::PROXY_SOCKET_ID,
++            ],
++            [
++                '@id' => self::PROXY_SOCKET_ID,
++                '@type' => 'virtual',
++                'client-address' => self::PROXY_CLIENT_ADDRESS,
++            ],
++        ];
++    }
++}
+diff --git a/docs/icecast-2.5-xff-integration-test.md b/docs/icecast-2.5-xff-integration-test.md
+new file mode 100644
+index 0000000..b92e446
+--- /dev/null
++++ b/docs/icecast-2.5-xff-integration-test.md
+@@ -0,0 +1,69 @@
++# Icecast 2.5 reverse-proxy integration test
++
++This procedure validates the listener path `client -> nginx -> Icecast -> AzuraCast statistics` after rebuilding the
++AzuraCast image.
++
++## Preconditions
++
++- Use a disposable development or pre-production station.
++- Keep the direct Icecast port closed to the Internet unless the direct-port spoof test is being run from an allowed
++  address.
++- Know the station short name, mount name and generated Icecast port.
++
++## Runtime and configuration
++
++```bash
++docker compose exec web /usr/local/bin/icecast --version
++docker compose exec web grep -A8 -B1 '<listen-socket' \
++  /var/azuracast/stations/STATION/config/icecast.xml
++```
++
++Expected results:
++
++- The binary reports Icecast `2.5.0`.
++- The public socket contains `<trusted-proxy>#azuracast-proxy</trusted-proxy>`.
++- The virtual `azuracast-proxy` socket contains `<client-address>127.0.0.1</client-address>`.
++- The station starts and its public HTTPS URL without `:port` plays normally.
++
++## Distinct listener addresses
++
++1. Connect client A through the public HTTPS URL from public network A.
++2. Connect client B through the same URL from a different public network B.
++3. Keep both connections open long enough for Now Playing synchronization.
++4. Inspect the Icecast access log and AzuraCast listener report.
++
++```bash
++docker compose exec web tail -n 100 \
++  /var/azuracast/stations/STATION/config/icecast_access.log
++```
++
++Expected result: the two public client addresses are distinct; `127.0.0.1` is not recorded as the address of both
++listeners.
++
++## Spoof resistance
++
++From client A, send a forged header through the public proxy:
++
++```bash
++curl --max-time 10 \
++  -H 'X-Forwarded-For: 203.0.113.77' \
++  -o /dev/null \
++  'https://PUBLIC_HOST/listen/STATION/MOUNT'
++```
++
++Expected result: Icecast records client A's real public address, not the documentation-only address `203.0.113.77`.
++nginx appends its peer address to the right of the incoming XFF chain; Icecast 2.5 walks that chain from right to left
++and accepts it only because the immediate peer is the configured loopback proxy.
++
++If the direct Icecast port is intentionally exposed for the test, repeat the forged request against
++`http://PUBLIC_HOST:ICECAST_PORT/MOUNT`. Expected result: the forged XFF value is ignored because a direct client is not
++a trusted proxy.
++
++## Radio regression checks
++
++- AutoDJ plays and advances normally.
++- A live source takes over and returns to AutoDJ after disconnecting.
++- Explicit fallback mounts work.
++- Every configured mount is reachable.
++- Listener authentication and configured IP/country/User-Agent blocks still apply.
++- Instant listener counts and listener history remain coherent after synchronization.
+diff --git a/frontend/components/Admin/Stations/Form/FrontendForm.vue b/frontend/components/Admin/Stations/Form/FrontendForm.vue
+index 483a241..bc7db54 100644
+--- a/frontend/components/Admin/Stations/Form/FrontendForm.vue
++++ b/frontend/components/Admin/Stations/Form/FrontendForm.vue
+@@ -203,7 +203,7 @@ const {$gettext} = useTranslate();
+ const frontendTypeOptions = computed<SimpleFormOptionInput>(() => {
+     const frontendOptions: SimpleFormOptionInput = [
+         {
+-            text: $gettext('Use Icecast 2.4 on this server.'),
++            text: $gettext('Use Icecast 2.5 on this server.'),
+             value: FrontendAdapters.Icecast
+         },
+     ];
+diff --git a/tests/PureUnit/IcecastConfigTest.php b/tests/PureUnit/IcecastConfigTest.php
+new file mode 100644
+index 0000000..979d0c6
+--- /dev/null
++++ b/tests/PureUnit/IcecastConfigTest.php
+@@ -0,0 +1,50 @@
++<?php
++
++declare(strict_types=1);
++
++namespace PureUnit;
++
++use App\Radio\Frontend\IcecastConfig;
++use App\Xml\Writer;
++use PHPUnit\Framework\TestCase;
++
++final class IcecastConfigTest extends TestCase
++{
++    public function testIcecast25ReservesSourceSlotsForMountsAndFallbackFiles(): void
++    {
++        self::assertSame(2, IcecastConfig::getSourceLimit(1));
++        self::assertSame(6, IcecastConfig::getSourceLimit(3));
++    }
++
++    public function testIcecast25UsesNamedFallbackOverrideMode(): void
++    {
++        self::assertSame('all', IcecastConfig::getFallbackOverride());
++    }
++
++    public function testTrustedProxyVirtualSocketConfiguration(): void
++    {
++        $xml = Writer::toString(
++            ['listen-socket' => IcecastConfig::getListenSockets(8000)],
++            'icecast',
++            false
++        );
++
++        self::assertStringContainsString(
++            <<<'XML'
++            <listen-socket id="public">
++                    <port>8000</port>
++                    <trusted-proxy>#azuracast-proxy</trusted-proxy>
++                </listen-socket>
++            XML,
++            $xml
++        );
++        self::assertStringContainsString(
++            <<<'XML'
++            <listen-socket id="azuracast-proxy" type="virtual">
++                    <client-address>127.0.0.1</client-address>
++                </listen-socket>
++            XML,
++            $xml
++        );
++    }
++}
+diff --git a/util/docker/stations/setup/icecast.sh b/util/docker/stations/setup/icecast.sh
+index 6992676..b413051 100644
+--- a/util/docker/stations/setup/icecast.sh
++++ b/util/docker/stations/setup/icecast.sh
+@@ -4,4 +4,4 @@ set -x
+ 
+ # Icecast is built and imported in its own Docker container.
+ 
+-apt-get install -q -y --no-install-recommends libxml2 libxslt1.1 openssl
++apt-get install -q -y --no-install-recommends librhash1 libxml2 libxslt1.1 openssl
+-- 
+2.34.1
+

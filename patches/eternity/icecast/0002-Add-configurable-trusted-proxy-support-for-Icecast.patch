@@ -1,0 +1,280 @@
+From 36b8b4994322c92411f2eac4edc119524b7d46bf Mon Sep 17 00:00:00 2001
+From: Johannes Nagy <johannes.nagy@icloud.com>
+Date: Thu, 13 Aug 2026 06:44:37 +0000
+Subject: [PATCH 2/2] Add configurable trusted proxy support for Icecast
+
+---
+ .../Entity/StationFrontendConfiguration.php   |  5 ++
+ backend/src/Radio/Frontend/Icecast.php        |  5 +-
+ backend/src/Radio/Frontend/IcecastConfig.php  | 35 +++++++++----
+ docs/icecast-2.5-xff-integration-test.md      | 11 ++--
+ .../Admin/Stations/Form/FrontendForm.vue      | 17 +++++++
+ .../components/Admin/Stations/Form/form.ts    |  2 +
+ frontend/entities/ApiInterfaces.ts            |  1 +
+ tests/PureUnit/IcecastConfigTest.php          | 50 ++++++++++++++++++-
+ 8 files changed, 112 insertions(+), 14 deletions(-)
+
+diff --git a/backend/src/Entity/StationFrontendConfiguration.php b/backend/src/Entity/StationFrontendConfiguration.php
+index 7bdf1b5..6ec117b 100644
+--- a/backend/src/Entity/StationFrontendConfiguration.php
++++ b/backend/src/Entity/StationFrontendConfiguration.php
+@@ -55,6 +55,11 @@ final class StationFrontendConfiguration extends AbstractArrayEntity
+         set (int|string|null $value) => Types::intOrNull($value);
+     }
+ 
++    #[OA\Property]
++    public ?string $trusted_proxy_address = null {
++        set => Types::stringOrNull($value, true);
++    }
++
+     #[OA\Property]
+     public ?string $banned_ips = null {
+         set => Types::stringOrNull($value, true);
+diff --git a/backend/src/Radio/Frontend/Icecast.php b/backend/src/Radio/Frontend/Icecast.php
+index 61db5d3..c57d0b9 100644
+--- a/backend/src/Radio/Frontend/Icecast.php
++++ b/backend/src/Radio/Frontend/Icecast.php
+@@ -168,7 +168,10 @@ class Icecast extends AbstractFrontend
+                 'admin-password' => $frontendConfig->admin_pw,
+             ],
+ 
+-            'listen-socket' => IcecastConfig::getListenSockets($frontendConfig->port),
++            'listen-socket' => IcecastConfig::getListenSockets(
++                $frontendConfig->port,
++                $frontendConfig->trusted_proxy_address
++            ),
+ 
+             'mount' => [],
+             'fileserve' => 1,
+diff --git a/backend/src/Radio/Frontend/IcecastConfig.php b/backend/src/Radio/Frontend/IcecastConfig.php
+index ba551ce..a90db4b 100644
+--- a/backend/src/Radio/Frontend/IcecastConfig.php
++++ b/backend/src/Radio/Frontend/IcecastConfig.php
+@@ -8,7 +8,8 @@ final class IcecastConfig
+ {
+     private const string PUBLIC_SOCKET_ID = 'public';
+     private const string PROXY_SOCKET_ID = 'azuracast-proxy';
+-    private const string PROXY_CLIENT_ADDRESS = '127.0.0.1';
++    private const string EXTERNAL_PROXY_SOCKET_ID = 'external-proxy';
++    private const string DEFAULT_PROXY_CLIENT_ADDRESS = '127.0.0.1';
+ 
+     /**
+      * Icecast 2.5 reserves one source slot for the fallback file associated
+@@ -25,21 +26,37 @@ final class IcecastConfig
+     }
+ 
+     /**
+-     * @return array<int, array<string, int|string>>
++     * @return array<int, array<string, int|string|array<int, string>>>
+      */
+-    public static function getListenSockets(int $port): array
++    public static function getListenSockets(int $port, ?string $proxyClientAddress = null): array
+     {
++        $proxyClientAddress = trim($proxyClientAddress ?? '');
++
++        $trustedProxies = ['#' . self::PROXY_SOCKET_ID];
++        $proxySockets = [
++            [
++                '@id' => self::PROXY_SOCKET_ID,
++                '@type' => 'virtual',
++                'client-address' => self::DEFAULT_PROXY_CLIENT_ADDRESS,
++            ],
++        ];
++
++        if ('' !== $proxyClientAddress && self::DEFAULT_PROXY_CLIENT_ADDRESS !== $proxyClientAddress) {
++            $trustedProxies[] = '#' . self::EXTERNAL_PROXY_SOCKET_ID;
++            $proxySockets[] = [
++                '@id' => self::EXTERNAL_PROXY_SOCKET_ID,
++                '@type' => 'virtual',
++                'client-address' => $proxyClientAddress,
++            ];
++        }
++
+         return [
+             [
+                 '@id' => self::PUBLIC_SOCKET_ID,
+                 'port' => $port,
+-                'trusted-proxy' => '#' . self::PROXY_SOCKET_ID,
+-            ],
+-            [
+-                '@id' => self::PROXY_SOCKET_ID,
+-                '@type' => 'virtual',
+-                'client-address' => self::PROXY_CLIENT_ADDRESS,
++                'trusted-proxy' => $trustedProxies,
+             ],
++            ...$proxySockets,
+         ];
+     }
+ }
+diff --git a/docs/icecast-2.5-xff-integration-test.md b/docs/icecast-2.5-xff-integration-test.md
+index b92e446..d52b55c 100644
+--- a/docs/icecast-2.5-xff-integration-test.md
++++ b/docs/icecast-2.5-xff-integration-test.md
+@@ -10,6 +10,10 @@ AzuraCast image.
+   address.
+ - Know the station short name, mount name and generated Icecast port.
+ 
++If an external reverse proxy connects directly to the Icecast port, set its address in **Edit Station → Broadcasting →
++Advanced Configuration → Trusted Proxy Address** before restarting the station. Leave this field blank when listeners
++reach Icecast through AzuraCast's built-in nginx proxy.
++
+ ## Runtime and configuration
+ 
+ ```bash
+@@ -22,7 +26,8 @@ Expected results:
+ 
+ - The binary reports Icecast `2.5.0`.
+ - The public socket contains `<trusted-proxy>#azuracast-proxy</trusted-proxy>`.
+-- The virtual `azuracast-proxy` socket contains `<client-address>127.0.0.1</client-address>`.
++- The virtual `azuracast-proxy` socket contains the configured proxy address. It defaults to
++  `<client-address>127.0.0.1</client-address>` for the built-in proxy.
+ - The station starts and its public HTTPS URL without `:port` plays normally.
+ 
+ ## Distinct listener addresses
+@@ -52,8 +57,8 @@ curl --max-time 10 \
+ ```
+ 
+ Expected result: Icecast records client A's real public address, not the documentation-only address `203.0.113.77`.
+-nginx appends its peer address to the right of the incoming XFF chain; Icecast 2.5 walks that chain from right to left
+-and accepts it only because the immediate peer is the configured loopback proxy.
++The trusted reverse proxy replaces or safely extends the XFF chain; Icecast accepts it only because the immediate peer
++matches the configured proxy address.
+ 
+ If the direct Icecast port is intentionally exposed for the test, repeat the forged request against
+ `http://PUBLIC_HOST:ICECAST_PORT/MOUNT`. Expected result: the forged XFF value is ignored because a direct client is not
+diff --git a/frontend/components/Admin/Stations/Form/FrontendForm.vue b/frontend/components/Admin/Stations/Form/FrontendForm.vue
+index bc7db54..f0a7e47 100644
+--- a/frontend/components/Admin/Stations/Form/FrontendForm.vue
++++ b/frontend/components/Admin/Stations/Form/FrontendForm.vue
+@@ -82,6 +82,19 @@
+                     />
+                 </div>
+ 
++                <div
++                    v-if="isIcecastFrontend"
++                    class="row g-3 mb-3"
++                >
++                    <form-group-field
++                        id="edit_form_frontend_trusted_proxy_address"
++                        class="col-md-6"
++                        :field="r$.frontend_config.trusted_proxy_address"
++                        :label="$gettext('Trusted Proxy Address')"
++                        :description="$gettext('IP address or hostname of the reverse proxy that connects directly to Icecast. Leave blank to trust the built-in AzuraCast proxy.')"
++                    />
++                </div>
++
+                 <div class="row g-3 mb-3">
+                     <div class="col">
+                         <info-card v-if="isShoutcastFrontend">
+@@ -238,6 +251,10 @@ const isShoutcastFrontend = computed(() => {
+     return form.value.frontend_type === FrontendAdapters.Shoutcast;
+ });
+ 
++const isIcecastFrontend = computed(() => {
++    return form.value.frontend_type === FrontendAdapters.Icecast;
++});
++
+ const clearCountries = () => {
+     form.value.frontend_config.banned_countries = [];
+ }
+diff --git a/frontend/components/Admin/Stations/Form/form.ts b/frontend/components/Admin/Stations/Form/form.ts
+index 514f830..29e641f 100644
+--- a/frontend/components/Admin/Stations/Form/form.ts
++++ b/frontend/components/Admin/Stations/Form/form.ts
+@@ -56,6 +56,7 @@ export const useAdminStationsForm = defineStore(
+                 streamer_pw: '',
+                 port: null,
+                 max_listeners: null,
++                trusted_proxy_address: '',
+                 custom_config: '',
+                 banned_ips: '',
+                 banned_countries: [],
+@@ -166,6 +167,7 @@ export const useAdminStationsForm = defineStore(
+                         fields.frontend_config.admin_pw,
+                         fields.frontend_config.port,
+                         fields.frontend_config.max_listeners,
++                        fields.frontend_config.trusted_proxy_address,
+                         fields.frontend_config.custom_config,
+                         fields.frontend_config.banned_ips,
+                         fields.frontend_config.banned_countries,
+diff --git a/frontend/entities/ApiInterfaces.ts b/frontend/entities/ApiInterfaces.ts
+index cb53fa4..560bdbd 100644
+--- a/frontend/entities/ApiInterfaces.ts
++++ b/frontend/entities/ApiInterfaces.ts
+@@ -2323,6 +2323,7 @@ export interface StationFrontendConfiguration {
+   streamer_pw?: string;
+   port?: number | null;
+   max_listeners?: number | null;
++  trusted_proxy_address?: string | null;
+   banned_ips?: string | null;
+   banned_user_agents?: string | null;
+   banned_countries?: string[] | null;
+diff --git a/tests/PureUnit/IcecastConfigTest.php b/tests/PureUnit/IcecastConfigTest.php
+index 979d0c6..305dd64 100644
+--- a/tests/PureUnit/IcecastConfigTest.php
++++ b/tests/PureUnit/IcecastConfigTest.php
+@@ -21,7 +21,7 @@ final class IcecastConfigTest extends TestCase
+         self::assertSame('all', IcecastConfig::getFallbackOverride());
+     }
+ 
+-    public function testTrustedProxyVirtualSocketConfiguration(): void
++    public function testTrustedProxyVirtualSocketDefaultsToBuiltInProxy(): void
+     {
+         $xml = Writer::toString(
+             ['listen-socket' => IcecastConfig::getListenSockets(8000)],
+@@ -47,4 +47,52 @@ final class IcecastConfigTest extends TestCase
+             $xml
+         );
+     }
++
++    public function testConfiguredExternalProxyIsAddedWithoutRemovingBuiltInProxy(): void
++    {
++        $xml = Writer::toString(
++            ['listen-socket' => IcecastConfig::getListenSockets(8000, '192.168.1.50')],
++            'icecast',
++            false
++        );
++
++        self::assertStringContainsString(
++            <<<'XML'
++            <listen-socket id="public">
++                    <port>8000</port>
++                    <trusted-proxy>#azuracast-proxy</trusted-proxy>
++                    <trusted-proxy>#external-proxy</trusted-proxy>
++                </listen-socket>
++            XML,
++            $xml
++        );
++        self::assertStringContainsString(
++            <<<'XML'
++            <listen-socket id="azuracast-proxy" type="virtual">
++                    <client-address>127.0.0.1</client-address>
++                </listen-socket>
++            XML,
++            $xml
++        );
++        self::assertStringContainsString(
++            <<<'XML'
++            <listen-socket id="external-proxy" type="virtual">
++                    <client-address>192.168.1.50</client-address>
++                </listen-socket>
++            XML,
++            $xml
++        );
++    }
++
++    public function testLoopbackAddressDoesNotCreateDuplicateTrustedProxy(): void
++    {
++        $xml = Writer::toString(
++            ['listen-socket' => IcecastConfig::getListenSockets(8000, '127.0.0.1')],
++            'icecast',
++            false
++        );
++
++        self::assertSame(1, substr_count($xml, '<trusted-proxy>'));
++        self::assertSame(1, substr_count($xml, '<client-address>127.0.0.1</client-address>'));
++    }
+ }
+-- 
+2.34.1
+

@@ -1,0 +1,182 @@
+From dc3d448ed78eed54c01ff612d47fcc7f9dca3421 Mon Sep 17 00:00:00 2001
+From: MisterFoxi <lcc1967@gmail.com>
+Date: Thu, 13 Aug 2026 07:12:46 +0200
+Subject: [PATCH 2/2] Separate dynamic lists in playlist UI
+
+---
+ frontend/components/Stations/Playlists.vue | 107 ++++++++++++++++++---
+ 1 file changed, 95 insertions(+), 12 deletions(-)
+
+diff --git a/frontend/components/Stations/Playlists.vue b/frontend/components/Stations/Playlists.vue
+index 5e34d89..1d7fa9b 100644
+--- a/frontend/components/Stations/Playlists.vue
++++ b/frontend/components/Stations/Playlists.vue
+@@ -26,8 +26,10 @@
+                 destroy-on-hide
+             >
+                 <tab
+-                    id="all_playlists"
+-                    :label="$gettext('All Playlists')"
++                    v-for="playlistTab in playlistTabs"
++                    :id="playlistTab.id"
++                    :key="playlistTab.id"
++                    :label="$gettext(playlistTab.label)"
+                 >
+                     <div class="card-body-flush">
+                         <div class="card-body buttons">
+@@ -38,10 +40,10 @@
+                         </div>
+                         
+                         <data-table
+-                            id="station_playlists"
++                            :id="playlistTab.tableId"
+                             paginated
+                             :fields="fields"
+-                            :provider="listItemProvider"
++                            :provider="playlistTab.provider"
+                             detailed
+                         >
+                             <template #cell(name)="row">
+@@ -52,8 +54,17 @@
+                                     {{ row.item.description }}
+                                 </p>
+                                 <div class="badges">
+-                                    <span class="badge text-bg-secondary">
+-                                        <template v-if="row.item.source === 'songs'">
++                                    <span
++                                        v-if="isDynamicList(row.item)"
++                                        class="badge text-bg-success"
++                                    >
++                                        {{ $gettext('Dynamic List') }}
++                                    </span>
++                                    <span
++                                        v-else
++                                        class="badge text-bg-secondary"
++                                    >
++                                        <template v-if="row.item.source === 'songs' && !isDynamicList(row.item)">
+                                             {{ $gettext('Song-based') }}
+                                         </template>
+                                         <template v-else>
+@@ -305,7 +316,7 @@ import QueueModal from "~/components/Stations/Playlists/QueueModal.vue";
+ import CloneModal from "~/components/Stations/Playlists/CloneModal.vue";
+ import ApplyToModal from "~/components/Stations/Playlists/ApplyToModal.vue";
+ import {useTranslate} from "~/vendor/gettext";
+-import {useTemplateRef} from "vue";
++import {computed, useTemplateRef} from "vue";
+ import useHasEditModal from "~/functions/useHasEditModal";
+ import {useMayNeedRestart} from "~/functions/useMayNeedRestart";
+ import {useNotify} from "~/components/Common/Toasts/useNotify.ts";
+@@ -317,13 +328,16 @@ import Tabs from "~/components/Common/Tabs.vue";
+ import Tab from "~/components/Common/Tab.vue";
+ import AddButton from "~/components/Common/AddButton.vue";
+ 
+-import {useApiItemProvider} from "~/functions/dataTable/useApiItemProvider.ts";
++import {useClientItemProvider} from "~/functions/dataTable/useClientItemProvider.ts";
+ import {QueryKeys, queryKeyWithStation} from "~/entities/Queries.ts";
+ import {useStationData} from "~/functions/useStationQuery.ts";
+ import {toRefs} from "@vueuse/core";
+ import IconBiContract from "~icons/bi/chevron-contract";
+ import IconBiExpand from "~icons/bi/chevron-expand";
+ import {useApiRouter} from "~/functions/useApiRouter.ts";
++import {useQuery} from "@tanstack/vue-query";
++import type {StationPlaylist} from "~/entities/ApiInterfaces.ts";
++import type {DataTableItemProvider} from "~/functions/useHasDatatable.ts";
+ 
+ const {getStationApiUrl} = useApiRouter();
+ const listUrl = getStationApiUrl('/playlists');
+@@ -338,11 +352,80 @@ const fields: DataTableField[] = [
+     {key: 'actions', label: $gettext('Actions'), sortable: false, class: 'shrink'}
+ ];
+ 
+-const listItemProvider = useApiItemProvider(
+-    listUrl,
+-    queryKeyWithStation([QueryKeys.StationPlaylists])
++const {axios} = useAxios();
++
++type PlaylistListResponse = {
++    rows: StationPlaylist[],
++}
++
++const playlistsQuery = useQuery<StationPlaylist[]>({
++    queryKey: queryKeyWithStation([QueryKeys.StationPlaylists]),
++    queryFn: async ({signal}) => {
++        const {data} = await axios.get<PlaylistListResponse>(listUrl.value, {
++            params: {
++                internal: true,
++                rowCount: 0,
++            },
++            signal,
++        });
++
++        return data.rows ?? [];
++    },
++});
++
++const isDynamicList = (playlist: StationPlaylist): boolean =>
++    playlist.is_smart_block === true && playlist.smart_block_type === 'dynamic';
++
++const standardPlaylists = computed(() =>
++    (playlistsQuery.data.value ?? []).filter(
++        (playlist) => !isDynamicList(playlist)
++    )
++);
++
++const dynamicLists = computed(() =>
++    (playlistsQuery.data.value ?? []).filter(isDynamicList)
++);
++
++const refreshPlaylists = async (): Promise<void> => {
++    await playlistsQuery.refetch();
++};
++
++const standardPlaylistProvider = useClientItemProvider(
++    standardPlaylists,
++    playlistsQuery.isFetching,
++    undefined,
++    refreshPlaylists
++);
++
++const dynamicListProvider = useClientItemProvider(
++    dynamicLists,
++    playlistsQuery.isFetching,
++    undefined,
++    refreshPlaylists
+ );
+ 
++type PlaylistTab = {
++    id: string,
++    tableId: string,
++    label: string,
++    provider: DataTableItemProvider<StationPlaylist>,
++}
++
++const playlistTabs: PlaylistTab[] = [
++    {
++        id: 'playlists',
++        tableId: 'station_playlists',
++        label: 'Playlists',
++        provider: standardPlaylistProvider,
++    },
++    {
++        id: 'dynamic_lists',
++        tableId: 'station_dynamic_lists',
++        label: 'Dynamic Lists',
++        provider: dynamicListProvider,
++    },
++];
++
+ const {Duration} = useLuxon();
+ 
+ const formatLength = (length: number) => {
+@@ -355,7 +438,7 @@ const formatLength = (length: number) => {
+ };
+ 
+ const relist = () => {
+-    void listItemProvider.refresh();
++    void refreshPlaylists();
+ }
+ 
+ const $editModal = useTemplateRef('$editModal');
+-- 
+2.34.1
+

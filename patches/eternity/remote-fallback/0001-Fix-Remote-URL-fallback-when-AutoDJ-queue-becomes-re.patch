@@ -1,0 +1,234 @@
+From 433b5e11a8c1f910229d352315b1171fdcbe87d8 Mon Sep 17 00:00:00 2001
+From: Johannes Nagy <johannes.nagy@icloud.com>
+Date: Thu, 13 Aug 2026 06:48:39 +0000
+Subject: [PATCH] Fix Remote URL fallback when AutoDJ queue becomes ready
+
+---
+ .../Repository/StationQueueRepository.php     | 16 +++++
+ .../Liquidsoap/Command/QueueStatusCommand.php | 27 ++++++++
+ .../Radio/Backend/Liquidsoap/ConfigWriter.php | 16 +++--
+ .../src/Radio/Enums/LiquidsoapCommands.php    |  2 +
+ util/docker/stations/liquidsoap/azuracast.liq | 62 +++++++++++++++----
+ 5 files changed, 108 insertions(+), 15 deletions(-)
+ create mode 100644 backend/src/Radio/Backend/Liquidsoap/Command/QueueStatusCommand.php
+
+diff --git a/backend/src/Entity/Repository/StationQueueRepository.php b/backend/src/Entity/Repository/StationQueueRepository.php
+index d88a316..9685b25 100644
+--- a/backend/src/Entity/Repository/StationQueueRepository.php
++++ b/backend/src/Entity/Repository/StationQueueRepository.php
+@@ -172,6 +172,22 @@ final class StationQueueRepository extends AbstractStationBasedRepository
+         return $this->getUnplayedBaseQuery($station)->getQuery()->execute();
+     }
+ 
++    public function hasUnplayedQueue(Station $station): bool
++    {
++        $result = $this->em->createQuery(
++            <<<'DQL'
++                SELECT sq.id
++                FROM App\Entity\StationQueue sq
++                WHERE sq.station = :station
++                AND sq.is_played = 0
++            DQL
++        )->setParameter('station', $station)
++            ->setMaxResults(1)
++            ->getOneOrNullResult();
++
++        return null !== $result;
++    }
++
+     public function clearUpcomingQueue(Station $station): void
+     {
+         $this->em->createQuery(
+diff --git a/backend/src/Radio/Backend/Liquidsoap/Command/QueueStatusCommand.php b/backend/src/Radio/Backend/Liquidsoap/Command/QueueStatusCommand.php
+new file mode 100644
+index 0000000..2b105ba
+--- /dev/null
++++ b/backend/src/Radio/Backend/Liquidsoap/Command/QueueStatusCommand.php
+@@ -0,0 +1,27 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Radio\Backend\Liquidsoap\Command;
++
++use App\Entity\Repository\StationQueueRepository;
++use App\Entity\Station;
++
++final class QueueStatusCommand extends AbstractCommand
++{
++    public function __construct(
++        private readonly StationQueueRepository $queueRepo
++    ) {
++    }
++
++    protected function doRun(
++        Station $station,
++        bool $asAutoDj = false,
++        array $payload = []
++    ): array {
++        return [
++            'ready' => $station->supportsAutoDjQueue()
++                && $this->queueRepo->hasUnplayedQueue($station),
++        ];
++    }
++}
+diff --git a/backend/src/Radio/Backend/Liquidsoap/ConfigWriter.php b/backend/src/Radio/Backend/Liquidsoap/ConfigWriter.php
+index 8ee2a0d..7f0f50c 100644
+--- a/backend/src/Radio/Backend/Liquidsoap/ConfigWriter.php
++++ b/backend/src/Radio/Backend/Liquidsoap/ConfigWriter.php
+@@ -274,15 +274,15 @@ final class ConfigWriter implements EventSubscriberInterface
+                     default => 'input.ffmpeg'
+                 };
+ 
+-                $remoteUrlFunc = 'mksafe(buffer(buffer=' . $buffer . '., '
+-                    . $inputFunc . '(' . self::toRawString($remoteUrl) . ')))';
++                $remoteUrlFunc = 'buffer(buffer=' . $buffer . '., '
++                    . $inputFunc . '(' . self::toRawString($remoteUrl) . '))';
+ 
+                 if (0 === $scheduleItems->count()) {
+                     $fallbackRemoteUrl = $remoteUrlFunc;
+                     continue;
+                 }
+ 
+-                $playlistConfigLines[] = $playlistVarName . ' = ' . $remoteUrlFunc;
++                $playlistConfigLines[] = $playlistVarName . ' = mksafe(' . $remoteUrlFunc . ')';
+                 $event->appendLines($playlistConfigLines);
+ 
+                 foreach ($scheduleItems as $scheduleItem) {
+@@ -460,7 +460,15 @@ final class ConfigWriter implements EventSubscriberInterface
+             $event->appendBlock(
+                 <<< LIQ
+                 remote_url = {$fallbackRemoteUrl}
+-                radio = fallback(id="fallback_remote_url", track_sensitive = false, [remote_url, radio])
++                thread.run.recurrent(fast=false, delay=1.0, { azuracast.update_autodj_queue_status() })
++                radio = switch(
++                    id="fallback_remote_url",
++                    track_sensitive=false,
++                    [
++                        ({ azuracast.autodj_queue_ready() }, radio),
++                        ({ true }, remote_url)
++                    ]
++                )
+                 LIQ
+             );
+         }
+diff --git a/backend/src/Radio/Enums/LiquidsoapCommands.php b/backend/src/Radio/Enums/LiquidsoapCommands.php
+index 7a2f886..fea2523 100644
+--- a/backend/src/Radio/Enums/LiquidsoapCommands.php
++++ b/backend/src/Radio/Enums/LiquidsoapCommands.php
+@@ -14,6 +14,7 @@ enum LiquidsoapCommands: string
+     case DjOff = 'djoff';
+     case Feedback = 'feedback';
+     case NextSong = 'nextsong';
++    case QueueStatus = 'queuestatus';
+     case SaveCache = 'savecache';
+ 
+     /** @return class-string<Command\AbstractCommand> */
+@@ -26,6 +27,7 @@ enum LiquidsoapCommands: string
+             self::DjOff => Command\DjOffCommand::class,
+             self::Feedback => Command\FeedbackCommand::class,
+             self::NextSong => Command\NextSongCommand::class,
++            self::QueueStatus => Command\QueueStatusCommand::class,
+             self::SaveCache => Command\SaveCacheCommand::class,
+         };
+     }
+diff --git a/util/docker/stations/liquidsoap/azuracast.liq b/util/docker/stations/liquidsoap/azuracast.liq
+index 6f27749..9e51b67 100644
+--- a/util/docker/stations/liquidsoap/azuracast.liq
++++ b/util/docker/stations/liquidsoap/azuracast.liq
+@@ -121,6 +121,9 @@ let azuracast.autodj_is_loading = ref(true)
+ # Number of attempts that have been made to ping the AutoDJ for the next song.
+ let azuracast.autodj_ping_attempts = ref(0)
+ 
++# Whether the AzuraCast AutoDJ queue currently contains at least one unplayed item.
++let azuracast.autodj_queue_ready = ref(false)
++
+ # The username/display name of the last authenticated DJ.
+ let azuracast.last_authenticated_dj = ref("")
+ let azuracast.last_authenticated_dj_name = ref("")
+@@ -183,15 +186,17 @@ end
+ API Utilities
+ ----->#
+ 
+-def azuracast.api_call(~timeout=null, endpoint_url, payload) =
++def azuracast.api_call(~timeout=null, ~log_response=true, endpoint_url, payload) =
+     timeout = timeout ?? settings.azuracast.http_timeout()
+     full_url = "#{settings.azuracast.api_url()}/#{endpoint_url}"
+ 
+-    log(
+-        level=3,
+-        label="azuracast.api",
+-        "API #{endpoint_url} - Sending POST request to '#{full_url}' with body: #{payload}"
+-    )
++    if log_response then
++        log(
++            level=3,
++            label="azuracast.api",
++            "API #{endpoint_url} - Sending POST request to '#{full_url}' with body: #{payload}"
++        )
++    end
+ 
+     try
+         response = http.post(full_url,
+@@ -204,11 +209,13 @@ def azuracast.api_call(~timeout=null, endpoint_url, payload) =
+             data=payload
+         )
+ 
+-        log(
+-            level=3,
+-            label="azuracast.api",
+-            "API #{endpoint_url} - Response (#{response.status_code}): #{response}"
+-        )
++        if log_response then
++            log(
++                level=3,
++                label="azuracast.api",
++                "API #{endpoint_url} - Response (#{response.status_code}): #{response}"
++            )
++        end
+ 
+         if response.status_code != 200 then
+             null
+@@ -405,6 +412,39 @@ def azuracast.autodj_next_song() =
+     end
+ end
+ 
++# Cache AutoDJ queue readiness for source-selection predicates.
++# On API or JSON errors, retain the last known state to avoid source flapping.
++def azuracast.update_autodj_queue_status() =
++    try
++        api_response = azuracast.api_call(
++            timeout=2.0,
++            log_response=false,
++            "queuestatus",
++            ""
++        )
++
++        if null.defined(api_response) then
++            let json.parse (
++                {
++                    ready,
++                } : {
++                    ready: bool,
++                }
++            ) = null.get(api_response)
++
++            azuracast.autodj_queue_ready := ready
++        end
++    catch err do
++        log(
++            level=2,
++            label="azuracast.autodj",
++            "ERROR updating AutoDJ queue status: #{error.kind(err)} - #{error.message(err)}"
++        )
++    end
++
++    1.0
++end
++
+ # Delayed ping for AutoDJ Next Song
+ def azuracast.wait_for_next_song(autodj) = 
+     azuracast.autodj_ping_attempts := azuracast.autodj_ping_attempts() + 1
+-- 
+2.34.1
+

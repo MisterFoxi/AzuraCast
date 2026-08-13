@@ -1,0 +1,3070 @@
+From 103e383da78bbe56cd76cf6191935dfec6147394 Mon Sep 17 00:00:00 2001
+From: Johannes Nagy <johannes.nagy@icloud.com>
+Date: Wed, 12 Aug 2026 08:34:39 +0000
+Subject: [PATCH 1/2] Smart List implementation
+
+---
+ backend/config/routes/api_station.php         |  10 +
+ backend/config/services.php                   |   3 +
+ .../Playlists/GetSmartBlockAction.php         | 116 +++++
+ .../Playlists/PutSmartBlockAction.php         | 169 +++++++
+ .../Api/Stations/PlaylistsController.php      |   6 +
+ .../Enums/SmartBlockCriteriaComparison.php    |  41 ++
+ .../Entity/Enums/SmartBlockCriteriaField.php  |  30 ++
+ .../src/Entity/Enums/SmartBlockLimitType.php  |  19 +
+ .../src/Entity/Enums/SmartBlockMatchType.php  |  19 +
+ backend/src/Entity/Enums/SmartBlockType.php   |  19 +
+ .../Migration/Version20260812090000.php       |  67 +++
+ .../StationPlaylistMediaRepository.php        |  63 +++
+ ...onPlaylistSmartBlockCriteriaRepository.php |  84 ++++
+ backend/src/Entity/StationPlaylist.php        |  61 +++
+ .../StationPlaylistSmartBlockCriteria.php     |  90 ++++
+ backend/src/Radio/AutoDJ/QueueBuilder.php     |   8 +
+ .../SmartBlockCriteriaExpressionBuilder.php   | 288 +++++++++++
+ .../SmartBlockCriteriaPayloadParser.php       | 175 +++++++
+ .../SmartBlock/SmartBlockPlaybackPreparer.php |  72 +++
+ .../SmartBlock/SmartBlockSynchronizer.php     | 110 ++++
+ .../SmartBlockSynchronizerInterface.php       |  15 +
+ .../Stations/Playlists/EditModal.vue          |   3 +
+ .../Stations/Playlists/Form/SmartBlock.vue    |  28 ++
+ .../Playlists/SmartBlockCriteriaEditor.vue    | 474 ++++++++++++++++++
+ frontend/entities/ApiInterfaces.ts            |  47 ++
+ ...martBlockCriteriaExpressionBuilderTest.php | 243 +++++++++
+ .../SmartBlockCriteriaPayloadParserTest.php   | 143 ++++++
+ .../SmartBlockPlaybackPreparerTest.php        |  96 ++++
+ tests/PureUnit/SmartBlockSynchronizerTest.php | 226 +++++++++
+ 29 files changed, 2725 insertions(+)
+ create mode 100644 backend/src/Controller/Api/Stations/Playlists/GetSmartBlockAction.php
+ create mode 100644 backend/src/Controller/Api/Stations/Playlists/PutSmartBlockAction.php
+ create mode 100644 backend/src/Entity/Enums/SmartBlockCriteriaComparison.php
+ create mode 100644 backend/src/Entity/Enums/SmartBlockCriteriaField.php
+ create mode 100644 backend/src/Entity/Enums/SmartBlockLimitType.php
+ create mode 100644 backend/src/Entity/Enums/SmartBlockMatchType.php
+ create mode 100644 backend/src/Entity/Enums/SmartBlockType.php
+ create mode 100644 backend/src/Entity/Migration/Version20260812090000.php
+ create mode 100644 backend/src/Entity/Repository/StationPlaylistSmartBlockCriteriaRepository.php
+ create mode 100644 backend/src/Entity/StationPlaylistSmartBlockCriteria.php
+ create mode 100644 backend/src/Radio/SmartBlock/SmartBlockCriteriaExpressionBuilder.php
+ create mode 100644 backend/src/Radio/SmartBlock/SmartBlockCriteriaPayloadParser.php
+ create mode 100644 backend/src/Radio/SmartBlock/SmartBlockPlaybackPreparer.php
+ create mode 100644 backend/src/Radio/SmartBlock/SmartBlockSynchronizer.php
+ create mode 100644 backend/src/Radio/SmartBlock/SmartBlockSynchronizerInterface.php
+ create mode 100644 frontend/components/Stations/Playlists/Form/SmartBlock.vue
+ create mode 100644 frontend/components/Stations/Playlists/SmartBlockCriteriaEditor.vue
+ create mode 100644 tests/PureUnit/SmartBlockCriteriaExpressionBuilderTest.php
+ create mode 100644 tests/PureUnit/SmartBlockCriteriaPayloadParserTest.php
+ create mode 100644 tests/PureUnit/SmartBlockPlaybackPreparerTest.php
+ create mode 100644 tests/PureUnit/SmartBlockSynchronizerTest.php
+
+diff --git a/backend/config/routes/api_station.php b/backend/config/routes/api_station.php
+index 2e0e64a..ef9efe5 100644
+--- a/backend/config/routes/api_station.php
++++ b/backend/config/routes/api_station.php
+@@ -669,6 +669,16 @@ return static function (RouteCollectorProxy $group) {
+                                         Controller\Api\Stations\Playlists\PutOrderAction::class
+                                     );
+ 
++                                    $group->get(
++                                        '/smart-block',
++                                        Controller\Api\Stations\Playlists\GetSmartBlockAction::class
++                                    )->setName('api:stations:playlist:smart-block');
++
++                                    $group->put(
++                                        '/smart-block',
++                                        Controller\Api\Stations\Playlists\PutSmartBlockAction::class
++                                    );
++
+                                     $group->get(
+                                         '/queue',
+                                         Controller\Api\Stations\Playlists\GetQueueAction::class
+diff --git a/backend/config/services.php b/backend/config/services.php
+index 197c126..f9defc9 100644
+--- a/backend/config/services.php
++++ b/backend/config/services.php
+@@ -12,6 +12,9 @@ use Psr\Container\ContainerInterface;
+ 
+ return [
+ 
++    App\Radio\SmartBlock\SmartBlockSynchronizerInterface::class =>
++        DI\Get(App\Radio\SmartBlock\SmartBlockSynchronizer::class),
++
+     // Slim interface
+     Slim\Interfaces\RouteCollectorInterface::class => static fn(Slim\App $app) => $app->getRouteCollector(),
+ 
+diff --git a/backend/src/Controller/Api/Stations/Playlists/GetSmartBlockAction.php b/backend/src/Controller/Api/Stations/Playlists/GetSmartBlockAction.php
+new file mode 100644
+index 0000000..3bf5369
+--- /dev/null
++++ b/backend/src/Controller/Api/Stations/Playlists/GetSmartBlockAction.php
+@@ -0,0 +1,116 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Controller\Api\Stations\Playlists;
++
++use App\Controller\SingleActionInterface;
++use App\Entity\CustomField;
++use App\Entity\Enums\PlaylistSources;
++use App\Entity\Repository\StationPlaylistRepository;
++use App\Entity\Repository\StationPlaylistSmartBlockCriteriaRepository;
++use App\Entity\StationMedia;
++use App\Entity\StationMediaCategory;
++use App\Exception\ValidationException;
++use App\Http\Response;
++use App\Http\ServerRequest;
++use App\OpenApi;
++use Doctrine\ORM\EntityManagerInterface;
++use OpenApi\Attributes as OA;
++use Psr\Http\Message\ResponseInterface;
++
++#[OA\Get(
++    path: '/station/{station_id}/playlist/{id}/smart-block',
++    operationId: 'getStationPlaylistSmartBlock',
++    summary: 'Get Smart Block criteria and a preview of matching media.',
++    tags: [OpenApi::TAG_STATIONS_PLAYLISTS],
++    parameters: [
++        new OA\Parameter(ref: OpenApi::REF_STATION_ID_REQUIRED),
++        new OA\Parameter(
++            name: 'id',
++            in: 'path',
++            required: true,
++            schema: new OA\Schema(type: 'integer', format: 'int64')
++        ),
++    ],
++    responses: [
++        new OpenApi\Response\Success(),
++        new OpenApi\Response\AccessDenied(),
++        new OpenApi\Response\NotFound(),
++        new OpenApi\Response\GenericError(),
++    ]
++)]
++final readonly class GetSmartBlockAction implements SingleActionInterface
++{
++    private const int PREVIEW_SAMPLE_SIZE = 25;
++
++    public function __construct(
++        private StationPlaylistRepository $playlistRepo,
++        private StationPlaylistSmartBlockCriteriaRepository $criteriaRepo,
++        private EntityManagerInterface $em
++    ) {
++    }
++
++    public function __invoke(
++        ServerRequest $request,
++        Response $response,
++        array $params
++    ): ResponseInterface {
++        $station = $request->getStation();
++        $playlist = $this->playlistRepo->requireForStation((string)$params['id'], $station);
++
++        if (PlaylistSources::Songs !== $playlist->source) {
++            throw new ValidationException('Smart Blocks are only available for song playlists.');
++        }
++
++        $matchingMedia = $playlist->is_smart_block && $playlist->smart_block_criteria->count() > 0
++            ? $this->criteriaRepo->getMatchingMedia($playlist)
++            : [];
++
++        $categories = $this->em->createQueryBuilder()
++            ->select(['category.id', 'category.name'])
++            ->from(StationMediaCategory::class, 'category')
++            ->where('category.station = :station')
++            ->setParameter('station', $station)
++            ->orderBy('category.name', 'ASC')
++            ->getQuery()
++            ->getArrayResult();
++
++        $customFields = $this->em->createQueryBuilder()
++            ->select(['field.id', 'field.name', 'field.short_name'])
++            ->from(CustomField::class, 'field')
++            ->orderBy('field.name', 'ASC')
++            ->getQuery()
++            ->getArrayResult();
++
++        return $response->withJson([
++            'id' => $playlist->id,
++            'name' => $playlist->name,
++            'is_smart_block' => $playlist->is_smart_block,
++            'smart_block_type' => $playlist->smart_block_type->value,
++            'smart_block_match_type' => $playlist->smart_block_match_type->value,
++            'smart_block_limit' => $playlist->smart_block_limit,
++            'smart_block_limit_type' => $playlist->smart_block_limit_type->value,
++            'criteria' => $playlist->smart_block_criteria->toArray(),
++            'current_member_count' => $playlist->media_items->count(),
++            'matching_count' => count($matchingMedia),
++            'matching_duration_seconds' => array_sum(array_map(
++                static fn(StationMedia $media): float => $media->length,
++                $matchingMedia
++            )),
++            'preview' => array_map(
++                static fn(StationMedia $media): array => [
++                    'id' => $media->id,
++                    'title' => $media->title,
++                    'artist' => $media->artist,
++                    'album' => $media->album,
++                    'genre' => $media->genre,
++                    'length' => $media->length,
++                ],
++                array_slice($matchingMedia, 0, self::PREVIEW_SAMPLE_SIZE)
++            ),
++            'available_categories' => $categories,
++            'available_custom_fields' => $customFields,
++        ]);
++    }
++}
+diff --git a/backend/src/Controller/Api/Stations/Playlists/PutSmartBlockAction.php b/backend/src/Controller/Api/Stations/Playlists/PutSmartBlockAction.php
+new file mode 100644
+index 0000000..f524a51
+--- /dev/null
++++ b/backend/src/Controller/Api/Stations/Playlists/PutSmartBlockAction.php
+@@ -0,0 +1,169 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Controller\Api\Stations\Playlists;
++
++use App\Controller\SingleActionInterface;
++use App\Entity\Enums\PlaylistSources;
++use App\Entity\Enums\SmartBlockLimitType;
++use App\Entity\Enums\SmartBlockMatchType;
++use App\Entity\Enums\SmartBlockType;
++use App\Entity\Repository\StationPlaylistRepository;
++use App\Entity\StationPlaylistSmartBlockCriteria;
++use App\Exception\ValidationException;
++use App\Http\Response;
++use App\Http\ServerRequest;
++use App\OpenApi;
++use App\Radio\SmartBlock\SmartBlockCriteriaPayloadParser;
++use App\Radio\SmartBlock\SmartBlockSynchronizerInterface;
++use Doctrine\ORM\EntityManagerInterface;
++use OpenApi\Attributes as OA;
++use Psr\Http\Message\ResponseInterface;
++
++#[OA\Put(
++    path: '/station/{station_id}/playlist/{id}/smart-block',
++    operationId: 'putStationPlaylistSmartBlock',
++    summary: 'Replace Smart Block criteria and synchronize its media membership.',
++    tags: [OpenApi::TAG_STATIONS_PLAYLISTS],
++    parameters: [
++        new OA\Parameter(ref: OpenApi::REF_STATION_ID_REQUIRED),
++        new OA\Parameter(
++            name: 'id',
++            in: 'path',
++            required: true,
++            schema: new OA\Schema(type: 'integer', format: 'int64')
++        ),
++    ],
++    responses: [
++        new OpenApi\Response\Success(),
++        new OpenApi\Response\AccessDenied(),
++        new OpenApi\Response\NotFound(),
++        new OpenApi\Response\GenericError(),
++    ]
++)]
++final readonly class PutSmartBlockAction implements SingleActionInterface
++{
++    public function __construct(
++        private StationPlaylistRepository $playlistRepo,
++        private SmartBlockCriteriaPayloadParser $criteriaParser,
++        private SmartBlockSynchronizerInterface $synchronizer,
++        private EntityManagerInterface $em
++    ) {
++    }
++
++    public function __invoke(
++        ServerRequest $request,
++        Response $response,
++        array $params
++    ): ResponseInterface {
++        $playlist = $this->playlistRepo->requireForStation(
++            (string)$params['id'],
++            $request->getStation()
++        );
++        if (PlaylistSources::Songs !== $playlist->source) {
++            throw new ValidationException('Smart Blocks are only available for song playlists.');
++        }
++
++        $body = $request->getParsedBody();
++        if (!is_array($body)) {
++            throw new ValidationException('A JSON object is required.');
++        }
++
++        $enabled = $this->parseBool($body['is_smart_block'] ?? false, 'is_smart_block');
++        $type = $this->parseEnum($body['smart_block_type'] ?? SmartBlockType::Dynamic->value, SmartBlockType::class);
++        $matchType = $this->parseEnum(
++            $body['smart_block_match_type'] ?? SmartBlockMatchType::All->value,
++            SmartBlockMatchType::class
++        );
++        $limitType = $this->parseEnum(
++            $body['smart_block_limit_type'] ?? SmartBlockLimitType::Tracks->value,
++            SmartBlockLimitType::class
++        );
++        $limit = $this->parseLimit($body['smart_block_limit'] ?? null);
++        $criteria = $this->criteriaParser->parse($playlist, $body['criteria'] ?? null);
++
++        if ($enabled && [] === $criteria) {
++            throw new ValidationException('An enabled Smart Block requires at least one criterion.');
++        }
++
++        $this->em->wrapInTransaction(function () use (
++            $playlist,
++            $enabled,
++            $type,
++            $matchType,
++            $limit,
++            $limitType,
++            $criteria
++        ): void {
++            $this->em->createQuery(
++                'DELETE FROM ' . StationPlaylistSmartBlockCriteria::class . ' criterion '
++                . 'WHERE criterion.playlist = :playlist'
++            )
++                ->setParameter('playlist', $playlist)
++                ->execute();
++
++            $playlist->smart_block_criteria->clear();
++            foreach ($criteria as $criterion) {
++                $playlist->smart_block_criteria->add($criterion);
++                $this->em->persist($criterion);
++            }
++
++            $playlist->is_smart_block = $enabled;
++            $playlist->smart_block_type = $type;
++            $playlist->smart_block_match_type = $matchType;
++            $playlist->smart_block_limit = $limit;
++            $playlist->smart_block_limit_type = $limitType;
++            $this->em->persist($playlist);
++            $this->em->flush();
++        });
++
++        $syncResult = $enabled
++            ? $this->synchronizer->synchronize($playlist)
++            : ['matched' => 0, 'added' => 0, 'removed' => 0, 'unchanged' => 0, 'changed' => false];
++
++        return $response->withJson([
++            'success' => true,
++            'matched' => $syncResult['matched'],
++            'added' => $syncResult['added'],
++            'removed' => $syncResult['removed'],
++            'unchanged' => $syncResult['unchanged'],
++            'changed' => $syncResult['changed'],
++        ]);
++    }
++
++    private function parseBool(mixed $value, string $name): bool
++    {
++        if (!is_bool($value)) {
++            throw new ValidationException($name . ' must be a boolean.');
++        }
++
++        return $value;
++    }
++
++    /**
++     * @template T of \BackedEnum
++     * @param class-string<T> $enum
++     * @return T
++     */
++    private function parseEnum(mixed $value, string $enum): \BackedEnum
++    {
++        if (!is_string($value) || null === ($parsed = $enum::tryFrom($value))) {
++            throw new ValidationException('Smart Block option is invalid.');
++        }
++
++        return $parsed;
++    }
++
++    private function parseLimit(mixed $value): ?int
++    {
++        if (null === $value || '' === $value) {
++            return null;
++        }
++        if (!is_int($value) || $value <= 0) {
++            throw new ValidationException('smart_block_limit must be a positive integer or null.');
++        }
++
++        return $value;
++    }
++}
+diff --git a/backend/src/Controller/Api/Stations/PlaylistsController.php b/backend/src/Controller/Api/Stations/PlaylistsController.php
+index 84ed6a8..6ba6f55 100644
+--- a/backend/src/Controller/Api/Stations/PlaylistsController.php
++++ b/backend/src/Controller/Api/Stations/PlaylistsController.php
+@@ -274,6 +274,12 @@ final class PlaylistsController extends AbstractScheduledEntityController
+         ];
+ 
+         if (PlaylistSources::Songs === $record->source) {
++            $return['links']['smart_block'] = $router->fromHere(
++                routeName: 'api:stations:playlist:smart-block',
++                routeParams: ['id' => $record->id],
++                absolute: !$isInternal
++            );
++
+             if (PlaylistOrders::Sequential === $record->order) {
+                 $return['links']['order'] = $router->fromHere(
+                     routeName: 'api:stations:playlist:order',
+diff --git a/backend/src/Entity/Enums/SmartBlockCriteriaComparison.php b/backend/src/Entity/Enums/SmartBlockCriteriaComparison.php
+new file mode 100644
+index 0000000..53becfb
+--- /dev/null
++++ b/backend/src/Entity/Enums/SmartBlockCriteriaComparison.php
+@@ -0,0 +1,41 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Entity\Enums;
++
++use OpenApi\Attributes as OA;
++
++#[OA\Schema(type: 'string')]
++enum SmartBlockCriteriaComparison: string
++{
++    case Is = 'is';
++    case IsNot = 'is_not';
++    case Contains = 'contains';
++    case NotContains = 'not_contains';
++    case GreaterThan = 'greater_than';
++    case LessThan = 'less_than';
++    case Between = 'between';
++
++    public static function default(): self
++    {
++        return self::Is;
++    }
++
++    public function needsSecondValue(): bool
++    {
++        return self::Between === $this;
++    }
++
++    /** @return list<self> */
++    public static function textComparisons(): array
++    {
++        return [self::Is, self::IsNot, self::Contains, self::NotContains];
++    }
++
++    /** @return list<self> */
++    public static function numericComparisons(): array
++    {
++        return [self::Is, self::IsNot, self::GreaterThan, self::LessThan, self::Between];
++    }
++}
+diff --git a/backend/src/Entity/Enums/SmartBlockCriteriaField.php b/backend/src/Entity/Enums/SmartBlockCriteriaField.php
+new file mode 100644
+index 0000000..8dfcc7d
+--- /dev/null
++++ b/backend/src/Entity/Enums/SmartBlockCriteriaField.php
+@@ -0,0 +1,30 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Entity\Enums;
++
++use OpenApi\Attributes as OA;
++
++#[OA\Schema(type: 'string')]
++enum SmartBlockCriteriaField: string
++{
++    case Genre = 'genre';
++    case Category = 'category';
++    case Artist = 'artist';
++    case Album = 'album';
++    case Title = 'title';
++    case Duration = 'duration';
++    case CustomField = 'custom_field';
++    case LastPlayed = 'last_played_days_ago';
++
++    public static function default(): self
++    {
++        return self::Genre;
++    }
++
++    public function isNumeric(): bool
++    {
++        return self::Duration === $this || self::LastPlayed === $this;
++    }
++}
+diff --git a/backend/src/Entity/Enums/SmartBlockLimitType.php b/backend/src/Entity/Enums/SmartBlockLimitType.php
+new file mode 100644
+index 0000000..30642e5
+--- /dev/null
++++ b/backend/src/Entity/Enums/SmartBlockLimitType.php
+@@ -0,0 +1,19 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Entity\Enums;
++
++use OpenApi\Attributes as OA;
++
++#[OA\Schema(type: 'string')]
++enum SmartBlockLimitType: string
++{
++    case Tracks = 'tracks';
++    case Duration = 'duration';
++
++    public static function default(): self
++    {
++        return self::Tracks;
++    }
++}
+diff --git a/backend/src/Entity/Enums/SmartBlockMatchType.php b/backend/src/Entity/Enums/SmartBlockMatchType.php
+new file mode 100644
+index 0000000..d0c2af7
+--- /dev/null
++++ b/backend/src/Entity/Enums/SmartBlockMatchType.php
+@@ -0,0 +1,19 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Entity\Enums;
++
++use OpenApi\Attributes as OA;
++
++#[OA\Schema(type: 'string')]
++enum SmartBlockMatchType: string
++{
++    case All = 'all';
++    case Any = 'any';
++
++    public static function default(): self
++    {
++        return self::All;
++    }
++}
+diff --git a/backend/src/Entity/Enums/SmartBlockType.php b/backend/src/Entity/Enums/SmartBlockType.php
+new file mode 100644
+index 0000000..5a5e938
+--- /dev/null
++++ b/backend/src/Entity/Enums/SmartBlockType.php
+@@ -0,0 +1,19 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Entity\Enums;
++
++use OpenApi\Attributes as OA;
++
++#[OA\Schema(type: 'string')]
++enum SmartBlockType: string
++{
++    case Static = 'static';
++    case Dynamic = 'dynamic';
++
++    public static function default(): self
++    {
++        return self::Dynamic;
++    }
++}
+diff --git a/backend/src/Entity/Migration/Version20260812090000.php b/backend/src/Entity/Migration/Version20260812090000.php
+new file mode 100644
+index 0000000..41932e6
+--- /dev/null
++++ b/backend/src/Entity/Migration/Version20260812090000.php
+@@ -0,0 +1,67 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Entity\Migration;
++
++use Doctrine\DBAL\Schema\Schema;
++use Doctrine\Migrations\AbstractMigration;
++
++final class Version20260812090000 extends AbstractMigration
++{
++    public function getDescription(): string
++    {
++        return 'Add the Smart Block playlist model and criteria.';
++    }
++
++    public function up(Schema $schema): void
++    {
++        $this->addSql(
++            <<<'SQL'
++                ALTER TABLE station_playlists
++                    ADD is_smart_block TINYINT(1) DEFAULT 0 NOT NULL,
++                    ADD smart_block_match_type VARCHAR(10) DEFAULT 'all' NOT NULL,
++                    ADD smart_block_limit INT DEFAULT NULL,
++                    ADD smart_block_limit_type VARCHAR(10) DEFAULT 'tracks' NOT NULL,
++                    ADD smart_block_type VARCHAR(10) DEFAULT 'dynamic' NOT NULL
++                SQL
++        );
++
++        $this->addSql(
++            <<<'SQL'
++                CREATE TABLE station_playlist_smart_block_criteria (
++                    id INT AUTO_INCREMENT NOT NULL,
++                    playlist_id INT NOT NULL,
++                    custom_field_id INT DEFAULT NULL,
++                    field VARCHAR(25) NOT NULL,
++                    comparison VARCHAR(25) NOT NULL,
++                    value VARCHAR(255) DEFAULT NULL,
++                    value2 VARCHAR(255) DEFAULT NULL,
++                    weight INT NOT NULL,
++                    INDEX IDX_smart_block_criteria_playlist (playlist_id),
++                    INDEX IDX_smart_block_criteria_custom_field (custom_field_id),
++                    PRIMARY KEY(id),
++                    CONSTRAINT FK_smart_block_criteria_playlist
++                        FOREIGN KEY (playlist_id) REFERENCES station_playlists (id) ON DELETE CASCADE,
++                    CONSTRAINT FK_smart_block_criteria_custom_field
++                        FOREIGN KEY (custom_field_id) REFERENCES custom_field (id) ON DELETE CASCADE
++                ) DEFAULT CHARACTER SET utf8mb4 COLLATE `utf8mb4_unicode_ci` ENGINE = InnoDB
++                SQL
++        );
++    }
++
++    public function down(Schema $schema): void
++    {
++        $this->addSql('DROP TABLE station_playlist_smart_block_criteria');
++        $this->addSql(
++            <<<'SQL'
++                ALTER TABLE station_playlists
++                    DROP COLUMN is_smart_block,
++                    DROP COLUMN smart_block_match_type,
++                    DROP COLUMN smart_block_limit,
++                    DROP COLUMN smart_block_limit_type,
++                    DROP COLUMN smart_block_type
++                SQL
++        );
++    }
++}
+diff --git a/backend/src/Entity/Repository/StationPlaylistMediaRepository.php b/backend/src/Entity/Repository/StationPlaylistMediaRepository.php
+index 938361e..9611cc0 100644
+--- a/backend/src/Entity/Repository/StationPlaylistMediaRepository.php
++++ b/backend/src/Entity/Repository/StationPlaylistMediaRepository.php
+@@ -174,6 +174,69 @@ final class StationPlaylistMediaRepository extends Repository
+         return $weight;
+     }
+ 
++    /**
++     * Add a direct media membership only when one does not already exist.
++     *
++     * Folder-derived memberships do not count as direct memberships.
++     */
++    public function addMediaToPlaylistIfMissing(
++        StationMedia $media,
++        StationPlaylist $playlist
++    ): bool {
++        if (PlaylistSources::Songs !== $playlist->source) {
++            throw new RuntimeException('This playlist is not meant to contain songs!');
++        }
++
++        $existingRecord = $this->repository->findOneBy([
++            'media' => $media,
++            'playlist' => $playlist,
++            'folder' => null,
++        ]);
++
++        if ($existingRecord instanceof StationPlaylistMedia) {
++            return false;
++        }
++
++        $weight = $this->getHighestSongWeight($playlist) + 1;
++        if (PlaylistOrders::Sequential !== $playlist->order) {
++            $weight = random_int(1, $weight);
++        }
++
++        $record = new StationPlaylistMedia($playlist, $media);
++        $record->weight = $weight;
++        $this->em->persist($record);
++
++        return true;
++    }
++
++    /**
++     * @return list<StationPlaylistMedia>
++     */
++    public function getDirectMediaMemberships(StationPlaylist $playlist): array
++    {
++        return $this->repository->findBy(
++            [
++                'playlist' => $playlist,
++                'folder' => null,
++            ],
++            ['weight' => 'ASC']
++        );
++    }
++
++    public function removeDirectMediaMembership(StationPlaylistMedia $membership): void
++    {
++        if (null !== $membership->folder) {
++            throw new InvalidArgumentException('Only direct playlist memberships can be removed here.');
++        }
++
++        $this->queueRepo->clearForMediaAndPlaylist(
++            $membership->media,
++            $membership->playlist
++        );
++
++        $this->em->remove($membership);
++    }
++
+     public function getHighestSongWeight(StationPlaylist $playlist): int
+     {
+         try {
+diff --git a/backend/src/Entity/Repository/StationPlaylistSmartBlockCriteriaRepository.php b/backend/src/Entity/Repository/StationPlaylistSmartBlockCriteriaRepository.php
+new file mode 100644
+index 0000000..54b33f3
+--- /dev/null
++++ b/backend/src/Entity/Repository/StationPlaylistSmartBlockCriteriaRepository.php
+@@ -0,0 +1,84 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Entity\Repository;
++
++use App\Doctrine\Repository;
++use App\Entity\Enums\SmartBlockLimitType;
++use App\Entity\StationMedia;
++use App\Entity\StationPlaylist;
++use App\Entity\StationPlaylistSmartBlockCriteria;
++use App\Radio\SmartBlock\SmartBlockCriteriaExpressionBuilder;
++
++/** @extends Repository<StationPlaylistSmartBlockCriteria> */
++final class StationPlaylistSmartBlockCriteriaRepository extends Repository
++{
++    protected string $entityClass = StationPlaylistSmartBlockCriteria::class;
++
++    public function __construct(
++        private readonly SmartBlockCriteriaExpressionBuilder $expressionBuilder
++    ) {
++    }
++
++    /** @return list<StationMedia> */
++    public function getMatchingMedia(StationPlaylist $playlist): array
++    {
++        $expression = $this->expressionBuilder->build(
++            $playlist->smart_block_criteria,
++            $playlist->smart_block_match_type
++        );
++
++        if (null === $expression) {
++            return [];
++        }
++
++        $queryBuilder = $this->em->createQueryBuilder()
++            ->select('sm')
++            ->from(StationMedia::class, 'sm')
++            ->where('sm.storage_location = :storageLocation')
++            ->andWhere('sm.do_not_play = false')
++            ->andWhere($expression['where'])
++            ->setParameter('storageLocation', $playlist->station->media_storage_location)
++            ->orderBy('RAND()');
++
++        foreach ($expression['parameters'] as $name => $value) {
++            $queryBuilder->setParameter($name, $value);
++        }
++
++        $limit = $playlist->smart_block_limit;
++        if (null !== $limit && SmartBlockLimitType::Tracks === $playlist->smart_block_limit_type) {
++            $queryBuilder->setMaxResults($limit);
++        }
++
++        /** @var list<StationMedia> $results */
++        $results = $queryBuilder->getQuery()->getResult();
++
++        if (null === $limit || SmartBlockLimitType::Duration !== $playlist->smart_block_limit_type) {
++            return $results;
++        }
++
++        return $this->limitByDuration($results, $limit);
++    }
++
++    /**
++     * @param list<StationMedia> $media
++     * @return list<StationMedia>
++     */
++    public function limitByDuration(array $media, int $maximumSeconds): array
++    {
++        $selected = [];
++        $totalSeconds = 0.0;
++
++        foreach ($media as $item) {
++            if (($totalSeconds + $item->length) > $maximumSeconds) {
++                continue;
++            }
++
++            $selected[] = $item;
++            $totalSeconds += $item->length;
++        }
++
++        return $selected;
++    }
++}
+diff --git a/backend/src/Entity/StationPlaylist.php b/backend/src/Entity/StationPlaylist.php
+index e9f1735..6a56f1a 100644
+--- a/backend/src/Entity/StationPlaylist.php
++++ b/backend/src/Entity/StationPlaylist.php
+@@ -8,6 +8,9 @@ use App\Entity\Enums\PlaylistOrders;
+ use App\Entity\Enums\PlaylistRemoteTypes;
+ use App\Entity\Enums\PlaylistSources;
+ use App\Entity\Enums\PlaylistTypes;
++use App\Entity\Enums\SmartBlockLimitType;
++use App\Entity\Enums\SmartBlockMatchType;
++use App\Entity\Enums\SmartBlockType;
+ use App\Utilities\File;
+ use App\Utilities\Time;
+ use Azura\Normalizer\Attributes\DeepNormalize;
+@@ -339,6 +342,46 @@ final class StationPlaylist implements
+     ]
+     public bool $avoid_duplicates = true;
+ 
++    #[
++        OA\Property(example: false),
++        ORM\Column(options: ['default' => false])
++    ]
++    public bool $is_smart_block = false;
++
++    #[
++        OA\Property(example: 'all'),
++        ORM\Column(type: 'string', length: 10, enumType: SmartBlockMatchType::class, options: ['default' => 'all'])
++    ]
++    public SmartBlockMatchType $smart_block_match_type = SmartBlockMatchType::All;
++
++    #[
++        OA\Property(example: 50, nullable: true),
++        ORM\Column(nullable: true)
++    ]
++    public ?int $smart_block_limit = null {
++        set (int|string|null $value) {
++            if (null === $value || '' === $value) {
++                $this->smart_block_limit = null;
++                return;
++            }
++
++            $limit = (int)$value;
++            $this->smart_block_limit = $limit > 0 ? $limit : null;
++        }
++    }
++
++    #[
++        OA\Property(example: 'tracks'),
++        ORM\Column(type: 'string', length: 10, enumType: SmartBlockLimitType::class, options: ['default' => 'tracks'])
++    ]
++    public SmartBlockLimitType $smart_block_limit_type = SmartBlockLimitType::Tracks;
++
++    #[
++        OA\Property(example: 'dynamic'),
++        ORM\Column(type: 'string', length: 10, enumType: SmartBlockType::class, options: ['default' => 'dynamic'])
++    ]
++    public SmartBlockType $smart_block_type = SmartBlockType::Dynamic;
++
+     #[
+         ORM\Column(type: 'datetime_immutable', precision: 6, nullable: true),
+         Attributes\AuditIgnore
+@@ -368,6 +411,22 @@ final class StationPlaylist implements
+     ]
+     public private(set) Collection $folders;
+ 
++    /** @var Collection<int, StationPlaylistSmartBlockCriteria> */
++    #[
++        OA\Property(type: "array", items: new OA\Items()),
++        ORM\OneToMany(
++            targetEntity: StationPlaylistSmartBlockCriteria::class,
++            mappedBy: 'playlist',
++            fetch: 'EXTRA_LAZY',
++            cascade: ['persist', 'remove'],
++            orphanRemoval: true
++        ),
++        ORM\OrderBy(['weight' => 'ASC']),
++        DeepNormalize(true),
++        Serializer\MaxDepth(1)
++    ]
++    public private(set) Collection $smart_block_criteria;
++
+     /** @var Collection<int, StationSchedule> */
+     #[
+         OA\Property(type: "array", items: new OA\Items()),
+@@ -397,6 +456,7 @@ final class StationPlaylist implements
+ 
+         $this->media_items = new ArrayCollection();
+         $this->folders = new ArrayCollection();
++        $this->smart_block_criteria = new ArrayCollection();
+         $this->schedule_items = new ArrayCollection();
+         $this->podcasts = new ArrayCollection();
+     }
+@@ -439,6 +499,7 @@ final class StationPlaylist implements
+ 
+         $this->media_items = new ArrayCollection();
+         $this->folders = new ArrayCollection();
++        $this->smart_block_criteria = new ArrayCollection();
+         $this->schedule_items = new ArrayCollection();
+         $this->podcasts = new ArrayCollection();
+     }
+diff --git a/backend/src/Entity/StationPlaylistSmartBlockCriteria.php b/backend/src/Entity/StationPlaylistSmartBlockCriteria.php
+new file mode 100644
+index 0000000..95faa45
+--- /dev/null
++++ b/backend/src/Entity/StationPlaylistSmartBlockCriteria.php
+@@ -0,0 +1,90 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Entity;
++
++use App\Entity\Enums\SmartBlockCriteriaComparison;
++use App\Entity\Enums\SmartBlockCriteriaField;
++use App\Entity\Interfaces\IdentifiableEntityInterface;
++use Doctrine\ORM\Mapping as ORM;
++use JsonSerializable;
++use OpenApi\Attributes as OA;
++
++#[
++    OA\Schema(type: 'object'),
++    ORM\Entity,
++    ORM\Table(name: 'station_playlist_smart_block_criteria'),
++    Attributes\Auditable
++]
++final class StationPlaylistSmartBlockCriteria implements JsonSerializable, IdentifiableEntityInterface
++{
++    use Traits\HasAutoIncrementId;
++    use Traits\TruncateStrings;
++
++    #[ORM\ManyToOne(fetch: 'EAGER', inversedBy: 'smart_block_criteria')]
++    #[ORM\JoinColumn(name: 'playlist_id', referencedColumnName: 'id', nullable: false, onDelete: 'CASCADE')]
++    public StationPlaylist $playlist;
++
++    #[ORM\Column(nullable: false, insertable: false, updatable: false)]
++    public private(set) int $playlist_id;
++
++    #[
++        OA\Property(example: 'genre'),
++        ORM\Column(type: 'string', length: 25, enumType: SmartBlockCriteriaField::class)
++    ]
++    public SmartBlockCriteriaField $field = SmartBlockCriteriaField::Genre;
++
++    #[ORM\ManyToOne(fetch: 'EAGER')]
++    #[ORM\JoinColumn(name: 'custom_field_id', referencedColumnName: 'id', nullable: true, onDelete: 'CASCADE')]
++    public ?CustomField $custom_field = null;
++
++    #[
++        OA\Property(example: 'is'),
++        ORM\Column(type: 'string', length: 25, enumType: SmartBlockCriteriaComparison::class)
++    ]
++    public SmartBlockCriteriaComparison $comparison = SmartBlockCriteriaComparison::Is;
++
++    #[
++        OA\Property(example: 'Rock'),
++        ORM\Column(length: 255, nullable: true)
++    ]
++    public ?string $value = null {
++        set => $this->truncateNullableString($value);
++    }
++
++    #[
++        OA\Property(example: '140'),
++        ORM\Column(length: 255, nullable: true)
++    ]
++    public ?string $value2 = null {
++        set => $this->truncateNullableString($value);
++    }
++
++    #[
++        OA\Property(example: 0),
++        ORM\Column
++    ]
++    public int $weight = 0;
++
++    public function __construct(StationPlaylist $playlist)
++    {
++        $this->playlist = $playlist;
++    }
++
++    public function jsonSerialize(): array
++    {
++        return [
++            'id' => isset($this->id) ? $this->id : null,
++            'field' => $this->field->value,
++            'custom_field_id' => null !== $this->custom_field && isset($this->custom_field->id)
++                ? $this->custom_field->id
++                : null,
++            'custom_field_name' => $this->custom_field?->name,
++            'comparison' => $this->comparison->value,
++            'value' => $this->value,
++            'value2' => $this->value2,
++            'weight' => $this->weight,
++        ];
++    }
++}
+diff --git a/backend/src/Radio/AutoDJ/QueueBuilder.php b/backend/src/Radio/AutoDJ/QueueBuilder.php
+index 0f2c63c..b59e81b 100644
+--- a/backend/src/Radio/AutoDJ/QueueBuilder.php
++++ b/backend/src/Radio/AutoDJ/QueueBuilder.php
+@@ -24,6 +24,7 @@ use App\Event\Radio\BuildQueue;
+ use App\Radio\AutoDJ\ClockWheel\ClockWheelSeparationSettings;
+ use App\Radio\AutoDJ\ClockWheel\ClockWheelStretchCalculator;
+ use App\Radio\PlaylistParser;
++use App\Radio\SmartBlock\SmartBlockPlaybackPreparer;
+ use App\Service\HolidayOverrideService;
+ use DateTimeImmutable;
+ use DateTimeZone;
+@@ -50,6 +51,7 @@ final class QueueBuilder implements EventSubscriberInterface
+         private readonly SongHistoryRepository $historyRepo,
+         private readonly HolidayOverrideService $holidayOverrideService,
+         private readonly ClockWheelStretchCalculator $stretchCalculator,
++        private readonly SmartBlockPlaybackPreparer $smartBlockPlaybackPreparer,
+     ) {
+     }
+ 
+@@ -79,6 +81,8 @@ final class QueueBuilder implements EventSubscriberInterface
+ 
+         $this->logger->info('AzuraCast AutoDJ is calculating the next song to play...');
+ 
++        $this->smartBlockPlaybackPreparer->beginQueueBuild();
++
+         $station = $event->getStation();
+         $expectedPlayTime = $event->getExpectedPlayTime();
+ 
+@@ -292,6 +296,10 @@ final class QueueBuilder implements EventSubscriberInterface
+         DateTimeImmutable $expectedPlayTime,
+         bool $allowDuplicates = false
+     ): StationQueue|array|null {
++        if (!$this->smartBlockPlaybackPreparer->prepare($playlist)) {
++            return null;
++        }
++
+         if (PlaylistSources::RemoteUrl === $playlist->source) {
+             return $this->getSongFromRemotePlaylist($playlist, $expectedPlayTime);
+         }
+diff --git a/backend/src/Radio/SmartBlock/SmartBlockCriteriaExpressionBuilder.php b/backend/src/Radio/SmartBlock/SmartBlockCriteriaExpressionBuilder.php
+new file mode 100644
+index 0000000..b04e255
+--- /dev/null
++++ b/backend/src/Radio/SmartBlock/SmartBlockCriteriaExpressionBuilder.php
+@@ -0,0 +1,288 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Radio\SmartBlock;
++
++use App\Entity\Enums\SmartBlockCriteriaComparison;
++use App\Entity\Enums\SmartBlockCriteriaField;
++use App\Entity\Enums\SmartBlockMatchType;
++use App\Entity\SongHistory;
++use App\Entity\StationMediaCustomField;
++use App\Entity\StationPlaylistSmartBlockCriteria;
++use DateTimeImmutable;
++
++final class SmartBlockCriteriaExpressionBuilder
++{
++    /**
++     * @param iterable<StationPlaylistSmartBlockCriteria> $criteria
++     * @return array{where: string, parameters: array<string, mixed>}|null
++     */
++    public function build(
++        iterable $criteria,
++        SmartBlockMatchType $matchType,
++        ?DateTimeImmutable $now = null
++    ): ?array {
++        $conditions = [];
++        $parameters = [];
++        $index = 0;
++        $now ??= new DateTimeImmutable('now');
++
++        foreach ($criteria as $criterion) {
++            if (!$this->isUsable($criterion)) {
++                continue;
++            }
++
++            [$condition, $conditionParameters] = $this->buildCondition($criterion, $index, $now);
++            $conditions[] = $condition;
++            $parameters += $conditionParameters;
++            $index++;
++        }
++
++        if ([] === $conditions) {
++            return null;
++        }
++
++        $operator = SmartBlockMatchType::Any === $matchType ? ' OR ' : ' AND ';
++
++        return [
++            'where' => '(' . implode($operator, $conditions) . ')',
++            'parameters' => $parameters,
++        ];
++    }
++
++    private function isUsable(StationPlaylistSmartBlockCriteria $criterion): bool
++    {
++        if (SmartBlockCriteriaField::CustomField === $criterion->field && null === $criterion->custom_field) {
++            return false;
++        }
++
++        if (null === $criterion->value || '' === trim($criterion->value)) {
++            return false;
++        }
++
++        return !$criterion->comparison->needsSecondValue()
++            || (null !== $criterion->value2 && '' !== trim($criterion->value2));
++    }
++
++    /** @return array{string, array<string, mixed>} */
++    private function buildCondition(
++        StationPlaylistSmartBlockCriteria $criterion,
++        int $index,
++        DateTimeImmutable $now
++    ): array {
++        return match ($criterion->field) {
++            SmartBlockCriteriaField::CustomField => $this->buildCustomFieldCondition($criterion, $index),
++            SmartBlockCriteriaField::Duration => $this->buildNumericCondition('sm.length', $criterion, $index),
++            SmartBlockCriteriaField::LastPlayed => $this->buildLastPlayedCondition($criterion, $index, $now),
++            SmartBlockCriteriaField::Genre => $this->buildTextCondition('sm.genre', $criterion, $index),
++            SmartBlockCriteriaField::Category => $this->buildCategoryCondition($criterion, $index),
++            SmartBlockCriteriaField::Artist => $this->buildTextCondition('sm.artist', $criterion, $index),
++            SmartBlockCriteriaField::Album => $this->buildTextCondition('sm.album', $criterion, $index),
++            SmartBlockCriteriaField::Title => $this->buildTextCondition('sm.title', $criterion, $index),
++        };
++    }
++
++    /** @return array{string, array<string, mixed>} */
++    private function buildCategoryCondition(
++        StationPlaylistSmartBlockCriteria $criterion,
++        int $index
++    ): array {
++        $parameter = 'val' . $index;
++        $categoryId = (int)$criterion->value;
++
++        if (SmartBlockCriteriaComparison::IsNot === $criterion->comparison) {
++            return [
++                sprintf('(sm.category_id IS NULL OR sm.category_id != :%s)', $parameter),
++                [$parameter => $categoryId],
++            ];
++        }
++
++        return [
++            sprintf('sm.category_id = :%s', $parameter),
++            [$parameter => $categoryId],
++        ];
++    }
++
++    /** @return array{string, array<string, mixed>} */
++    private function buildTextCondition(
++        string $column,
++        StationPlaylistSmartBlockCriteria $criterion,
++        int $index
++    ): array {
++        $parameter = 'val' . $index;
++        $value = mb_strtolower((string)$criterion->value);
++
++        return match ($criterion->comparison) {
++            SmartBlockCriteriaComparison::Is => [
++                sprintf('LOWER(%s) = :%s', $column, $parameter),
++                [$parameter => $value],
++            ],
++            SmartBlockCriteriaComparison::IsNot => [
++                sprintf('(%s IS NULL OR LOWER(%s) != :%s)', $column, $column, $parameter),
++                [$parameter => $value],
++            ],
++            SmartBlockCriteriaComparison::Contains => [
++                sprintf('LOWER(%s) LIKE :%s', $column, $parameter),
++                [$parameter => '%' . $value . '%'],
++            ],
++            SmartBlockCriteriaComparison::NotContains => [
++                sprintf('(%s IS NULL OR LOWER(%s) NOT LIKE :%s)', $column, $column, $parameter),
++                [$parameter => '%' . $value . '%'],
++            ],
++            default => [$column . ' IS NOT NULL', []],
++        };
++    }
++
++    /** @return array{string, array<string, mixed>} */
++    private function buildNumericCondition(
++        string $column,
++        StationPlaylistSmartBlockCriteria $criterion,
++        int $index
++    ): array {
++        $parameter = 'val' . $index;
++        $value = (float)$criterion->value;
++
++        if (SmartBlockCriteriaComparison::Between === $criterion->comparison) {
++            $secondParameter = $parameter . 'b';
++            $secondValue = (float)$criterion->value2;
++            [$low, $high] = $value <= $secondValue ? [$value, $secondValue] : [$secondValue, $value];
++
++            return [
++                sprintf('%s BETWEEN :%s AND :%s', $column, $parameter, $secondParameter),
++                [$parameter => $low, $secondParameter => $high],
++            ];
++        }
++
++        $operator = match ($criterion->comparison) {
++            SmartBlockCriteriaComparison::IsNot => '!=',
++            SmartBlockCriteriaComparison::GreaterThan => '>',
++            SmartBlockCriteriaComparison::LessThan => '<',
++            default => '=',
++        };
++
++        return [sprintf('%s %s :%s', $column, $operator, $parameter), [$parameter => $value]];
++    }
++
++    /** @return array{string, array<string, mixed>} */
++    private function buildLastPlayedCondition(
++        StationPlaylistSmartBlockCriteria $criterion,
++        int $index,
++        DateTimeImmutable $now
++    ): array {
++        $alias = 'sh' . $index;
++        $lastPlayed = sprintf(
++            '(SELECT MAX(%1$s.timestamp_start) FROM %2$s %1$s WHERE %1$s.media = sm)',
++            $alias,
++            SongHistory::class
++        );
++        $parameter = 'val' . $index;
++        $value = (float)$criterion->value;
++        $daysAgo = static fn(float $days): DateTimeImmutable => $now->modify(
++            sprintf('-%d seconds', (int)round($days * 86400))
++        );
++
++        if (SmartBlockCriteriaComparison::LessThan === $criterion->comparison) {
++            return [
++                sprintf('(%1$s IS NOT NULL AND %1$s > :%2$s)', $lastPlayed, $parameter),
++                [$parameter => $daysAgo($value)],
++            ];
++        }
++
++        if (SmartBlockCriteriaComparison::Between === $criterion->comparison) {
++            $secondParameter = $parameter . 'b';
++            $secondValue = (float)$criterion->value2;
++            [$lowDays, $highDays] = $value <= $secondValue ? [$value, $secondValue] : [$secondValue, $value];
++
++            return [
++                sprintf(
++                    '(%1$s IS NOT NULL AND %1$s BETWEEN :%2$s AND :%3$s)',
++                    $lastPlayed,
++                    $parameter,
++                    $secondParameter
++                ),
++                [$parameter => $daysAgo($highDays), $secondParameter => $daysAgo($lowDays)],
++            ];
++        }
++
++        return [
++            sprintf('(%1$s IS NULL OR %1$s < :%2$s)', $lastPlayed, $parameter),
++            [$parameter => $daysAgo($value)],
++        ];
++    }
++
++    /** @return array{string, array<string, mixed>} */
++    private function buildCustomFieldCondition(
++        StationPlaylistSmartBlockCriteria $criterion,
++        int $index
++    ): array {
++        $alias = 'smcf' . $index;
++        $fieldParameter = 'field' . $index;
++        $valueParameter = 'val' . $index;
++        $parameters = [$fieldParameter => $criterion->custom_field];
++
++        if (in_array(
++            $criterion->comparison,
++            [
++                SmartBlockCriteriaComparison::GreaterThan,
++                SmartBlockCriteriaComparison::LessThan,
++                SmartBlockCriteriaComparison::Between,
++            ],
++            true
++        )) {
++            $value = (float)$criterion->value;
++
++            if (SmartBlockCriteriaComparison::Between === $criterion->comparison) {
++                $secondParameter = $valueParameter . 'b';
++                $secondValue = (float)$criterion->value2;
++                [$low, $high] = $value <= $secondValue ? [$value, $secondValue] : [$secondValue, $value];
++                $valueCondition = sprintf(
++                    'CAST(%s.value AS DECIMAL(18,4)) BETWEEN :%s AND :%s',
++                    $alias,
++                    $valueParameter,
++                    $secondParameter
++                );
++                $parameters[$valueParameter] = $low;
++                $parameters[$secondParameter] = $high;
++            } else {
++                $operator = SmartBlockCriteriaComparison::GreaterThan === $criterion->comparison ? '>' : '<';
++                $valueCondition = sprintf(
++                    'CAST(%s.value AS DECIMAL(18,4)) %s :%s',
++                    $alias,
++                    $operator,
++                    $valueParameter
++                );
++                $parameters[$valueParameter] = $value;
++            }
++        } else {
++            $value = mb_strtolower((string)$criterion->value);
++            $useLike = in_array(
++                $criterion->comparison,
++                [SmartBlockCriteriaComparison::Contains, SmartBlockCriteriaComparison::NotContains],
++                true
++            );
++            $valueCondition = sprintf(
++                'LOWER(%s.value) %s :%s',
++                $alias,
++                $useLike ? 'LIKE' : '=',
++                $valueParameter
++            );
++            $parameters[$valueParameter] = $useLike ? '%' . $value . '%' : $value;
++        }
++
++        $exists = sprintf(
++            '(SELECT %1$s.id FROM %2$s %1$s WHERE %1$s.media = sm AND %1$s.field = :%3$s AND %4$s)',
++            $alias,
++            StationMediaCustomField::class,
++            $fieldParameter,
++            $valueCondition
++        );
++        $negative = in_array(
++            $criterion->comparison,
++            [SmartBlockCriteriaComparison::IsNot, SmartBlockCriteriaComparison::NotContains],
++            true
++        );
++
++        return [($negative ? 'NOT EXISTS ' : 'EXISTS ') . $exists, $parameters];
++    }
++}
+diff --git a/backend/src/Radio/SmartBlock/SmartBlockCriteriaPayloadParser.php b/backend/src/Radio/SmartBlock/SmartBlockCriteriaPayloadParser.php
+new file mode 100644
+index 0000000..b061ffb
+--- /dev/null
++++ b/backend/src/Radio/SmartBlock/SmartBlockCriteriaPayloadParser.php
+@@ -0,0 +1,175 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Radio\SmartBlock;
++
++use App\Entity\CustomField;
++use App\Entity\Enums\SmartBlockCriteriaComparison;
++use App\Entity\Enums\SmartBlockCriteriaField;
++use App\Entity\StationMediaCategory;
++use App\Entity\StationPlaylist;
++use App\Entity\StationPlaylistSmartBlockCriteria;
++use App\Exception\ValidationException;
++use Doctrine\ORM\EntityManagerInterface;
++
++final readonly class SmartBlockCriteriaPayloadParser
++{
++    public const int MAX_CRITERIA = 100;
++
++    public function __construct(
++        private EntityManagerInterface $em
++    ) {
++    }
++
++    /**
++     * @return list<StationPlaylistSmartBlockCriteria>
++     */
++    public function parse(StationPlaylist $playlist, mixed $payload): array
++    {
++        if (!is_array($payload) || !array_is_list($payload)) {
++            throw new ValidationException('criteria must be a list.');
++        }
++        if (count($payload) > self::MAX_CRITERIA) {
++            throw new ValidationException('A Smart Block cannot contain more than 100 criteria.');
++        }
++
++        $rows = [];
++        $seen = [];
++
++        foreach ($payload as $index => $definition) {
++            if (!is_array($definition)) {
++                throw new ValidationException('Every Smart Block criterion must be an object.');
++            }
++
++            $field = $this->parseField($definition['field'] ?? null);
++            $comparison = $this->parseComparison($definition['comparison'] ?? null);
++            $this->validateComparison($field, $comparison);
++
++            $value = $this->parseRequiredValue($definition['value'] ?? null);
++            $value2 = $comparison->needsSecondValue()
++                ? $this->parseRequiredValue($definition['value2'] ?? null, 'value2')
++                : null;
++
++            $row = new StationPlaylistSmartBlockCriteria($playlist);
++            $row->field = $field;
++            $row->comparison = $comparison;
++            $row->weight = $index;
++
++            if (SmartBlockCriteriaField::Category === $field) {
++                $row->value = (string)$this->resolveCategoryId($playlist, $value);
++            } elseif ($field->isNumeric()) {
++                $row->value = $this->normalizeNumber($value);
++                $row->value2 = null !== $value2 ? $this->normalizeNumber($value2, 'value2') : null;
++            } else {
++                $row->value = $value;
++                $row->value2 = $value2;
++            }
++
++            if (SmartBlockCriteriaField::CustomField === $field) {
++                $row->custom_field = $this->resolveCustomField($definition['custom_field_id'] ?? null);
++            }
++
++            $fingerprint = implode('|', [
++                $row->field->value,
++                $row->comparison->value,
++                $row->value ?? '',
++                $row->value2 ?? '',
++                $row->custom_field?->id ?? '',
++            ]);
++            if (isset($seen[$fingerprint])) {
++                continue;
++            }
++
++            $seen[$fingerprint] = true;
++            $row->weight = count($rows);
++            $rows[] = $row;
++        }
++
++        return $rows;
++    }
++
++    private function parseField(mixed $value): SmartBlockCriteriaField
++    {
++        if (!is_string($value) || null === ($field = SmartBlockCriteriaField::tryFrom($value))) {
++            throw new ValidationException('field is invalid.');
++        }
++
++        return $field;
++    }
++
++    private function parseComparison(mixed $value): SmartBlockCriteriaComparison
++    {
++        if (!is_string($value) || null === ($comparison = SmartBlockCriteriaComparison::tryFrom($value))) {
++            throw new ValidationException('comparison is invalid.');
++        }
++
++        return $comparison;
++    }
++
++    private function validateComparison(
++        SmartBlockCriteriaField $field,
++        SmartBlockCriteriaComparison $comparison
++    ): void {
++        $allowed = match ($field) {
++            SmartBlockCriteriaField::Category => [
++                SmartBlockCriteriaComparison::Is,
++                SmartBlockCriteriaComparison::IsNot,
++            ],
++            SmartBlockCriteriaField::Duration,
++            SmartBlockCriteriaField::LastPlayed => SmartBlockCriteriaComparison::numericComparisons(),
++            SmartBlockCriteriaField::CustomField => SmartBlockCriteriaComparison::cases(),
++            default => SmartBlockCriteriaComparison::textComparisons(),
++        };
++
++        if (!in_array($comparison, $allowed, true)) {
++            throw new ValidationException('comparison is not supported for this field.');
++        }
++    }
++
++    private function parseRequiredValue(mixed $value, string $name = 'value'): string
++    {
++        if ((!is_string($value) && !is_int($value) && !is_float($value)) || '' === trim((string)$value)) {
++            throw new ValidationException($name . ' is required.');
++        }
++
++        return trim((string)$value);
++    }
++
++    private function normalizeNumber(string $value, string $name = 'value'): string
++    {
++        if (!is_numeric($value)) {
++            throw new ValidationException($name . ' must be numeric.');
++        }
++
++        return $value;
++    }
++
++    private function resolveCategoryId(StationPlaylist $playlist, string $value): int
++    {
++        if (!ctype_digit($value) || (int)$value <= 0) {
++            throw new ValidationException('category value must be a positive category ID.');
++        }
++
++        $category = $this->em->find(StationMediaCategory::class, (int)$value);
++        if (!$category instanceof StationMediaCategory || $category->station !== $playlist->station) {
++            throw new ValidationException('category is invalid for this station.');
++        }
++
++        return $category->id;
++    }
++
++    private function resolveCustomField(mixed $value): CustomField
++    {
++        if (!is_int($value) || $value <= 0) {
++            throw new ValidationException('custom_field_id must be a positive integer.');
++        }
++
++        $customField = $this->em->find(CustomField::class, $value);
++        if (!$customField instanceof CustomField) {
++            throw new ValidationException('custom_field_id is invalid.');
++        }
++
++        return $customField;
++    }
++}
+diff --git a/backend/src/Radio/SmartBlock/SmartBlockPlaybackPreparer.php b/backend/src/Radio/SmartBlock/SmartBlockPlaybackPreparer.php
+new file mode 100644
+index 0000000..7fe2a77
+--- /dev/null
++++ b/backend/src/Radio/SmartBlock/SmartBlockPlaybackPreparer.php
+@@ -0,0 +1,72 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Radio\SmartBlock;
++
++use App\Entity\Enums\SmartBlockType;
++use App\Entity\StationPlaylist;
++use Psr\Log\LoggerInterface;
++use Throwable;
++
++final class SmartBlockPlaybackPreparer
++{
++    /** @var array<int, bool> */
++    private array $preparedPlaylists = [];
++
++    public function __construct(
++        private readonly SmartBlockSynchronizerInterface $synchronizer,
++        private readonly LoggerInterface $logger
++    ) {
++    }
++
++    public function beginQueueBuild(): void
++    {
++        $this->preparedPlaylists = [];
++    }
++
++    public function prepare(StationPlaylist $playlist): bool
++    {
++        if (!$playlist->is_smart_block || SmartBlockType::Dynamic !== $playlist->smart_block_type) {
++            return true;
++        }
++
++        $key = spl_object_id($playlist);
++        if (array_key_exists($key, $this->preparedPlaylists)) {
++            return $this->preparedPlaylists[$key];
++        }
++
++        // Cache failures too: duplicate-prevention retries must not repeatedly
++        // execute a failing synchronization during the same queue build.
++        $this->preparedPlaylists[$key] = false;
++
++        try {
++            $result = $this->synchronizer->synchronize($playlist);
++            $this->preparedPlaylists[$key] = true;
++
++            if ($result['changed']) {
++                $this->logger->info(
++                    'Dynamic Smart Block synchronized before playback.',
++                    [
++                        'playlist_id' => $playlist->id,
++                        'matched' => $result['matched'],
++                        'added' => $result['added'],
++                        'removed' => $result['removed'],
++                    ]
++                );
++            }
++
++            return true;
++        } catch (Throwable $e) {
++            $this->logger->error(
++                'Dynamic Smart Block synchronization failed; skipping this playlist.',
++                [
++                    'playlist_id' => $playlist->id,
++                    'exception' => $e->getMessage(),
++                ]
++            );
++
++            return false;
++        }
++    }
++}
+diff --git a/backend/src/Radio/SmartBlock/SmartBlockSynchronizer.php b/backend/src/Radio/SmartBlock/SmartBlockSynchronizer.php
+new file mode 100644
+index 0000000..6fcf4e8
+--- /dev/null
++++ b/backend/src/Radio/SmartBlock/SmartBlockSynchronizer.php
+@@ -0,0 +1,110 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Radio\SmartBlock;
++
++use App\Entity\Enums\PlaylistSources;
++use App\Entity\Repository\StationPlaylistMediaRepository;
++use App\Entity\Repository\StationPlaylistSmartBlockCriteriaRepository;
++use App\Entity\StationMedia;
++use App\Entity\StationPlaylist;
++use InvalidArgumentException;
++
++final class SmartBlockSynchronizer implements SmartBlockSynchronizerInterface
++{
++    public function __construct(
++        private readonly StationPlaylistSmartBlockCriteriaRepository $criteriaRepository,
++        private readonly StationPlaylistMediaRepository $playlistMediaRepository
++    ) {
++    }
++
++    /**
++     * @return array{matched: int, added: int, removed: int, unchanged: int, changed: bool}
++     */
++    public function synchronize(StationPlaylist $playlist): array
++    {
++        if (!$playlist->is_smart_block) {
++            throw new InvalidArgumentException('Playlist is not a Smart Block.');
++        }
++
++        if (PlaylistSources::Songs !== $playlist->source) {
++            throw new InvalidArgumentException('A Smart Block must be a song playlist.');
++        }
++
++        return $this->reconcile(
++            $playlist,
++            $this->criteriaRepository->getMatchingMedia($playlist)
++        );
++    }
++
++    /**
++     * Reconcile direct playlist memberships with an already resolved selection.
++     *
++     * This separate entry point keeps the mutation algorithm deterministic and
++     * independently testable from the criteria query.
++     *
++     * @param iterable<StationMedia> $matchingMedia
++     * @return array{matched: int, added: int, removed: int, unchanged: int, changed: bool}
++     */
++    public function reconcile(StationPlaylist $playlist, iterable $matchingMedia): array
++    {
++        $targetMedia = [];
++        foreach ($matchingMedia as $media) {
++            $targetMedia[$media->id] = $media;
++        }
++
++        $currentMemberships = [];
++        $duplicateMemberships = [];
++        foreach ($this->playlistMediaRepository->getDirectMediaMemberships($playlist) as $membership) {
++            $mediaId = $membership->media->id;
++            if (isset($currentMemberships[$mediaId])) {
++                $duplicateMemberships[] = $membership;
++            } else {
++                $currentMemberships[$mediaId] = $membership;
++            }
++        }
++
++        $added = 0;
++        $removed = 0;
++        $unchanged = 0;
++
++        foreach ($duplicateMemberships as $membership) {
++            $this->playlistMediaRepository->removeDirectMediaMembership($membership);
++            ++$removed;
++        }
++
++        foreach ($currentMemberships as $mediaId => $membership) {
++            if (isset($targetMedia[$mediaId])) {
++                ++$unchanged;
++                continue;
++            }
++
++            $this->playlistMediaRepository->removeDirectMediaMembership($membership);
++            ++$removed;
++        }
++
++        foreach ($targetMedia as $mediaId => $media) {
++            if (isset($currentMemberships[$mediaId])) {
++                continue;
++            }
++
++            if ($this->playlistMediaRepository->addMediaToPlaylistIfMissing($media, $playlist)) {
++                ++$added;
++            }
++        }
++
++        $changed = $added > 0 || $removed > 0;
++        if ($changed) {
++            $this->playlistMediaRepository->getEntityManager()->flush();
++        }
++
++        return [
++            'matched' => count($targetMedia),
++            'added' => $added,
++            'removed' => $removed,
++            'unchanged' => $unchanged,
++            'changed' => $changed,
++        ];
++    }
++}
+diff --git a/backend/src/Radio/SmartBlock/SmartBlockSynchronizerInterface.php b/backend/src/Radio/SmartBlock/SmartBlockSynchronizerInterface.php
+new file mode 100644
+index 0000000..6fa1551
+--- /dev/null
++++ b/backend/src/Radio/SmartBlock/SmartBlockSynchronizerInterface.php
+@@ -0,0 +1,15 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Radio\SmartBlock;
++
++use App\Entity\StationPlaylist;
++
++interface SmartBlockSynchronizerInterface
++{
++    /**
++     * @return array{matched: int, added: int, removed: int, unchanged: int, changed: bool}
++     */
++    public function synchronize(StationPlaylist $playlist): array;
++}
+diff --git a/frontend/components/Stations/Playlists/EditModal.vue b/frontend/components/Stations/Playlists/EditModal.vue
+index d6308c1..d8f1e12 100644
+--- a/frontend/components/Stations/Playlists/EditModal.vue
++++ b/frontend/components/Stations/Playlists/EditModal.vue
+@@ -11,6 +11,7 @@
+         <tabs>
+             <form-basic-info/>
+             <form-schedule v-model:schedule-items="form.schedule_items" />
++            <form-smart-block v-if="isEditMode && form.source === PlaylistSources.Songs" />
+             <form-advanced/>
+         </tabs>
+     </modal-form>
+@@ -20,6 +21,7 @@
+ import FormBasicInfo from "~/components/Stations/Playlists/Form/BasicInfo.vue";
+ import FormSchedule from "~/components/Stations/Playlists/Form/Schedule.vue";
+ import FormAdvanced from "~/components/Stations/Playlists/Form/Advanced.vue";
++import FormSmartBlock from "~/components/Stations/Playlists/Form/SmartBlock.vue";
+ import {BaseEditModalEmits, BaseEditModalProps, useBaseEditModal} from "~/functions/useBaseEditModal";
+ import {computed, toRef, useTemplateRef} from "vue";
+ import {useTranslate} from "~/vendor/gettext";
+@@ -31,6 +33,7 @@ import {useAppCollectScope} from "~/vendor/regle.ts";
+ import {useStationsPlaylistsForm} from "~/components/Stations/Playlists/Form/form.ts";
+ import mergeExisting from "~/functions/mergeExisting.ts";
+ import normalizeStationScheduleDays from "~/functions/normalizeStationScheduleDays";
++import {PlaylistSources} from "~/entities/ApiInterfaces.ts";
+ 
+ const props = defineProps<BaseEditModalProps>();
+ 
+diff --git a/frontend/components/Stations/Playlists/Form/SmartBlock.vue b/frontend/components/Stations/Playlists/Form/SmartBlock.vue
+new file mode 100644
+index 0000000..101f3eb
+--- /dev/null
++++ b/frontend/components/Stations/Playlists/Form/SmartBlock.vue
+@@ -0,0 +1,28 @@
++<template>
++    <tab :label="$gettext('Smart Block')">
++        <smart-block-criteria-editor
++            v-if="smartBlockUrl"
++            :smart-block-url="smartBlockUrl"
++        />
++    </tab>
++</template>
++
++<script setup lang="ts">
++import {computed} from "vue";
++import {storeToRefs} from "pinia";
++import Tab from "~/components/Common/Tab.vue";
++import SmartBlockCriteriaEditor from "~/components/Stations/Playlists/SmartBlockCriteriaEditor.vue";
++import {useStationsPlaylistsForm} from "~/components/Stations/Playlists/Form/form.ts";
++import {useApiRouter} from "~/functions/useApiRouter.ts";
++import {useTranslate} from "~/vendor/gettext";
++
++const {$gettext} = useTranslate();
++const {form} = storeToRefs(useStationsPlaylistsForm());
++const {getStationApiUrl} = useApiRouter();
++
++const smartBlockUrl = getStationApiUrl(computed(() => (
++    form.value.id === null
++        ? '/playlist/0/smart-block'
++        : `/playlist/${form.value.id}/smart-block`
++)));
++</script>
+diff --git a/frontend/components/Stations/Playlists/SmartBlockCriteriaEditor.vue b/frontend/components/Stations/Playlists/SmartBlockCriteriaEditor.vue
+new file mode 100644
+index 0000000..3941001
+--- /dev/null
++++ b/frontend/components/Stations/Playlists/SmartBlockCriteriaEditor.vue
+@@ -0,0 +1,474 @@
++<template>
++    <div>
++        <div
++            v-if="loading"
++            class="p-5 text-center"
++        >
++            <div class="spinner-border" />
++        </div>
++
++        <template v-else>
++            <div class="row g-3 mb-3">
++                <form-group-checkbox
++                    id="smart_block_enabled"
++                    class="col-12"
++                    v-model="editor.is_smart_block"
++                    :label="$gettext('Enable Smart Block')"
++                    :description="$gettext('Automatically keep this playlist populated with media matching the criteria below. The playlist can then be used normally, including as a Group List member.')"
++                />
++
++                <form-group-multi-check
++                    v-if="editor.is_smart_block"
++                    id="smart_block_type"
++                    class="col-md-6"
++                    v-model="editor.smart_block_type"
++                    :options="typeOptions"
++                    stacked
++                    radio
++                    :label="$gettext('Synchronization')"
++                />
++
++                <form-group-multi-check
++                    v-if="editor.is_smart_block"
++                    id="smart_block_match_type"
++                    class="col-md-6"
++                    v-model="editor.smart_block_match_type"
++                    :options="matchTypeOptions"
++                    stacked
++                    radio
++                    :label="$gettext('Criteria Matching')"
++                />
++            </div>
++
++            <template v-if="editor.is_smart_block">
++                <div
++                    v-if="availableCategories.length === 0"
++                    class="alert alert-info"
++                >
++                    {{ $gettext('No media categories exist for this station yet. Create a category in Music Files before adding a Category criterion.') }}
++                </div>
++
++                <div
++                    v-for="(row, index) in editor.criteria"
++                    :key="row.rowId"
++                    class="row g-2 align-items-end mb-3 pb-3 border-bottom"
++                >
++                    <form-group-select
++                        :id="`smart_block_field_${index}`"
++                        class="col-12 col-md-3"
++                        :model-value="row.field"
++                        :options="fieldOptions"
++                        :label="$gettext('Field')"
++                        @update:model-value="updateField(index, $event as SmartBlockCriteriaField)"
++                    />
++
++                    <form-group-select
++                        :id="`smart_block_comparison_${index}`"
++                        class="col-12 col-md-3"
++                        :model-value="row.comparison"
++                        :options="comparisonOptionsFor(row)"
++                        :label="$gettext('Comparison')"
++                        @update:model-value="updateRow(index, {comparison: $event as SmartBlockCriteriaComparison})"
++                    />
++
++                    <form-group-select
++                        v-if="row.field === SmartBlockCriteriaField.Category"
++                        :id="`smart_block_category_${index}`"
++                        class="col-12 col-md-4"
++                        :model-value="row.value ?? ''"
++                        :options="categoryOptions"
++                        :label="$gettext('Category')"
++                        @update:model-value="updateRow(index, {value: String($event)})"
++                    />
++
++                    <form-group-select
++                        v-else-if="row.field === SmartBlockCriteriaField.CustomField"
++                        :id="`smart_block_custom_field_${index}`"
++                        class="col-12 col-md-2"
++                        :model-value="row.custom_field_id ? String(row.custom_field_id) : ''"
++                        :options="customFieldOptions"
++                        :label="$gettext('Custom Field')"
++                        @update:model-value="updateRow(index, {custom_field_id: Number($event) || null})"
++                    />
++
++                    <form-group-field
++                        v-if="row.field !== SmartBlockCriteriaField.Category"
++                        :id="`smart_block_value_${index}`"
++                        :class="row.field === SmartBlockCriteriaField.CustomField ? 'col-12 col-md-2' : 'col-12 col-md-4'"
++                        :model-value="row.value ?? ''"
++                        :label="valueLabelFor(row)"
++                        @update:model-value="updateRow(index, {value: String($event)})"
++                    />
++
++                    <form-group-field
++                        v-if="row.comparison === SmartBlockCriteriaComparison.Between"
++                        :id="`smart_block_value2_${index}`"
++                        class="col-12 col-md-2"
++                        :model-value="row.value2 ?? ''"
++                        :label="$gettext('And')"
++                        @update:model-value="updateRow(index, {value2: String($event)})"
++                    />
++
++                    <div class="col-12 col-md-auto">
++                        <button
++                            type="button"
++                            class="btn btn-danger"
++                            :title="$gettext('Remove Criterion')"
++                            @click="removeRow(index)"
++                        >
++                            <icon-ic-delete />
++                        </button>
++                    </div>
++                </div>
++
++                <button
++                    type="button"
++                    class="btn btn-secondary"
++                    @click="addRow"
++                >
++                    <icon-ic-add class="me-1" />{{ $gettext('Add Criterion') }}
++                </button>
++
++                <div class="row g-3 mt-1">
++                    <form-group-multi-check
++                        id="smart_block_limit_type"
++                        class="col-md-6"
++                        v-model="editor.smart_block_limit_type"
++                        :options="limitTypeOptions"
++                        stacked
++                        radio
++                        :label="$gettext('Optional Limit')"
++                    />
++
++                    <form-group-field
++                        id="smart_block_limit"
++                        class="col-md-6"
++                        v-model="displayLimit"
++                        input-type="number"
++                        :input-attrs="{min: '1'}"
++                        :label="limitLabel"
++                        :description="$gettext('Leave empty for no limit.')"
++                    />
++                </div>
++            </template>
++
++            <div class="d-flex flex-wrap align-items-center gap-2 mt-3 pt-3 border-top">
++                <button
++                    type="button"
++                    class="btn btn-primary"
++                    :disabled="saving || !canSave"
++                    @click="save"
++                >
++                    <span
++                        v-if="saving"
++                        class="spinner-border spinner-border-sm me-1"
++                    />
++                    {{ editor.is_smart_block ? $gettext('Save and Synchronize') : $gettext('Disable Smart Block') }}
++                </button>
++
++                <span
++                    v-if="editor.is_smart_block"
++                    class="text-muted"
++                >
++                    {{ $gettext('%{count} matching tracks; %{members} currently in playlist', {
++                        count: preview.matching_count,
++                        members: preview.current_member_count
++                    }) }}
++                </span>
++            </div>
++
++            <div
++                v-if="editor.is_smart_block && preview.preview.length > 0"
++                class="mt-3"
++            >
++                <h3 class="h6">{{ $gettext('Matching Track Preview') }}</h3>
++                <ul class="list-group list-group-flush">
++                    <li
++                        v-for="track in preview.preview"
++                        :key="track.id"
++                        class="list-group-item"
++                    >
++                        {{ track.artist ? `${track.artist} — ` : '' }}{{ track.title || $gettext('(Untitled)') }}
++                    </li>
++                </ul>
++            </div>
++        </template>
++    </div>
++</template>
++
++<script setup lang="ts">
++import {computed, onMounted, ref, watch} from "vue";
++import FormGroupCheckbox from "~/components/Form/FormGroupCheckbox.vue";
++import FormGroupField from "~/components/Form/FormGroupField.vue";
++import FormGroupMultiCheck from "~/components/Form/FormGroupMultiCheck.vue";
++import FormGroupSelect from "~/components/Form/FormGroupSelect.vue";
++import {useNotify} from "~/components/Common/Toasts/useNotify.ts";
++import {
++    SmartBlockCriteriaComparison,
++    SmartBlockCriteriaField,
++    SmartBlockLimitType,
++    SmartBlockMatchType,
++    SmartBlockType,
++    type StationPlaylistSmartBlockCriterion,
++} from "~/entities/ApiInterfaces.ts";
++import {getErrorAsString, useAxios} from "~/vendor/axios";
++import {useTranslate} from "~/vendor/gettext";
++import IconIcAdd from "~icons/ic/baseline-add";
++import IconIcDelete from "~icons/ic/baseline-delete";
++
++const props = defineProps<{
++    smartBlockUrl: string,
++}>();
++
++const {$gettext} = useTranslate();
++const {axios} = useAxios();
++const {notifySuccess, notifyError} = useNotify();
++
++type CriterionRow = StationPlaylistSmartBlockCriterion & {rowId: number};
++type SmartBlockResponse = {
++    is_smart_block: boolean,
++    smart_block_type: SmartBlockType,
++    smart_block_match_type: SmartBlockMatchType,
++    smart_block_limit: number | null,
++    smart_block_limit_type: SmartBlockLimitType,
++    criteria: StationPlaylistSmartBlockCriterion[],
++    current_member_count: number,
++    matching_count: number,
++    preview: Array<{id: number, title?: string | null, artist?: string | null}>,
++    available_categories: Array<{id: number, name: string}>,
++    available_custom_fields: Array<{id: number, name: string, short_name: string}>,
++};
++
++const loading = ref(true);
++const saving = ref(false);
++let nextRowId = 1;
++
++const editor = ref({
++    is_smart_block: false,
++    smart_block_type: SmartBlockType.Dynamic,
++    smart_block_match_type: SmartBlockMatchType.All,
++    smart_block_limit: null as number | null,
++    smart_block_limit_type: SmartBlockLimitType.Tracks,
++    criteria: [] as CriterionRow[],
++});
++
++const preview = ref({
++    current_member_count: 0,
++    matching_count: 0,
++    preview: [] as SmartBlockResponse['preview'],
++});
++
++const availableCategories = ref<SmartBlockResponse['available_categories']>([]);
++const availableCustomFields = ref<SmartBlockResponse['available_custom_fields']>([]);
++
++const typeOptions = [
++    {value: SmartBlockType.Dynamic, text: $gettext('Dynamic — refresh before playback')},
++    {value: SmartBlockType.Static, text: $gettext('Static — synchronize only when saved')},
++];
++
++const matchTypeOptions = [
++    {value: SmartBlockMatchType.All, text: $gettext('Match all criteria (AND)')},
++    {value: SmartBlockMatchType.Any, text: $gettext('Match any criterion (OR)')},
++];
++
++const limitTypeOptions = [
++    {value: SmartBlockLimitType.Tracks, text: $gettext('Number of Tracks')},
++    {value: SmartBlockLimitType.Duration, text: $gettext('Duration')},
++];
++
++const fieldOptions = {
++    [SmartBlockCriteriaField.Category]: $gettext('Category'),
++    [SmartBlockCriteriaField.Genre]: $gettext('Genre'),
++    [SmartBlockCriteriaField.Artist]: $gettext('Artist'),
++    [SmartBlockCriteriaField.Album]: $gettext('Album'),
++    [SmartBlockCriteriaField.Title]: $gettext('Title'),
++    [SmartBlockCriteriaField.Duration]: $gettext('Duration'),
++    [SmartBlockCriteriaField.LastPlayed]: $gettext('Last Played (days ago)'),
++    [SmartBlockCriteriaField.CustomField]: $gettext('Custom Field'),
++};
++
++const categoryOptions = computed<Record<string, string>>(() => Object.fromEntries(
++    availableCategories.value.map((category) => [String(category.id), category.name])
++));
++
++const customFieldOptions = computed<Record<string, string>>(() => Object.fromEntries(
++    availableCustomFields.value.map((field) => [String(field.id), field.name])
++));
++
++const textComparisonOptions = {
++    [SmartBlockCriteriaComparison.Is]: $gettext('Is'),
++    [SmartBlockCriteriaComparison.IsNot]: $gettext('Is Not'),
++    [SmartBlockCriteriaComparison.Contains]: $gettext('Contains'),
++    [SmartBlockCriteriaComparison.NotContains]: $gettext('Does Not Contain'),
++};
++
++const numericComparisonOptions = {
++    [SmartBlockCriteriaComparison.Is]: $gettext('Is'),
++    [SmartBlockCriteriaComparison.IsNot]: $gettext('Is Not'),
++    [SmartBlockCriteriaComparison.GreaterThan]: $gettext('Greater Than'),
++    [SmartBlockCriteriaComparison.LessThan]: $gettext('Less Than'),
++    [SmartBlockCriteriaComparison.Between]: $gettext('Between'),
++};
++
++const comparisonOptionsFor = (row: CriterionRow): Record<string, string> => {
++    if (row.field === SmartBlockCriteriaField.Category) {
++        return {
++            [SmartBlockCriteriaComparison.Is]: $gettext('Is'),
++            [SmartBlockCriteriaComparison.IsNot]: $gettext('Is Not'),
++        };
++    }
++    if (row.field === SmartBlockCriteriaField.Duration || row.field === SmartBlockCriteriaField.LastPlayed) {
++        return numericComparisonOptions;
++    }
++    if (row.field === SmartBlockCriteriaField.CustomField) {
++        return {...textComparisonOptions, ...numericComparisonOptions};
++    }
++    return textComparisonOptions;
++};
++
++const valueLabelFor = (row: CriterionRow): string => {
++    if (row.field === SmartBlockCriteriaField.Duration) {
++        return $gettext('Value (seconds)');
++    }
++    if (row.field === SmartBlockCriteriaField.LastPlayed) {
++        return $gettext('Value (days)');
++    }
++    return $gettext('Value');
++};
++
++const displayLimit = computed<number | null>({
++    get: () => {
++        if (editor.value.smart_block_limit === null) {
++            return null;
++        }
++        return editor.value.smart_block_limit_type === SmartBlockLimitType.Duration
++            ? Math.round(editor.value.smart_block_limit / 60)
++            : editor.value.smart_block_limit;
++    },
++    set: (value) => {
++        const numericValue = Number(value);
++        editor.value.smart_block_limit = !numericValue || numericValue < 1
++            ? null
++            : editor.value.smart_block_limit_type === SmartBlockLimitType.Duration
++                ? Math.round(numericValue * 60)
++                : Math.round(numericValue);
++    },
++});
++
++const limitLabel = computed(() => editor.value.smart_block_limit_type === SmartBlockLimitType.Duration
++    ? $gettext('Maximum Duration (minutes)')
++    : $gettext('Maximum Tracks'));
++
++const canSave = computed(() => {
++    if (!editor.value.is_smart_block) {
++        return true;
++    }
++    if (editor.value.criteria.length === 0) {
++        return false;
++    }
++    return editor.value.criteria.every((row) => {
++        if (!row.value?.trim()) {
++            return false;
++        }
++        if (row.field === SmartBlockCriteriaField.CustomField && !row.custom_field_id) {
++            return false;
++        }
++        return row.comparison !== SmartBlockCriteriaComparison.Between || Boolean(row.value2?.trim());
++    });
++});
++
++const load = async (): Promise<void> => {
++    loading.value = true;
++    try {
++        const {data} = await axios.get<SmartBlockResponse>(props.smartBlockUrl);
++        editor.value = {
++            is_smart_block: data.is_smart_block,
++            smart_block_type: data.smart_block_type,
++            smart_block_match_type: data.smart_block_match_type,
++            smart_block_limit: data.smart_block_limit,
++            smart_block_limit_type: data.smart_block_limit_type,
++            criteria: data.criteria.map((criterion) => ({...criterion, rowId: nextRowId++})),
++        };
++        preview.value = {
++            current_member_count: data.current_member_count,
++            matching_count: data.matching_count,
++            preview: data.preview,
++        };
++        availableCategories.value = data.available_categories;
++        availableCustomFields.value = data.available_custom_fields;
++    } catch (error) {
++        notifyError(`${$gettext('Failed to load Smart Block.')}: ${getErrorAsString(error)}`);
++    } finally {
++        loading.value = false;
++    }
++};
++
++const addRow = (): void => {
++    const firstCategory = availableCategories.value[0];
++    editor.value.criteria.push({
++        rowId: nextRowId++,
++        field: firstCategory ? SmartBlockCriteriaField.Category : SmartBlockCriteriaField.Genre,
++        comparison: SmartBlockCriteriaComparison.Is,
++        value: firstCategory ? String(firstCategory.id) : '',
++        value2: null,
++        custom_field_id: null,
++    });
++};
++
++const removeRow = (index: number): void => {
++    editor.value.criteria.splice(index, 1);
++};
++
++const updateRow = (index: number, changes: Partial<StationPlaylistSmartBlockCriterion>): void => {
++    Object.assign(editor.value.criteria[index], changes);
++};
++
++const updateField = (index: number, field: SmartBlockCriteriaField): void => {
++    const firstCategory = availableCategories.value[0];
++    const isNumeric = field === SmartBlockCriteriaField.Duration || field === SmartBlockCriteriaField.LastPlayed;
++    updateRow(index, {
++        field,
++        comparison: isNumeric ? SmartBlockCriteriaComparison.GreaterThan : SmartBlockCriteriaComparison.Is,
++        value: field === SmartBlockCriteriaField.Category && firstCategory ? String(firstCategory.id) : '',
++        value2: null,
++        custom_field_id: null,
++    });
++};
++
++const save = async (): Promise<void> => {
++    saving.value = true;
++    try {
++        const criteria = editor.value.criteria.map((criterion, weight) => ({
++            field: criterion.field,
++            comparison: criterion.comparison,
++            value: criterion.value,
++            value2: criterion.value2,
++            custom_field_id: criterion.custom_field_id,
++            weight,
++        }));
++        const {data} = await axios.put(props.smartBlockUrl, {
++            is_smart_block: editor.value.is_smart_block,
++            smart_block_type: editor.value.smart_block_type,
++            smart_block_match_type: editor.value.smart_block_match_type,
++            smart_block_limit: editor.value.smart_block_limit,
++            smart_block_limit_type: editor.value.smart_block_limit_type,
++            criteria,
++        });
++
++        notifySuccess(editor.value.is_smart_block
++            ? $gettext('%{added} tracks added and %{removed} removed.', {
++                added: data.added ?? 0,
++                removed: data.removed ?? 0,
++            })
++            : $gettext('Smart Block disabled.'));
++        await load();
++    } catch (error) {
++        notifyError(`${$gettext('Failed to save Smart Block.')}: ${getErrorAsString(error)}`);
++    } finally {
++        saving.value = false;
++    }
++};
++
++watch(() => props.smartBlockUrl, () => void load());
++onMounted(() => void load());
++</script>
+diff --git a/frontend/entities/ApiInterfaces.ts b/frontend/entities/ApiInterfaces.ts
+index cb53fa4..dcbf5bf 100644
+--- a/frontend/entities/ApiInterfaces.ts
++++ b/frontend/entities/ApiInterfaces.ts
+@@ -215,6 +215,42 @@ export enum PlaylistOrders {
+   SmartShuffle = "smart_shuffle",
+ }
+ 
++export enum SmartBlockCriteriaField {
++  Genre = "genre",
++  Category = "category",
++  Artist = "artist",
++  Album = "album",
++  Title = "title",
++  Duration = "duration",
++  CustomField = "custom_field",
++  LastPlayed = "last_played_days_ago",
++}
++
++export enum SmartBlockCriteriaComparison {
++  Is = "is",
++  IsNot = "is_not",
++  Contains = "contains",
++  NotContains = "not_contains",
++  GreaterThan = "greater_than",
++  LessThan = "less_than",
++  Between = "between",
++}
++
++export enum SmartBlockMatchType {
++  All = "all",
++  Any = "any",
++}
++
++export enum SmartBlockLimitType {
++  Tracks = "tracks",
++  Duration = "duration",
++}
++
++export enum SmartBlockType {
++  Static = "static",
++  Dynamic = "dynamic",
++}
++
+ export enum LoginTokenTypes {
+   ResetPassword = "reset_password",
+   Login = "login",
+@@ -2475,6 +2511,17 @@ export type StationPlaylist = HasAutoIncrementId & {
+   podcasts?: any[];
+ };
+ 
++export type StationPlaylistSmartBlockCriterion = {
++  id?: number | null;
++  field: SmartBlockCriteriaField;
++  custom_field_id?: number | null;
++  custom_field_name?: string | null;
++  comparison: SmartBlockCriteriaComparison;
++  value: string | null;
++  value2?: string | null;
++  weight?: number;
++};
++
+ export type StationRemote = HasAutoIncrementId & {
+   /** @example "128kbps MP3" */
+   display_name?: string;
+diff --git a/tests/PureUnit/SmartBlockCriteriaExpressionBuilderTest.php b/tests/PureUnit/SmartBlockCriteriaExpressionBuilderTest.php
+new file mode 100644
+index 0000000..44b3272
+--- /dev/null
++++ b/tests/PureUnit/SmartBlockCriteriaExpressionBuilderTest.php
+@@ -0,0 +1,243 @@
++<?php
++
++declare(strict_types=1);
++
++namespace PureUnit;
++
++use App\Entity\CustomField;
++use App\Entity\Enums\SmartBlockCriteriaComparison;
++use App\Entity\Enums\SmartBlockCriteriaField;
++use App\Entity\Enums\SmartBlockLimitType;
++use App\Entity\Enums\SmartBlockMatchType;
++use App\Entity\Enums\SmartBlockType;
++use App\Entity\Enums\StorageLocationAdapters;
++use App\Entity\Enums\StorageLocationTypes;
++use App\Entity\Repository\StationPlaylistSmartBlockCriteriaRepository;
++use App\Entity\Station;
++use App\Entity\StationMedia;
++use App\Entity\StationPlaylist;
++use App\Entity\StationPlaylistSmartBlockCriteria;
++use App\Entity\StorageLocation;
++use App\Radio\SmartBlock\SmartBlockCriteriaExpressionBuilder;
++use DateTimeImmutable;
++use PHPUnit\Framework\TestCase;
++
++final class SmartBlockCriteriaExpressionBuilderTest extends TestCase
++{
++    public function testPlaylistDefaultsAndLimitNormalization(): void
++    {
++        $playlist = new StationPlaylist(new Station());
++
++        self::assertFalse($playlist->is_smart_block);
++        self::assertSame(SmartBlockMatchType::All, $playlist->smart_block_match_type);
++        self::assertSame(SmartBlockLimitType::Tracks, $playlist->smart_block_limit_type);
++        self::assertSame(SmartBlockType::Dynamic, $playlist->smart_block_type);
++
++        $playlist->smart_block_limit = '25';
++        self::assertSame(25, $playlist->smart_block_limit);
++
++        $playlist->smart_block_limit = 0;
++        self::assertNull($playlist->smart_block_limit);
++    }
++
++    public function testCombinesTextAndNumericCriteriaWithAll(): void
++    {
++        $playlist = new StationPlaylist(new Station());
++        $this->addCriterion(
++            $playlist,
++            SmartBlockCriteriaField::Genre,
++            SmartBlockCriteriaComparison::Contains,
++            'Rock'
++        );
++        $this->addCriterion(
++            $playlist,
++            SmartBlockCriteriaField::Duration,
++            SmartBlockCriteriaComparison::Between,
++            '120',
++            '300'
++        );
++
++        $expression = (new SmartBlockCriteriaExpressionBuilder())->build(
++            $playlist->smart_block_criteria,
++            SmartBlockMatchType::All
++        );
++
++        self::assertNotNull($expression);
++        self::assertStringContainsString('LOWER(sm.genre) LIKE :val0', $expression['where']);
++        self::assertStringContainsString(' AND ', $expression['where']);
++        self::assertStringContainsString('sm.length BETWEEN :val1 AND :val1b', $expression['where']);
++        self::assertSame('%rock%', $expression['parameters']['val0']);
++        self::assertSame(120.0, $expression['parameters']['val1']);
++        self::assertSame(300.0, $expression['parameters']['val1b']);
++    }
++
++    public function testCombinesCriteriaWithAny(): void
++    {
++        $playlist = new StationPlaylist(new Station());
++        $this->addCriterion(
++            $playlist,
++            SmartBlockCriteriaField::Artist,
++            SmartBlockCriteriaComparison::Is,
++            'Artist A'
++        );
++        $this->addCriterion(
++            $playlist,
++            SmartBlockCriteriaField::Album,
++            SmartBlockCriteriaComparison::Is,
++            'Album B'
++        );
++
++        $expression = (new SmartBlockCriteriaExpressionBuilder())->build(
++            $playlist->smart_block_criteria,
++            SmartBlockMatchType::Any
++        );
++
++        self::assertNotNull($expression);
++        self::assertStringContainsString(' OR ', $expression['where']);
++        self::assertStringNotContainsString(' AND ', $expression['where']);
++    }
++
++    public function testCategoryUsesTheExactMediaCategoryId(): void
++    {
++        $playlist = new StationPlaylist(new Station());
++        $this->addCriterion(
++            $playlist,
++            SmartBlockCriteriaField::Category,
++            SmartBlockCriteriaComparison::Is,
++            '42'
++        );
++
++        $expression = (new SmartBlockCriteriaExpressionBuilder())->build(
++            $playlist->smart_block_criteria,
++            SmartBlockMatchType::All
++        );
++
++        self::assertNotNull($expression);
++        self::assertStringContainsString('sm.category_id = :val0', $expression['where']);
++        self::assertSame(42, $expression['parameters']['val0']);
++    }
++
++    public function testCustomFieldNotContainsUsesNotExistsAndLike(): void
++    {
++        $playlist = new StationPlaylist(new Station());
++        $criterion = $this->addCriterion(
++            $playlist,
++            SmartBlockCriteriaField::CustomField,
++            SmartBlockCriteriaComparison::NotContains,
++            'calm'
++        );
++        $customField = new CustomField();
++        $customField->name = 'Mood';
++        $criterion->custom_field = $customField;
++
++        $expression = (new SmartBlockCriteriaExpressionBuilder())->build(
++            $playlist->smart_block_criteria,
++            SmartBlockMatchType::All
++        );
++
++        self::assertNotNull($expression);
++        self::assertStringContainsString('NOT EXISTS', $expression['where']);
++        self::assertStringContainsString('LOWER(smcf0.value) LIKE :val0', $expression['where']);
++        self::assertSame('%calm%', $expression['parameters']['val0']);
++        self::assertSame($customField, $expression['parameters']['field0']);
++    }
++
++    public function testIncompleteCriteriaAreIgnored(): void
++    {
++        $playlist = new StationPlaylist(new Station());
++        $this->addCriterion(
++            $playlist,
++            SmartBlockCriteriaField::CustomField,
++            SmartBlockCriteriaComparison::Is,
++            '120'
++        );
++        $this->addCriterion(
++            $playlist,
++            SmartBlockCriteriaField::Duration,
++            SmartBlockCriteriaComparison::Between,
++            '60'
++        );
++
++        self::assertNull(
++            (new SmartBlockCriteriaExpressionBuilder())->build(
++                $playlist->smart_block_criteria,
++                SmartBlockMatchType::All
++            )
++        );
++    }
++
++    public function testLastPlayedBuildsStableThreshold(): void
++    {
++        $playlist = new StationPlaylist(new Station());
++        $this->addCriterion(
++            $playlist,
++            SmartBlockCriteriaField::LastPlayed,
++            SmartBlockCriteriaComparison::GreaterThan,
++            '7'
++        );
++        $now = new DateTimeImmutable('2026-08-12 12:00:00 UTC');
++
++        $expression = (new SmartBlockCriteriaExpressionBuilder())->build(
++            $playlist->smart_block_criteria,
++            SmartBlockMatchType::All,
++            $now
++        );
++
++        self::assertNotNull($expression);
++        self::assertStringContainsString('IS NULL OR', $expression['where']);
++        self::assertEquals(new DateTimeImmutable('2026-08-05 12:00:00 UTC'), $expression['parameters']['val0']);
++    }
++
++    public function testDurationLimitNeverExceedsMaximum(): void
++    {
++        $storage = new StorageLocation(StorageLocationTypes::StationMedia, StorageLocationAdapters::Local);
++        $tooLong = new StationMedia($storage, 'too-long.mp3');
++        $tooLong->length = 130;
++        $first = new StationMedia($storage, 'first.mp3');
++        $first->length = 70;
++        $second = new StationMedia($storage, 'second.mp3');
++        $second->length = 50;
++
++        $repository = new StationPlaylistSmartBlockCriteriaRepository(
++            new SmartBlockCriteriaExpressionBuilder()
++        );
++
++        self::assertSame(
++            [$first, $second],
++            $repository->limitByDuration([$tooLong, $first, $second], 120)
++        );
++    }
++
++    public function testCloneDoesNotKeepCriteria(): void
++    {
++        $playlist = new StationPlaylist(new Station());
++        $this->addCriterion(
++            $playlist,
++            SmartBlockCriteriaField::Genre,
++            SmartBlockCriteriaComparison::Is,
++            'Rock'
++        );
++
++        $clone = clone $playlist;
++
++        self::assertCount(1, $playlist->smart_block_criteria);
++        self::assertCount(0, $clone->smart_block_criteria);
++    }
++
++    private function addCriterion(
++        StationPlaylist $playlist,
++        SmartBlockCriteriaField $field,
++        SmartBlockCriteriaComparison $comparison,
++        ?string $value,
++        ?string $value2 = null
++    ): StationPlaylistSmartBlockCriteria {
++        $criterion = new StationPlaylistSmartBlockCriteria($playlist);
++        $criterion->field = $field;
++        $criterion->comparison = $comparison;
++        $criterion->value = $value;
++        $criterion->value2 = $value2;
++        $playlist->smart_block_criteria->add($criterion);
++
++        return $criterion;
++    }
++}
+diff --git a/tests/PureUnit/SmartBlockCriteriaPayloadParserTest.php b/tests/PureUnit/SmartBlockCriteriaPayloadParserTest.php
+new file mode 100644
+index 0000000..64f2868
+--- /dev/null
++++ b/tests/PureUnit/SmartBlockCriteriaPayloadParserTest.php
+@@ -0,0 +1,143 @@
++<?php
++
++declare(strict_types=1);
++
++namespace PureUnit;
++
++use App\Entity\Enums\SmartBlockCriteriaComparison;
++use App\Entity\Enums\SmartBlockCriteriaField;
++use App\Entity\Station;
++use App\Entity\StationMediaCategory;
++use App\Entity\StationPlaylist;
++use App\Exception\ValidationException;
++use App\Radio\SmartBlock\SmartBlockCriteriaPayloadParser;
++use Doctrine\ORM\EntityManagerInterface;
++use PHPUnit\Framework\TestCase;
++use ReflectionProperty;
++
++final class SmartBlockCriteriaPayloadParserTest extends TestCase
++{
++    public function testCategoryCriterionUsesCategoryFromSameStation(): void
++    {
++        $station = new Station();
++        $playlist = $this->makePlaylist($station);
++        $category = new StationMediaCategory($station);
++        $this->setId($category, 42);
++
++        $parser = $this->makeParser([42 => $category]);
++        $rows = $parser->parse($playlist, [[
++            'field' => 'category',
++            'comparison' => 'is',
++            'value' => 42,
++        ]]);
++
++        self::assertCount(1, $rows);
++        self::assertSame(SmartBlockCriteriaField::Category, $rows[0]->field);
++        self::assertSame(SmartBlockCriteriaComparison::Is, $rows[0]->comparison);
++        self::assertSame('42', $rows[0]->value);
++    }
++
++    public function testCategoryFromAnotherStationIsRejected(): void
++    {
++        $station = new Station();
++        $foreignCategory = new StationMediaCategory(new Station());
++        $this->setId($foreignCategory, 42);
++
++        $parser = $this->makeParser([42 => $foreignCategory]);
++
++        $this->expectValidation('category is invalid for this station.');
++        $parser->parse($this->makePlaylist($station), [[
++            'field' => 'category',
++            'comparison' => 'is',
++            'value' => '42',
++        ]]);
++    }
++
++    public function testCategoryRejectsTextComparison(): void
++    {
++        $parser = $this->makeParser();
++
++        $this->expectValidation('comparison is not supported for this field.');
++        $parser->parse($this->makePlaylist(new Station()), [[
++            'field' => 'category',
++            'comparison' => 'contains',
++            'value' => '42',
++        ]]);
++    }
++
++    public function testNumericFieldRejectsNonNumericValue(): void
++    {
++        $parser = $this->makeParser();
++
++        $this->expectValidation('value must be numeric.');
++        $parser->parse($this->makePlaylist(new Station()), [[
++            'field' => 'duration',
++            'comparison' => 'greater_than',
++            'value' => 'long',
++        ]]);
++    }
++
++    public function testExactDuplicatesAreRemovedAndWeightsRemainContiguous(): void
++    {
++        $parser = $this->makeParser();
++        $rows = $parser->parse($this->makePlaylist(new Station()), [
++            [
++                'field' => 'genre',
++                'comparison' => 'is',
++                'value' => 'Rock',
++            ],
++            [
++                'field' => 'genre',
++                'comparison' => 'is',
++                'value' => 'Rock',
++            ],
++            [
++                'field' => 'artist',
++                'comparison' => 'contains',
++                'value' => 'Fox',
++            ],
++        ]);
++
++        self::assertCount(2, $rows);
++        self::assertSame([0, 1], array_map(static fn($row): int => $row->weight, $rows));
++    }
++
++    public function testCriteriaMustBeAList(): void
++    {
++        $parser = $this->makeParser();
++
++        $this->expectValidation('criteria must be a list.');
++        $parser->parse($this->makePlaylist(new Station()), ['field' => 'genre']);
++    }
++
++    /** @param array<int, StationMediaCategory> $categories */
++    private function makeParser(array $categories = []): SmartBlockCriteriaPayloadParser
++    {
++        $em = $this->createStub(EntityManagerInterface::class);
++        $em->method('find')->willReturnCallback(
++            static fn(string $class, int|string $id): ?StationMediaCategory =>
++                StationMediaCategory::class === $class ? ($categories[(int)$id] ?? null) : null
++        );
++
++        return new SmartBlockCriteriaPayloadParser($em);
++    }
++
++    private function makePlaylist(Station $station): StationPlaylist
++    {
++        $playlist = new StationPlaylist($station);
++        $playlist->name = 'Smart Block';
++        return $playlist;
++    }
++
++    private function expectValidation(string $message): void
++    {
++        $this->expectException(ValidationException::class);
++        $this->expectExceptionCode(400);
++        $this->expectExceptionMessage($message);
++    }
++
++    private function setId(object $entity, int $id): void
++    {
++        (new ReflectionProperty($entity, 'id'))->setValue($entity, $id);
++    }
++}
+diff --git a/tests/PureUnit/SmartBlockPlaybackPreparerTest.php b/tests/PureUnit/SmartBlockPlaybackPreparerTest.php
+new file mode 100644
+index 0000000..33fd995
+--- /dev/null
++++ b/tests/PureUnit/SmartBlockPlaybackPreparerTest.php
+@@ -0,0 +1,96 @@
++<?php
++
++declare(strict_types=1);
++
++namespace PureUnit;
++
++use App\Entity\Enums\SmartBlockType;
++use App\Entity\Station;
++use App\Entity\StationPlaylist;
++use App\Radio\SmartBlock\SmartBlockPlaybackPreparer;
++use App\Radio\SmartBlock\SmartBlockSynchronizerInterface;
++use PHPUnit\Framework\TestCase;
++use Psr\Log\NullLogger;
++use ReflectionProperty;
++use RuntimeException;
++
++final class SmartBlockPlaybackPreparerTest extends TestCase
++{
++    public function testDynamicSmartBlockIsSynchronizedOncePerQueueBuild(): void
++    {
++        $playlist = $this->createPlaylist();
++
++        $synchronizer = $this->createMock(SmartBlockSynchronizerInterface::class);
++        $synchronizer
++            ->expects(self::exactly(2))
++            ->method('synchronize')
++            ->with($playlist)
++            ->willReturn($this->unchangedResult());
++
++        $preparer = new SmartBlockPlaybackPreparer($synchronizer, new NullLogger());
++
++        self::assertTrue($preparer->prepare($playlist));
++        self::assertTrue($preparer->prepare($playlist));
++
++        $preparer->beginQueueBuild();
++
++        self::assertTrue($preparer->prepare($playlist));
++    }
++
++    public function testStaticAndNormalPlaylistsAreNotAutomaticallySynchronized(): void
++    {
++        $normalPlaylist = $this->createPlaylist();
++        $normalPlaylist->is_smart_block = false;
++
++        $staticSmartBlock = $this->createPlaylist();
++        $staticSmartBlock->smart_block_type = SmartBlockType::Static;
++
++        $synchronizer = $this->createMock(SmartBlockSynchronizerInterface::class);
++        $synchronizer->expects(self::never())->method('synchronize');
++
++        $preparer = new SmartBlockPlaybackPreparer($synchronizer, new NullLogger());
++
++        self::assertTrue($preparer->prepare($normalPlaylist));
++        self::assertTrue($preparer->prepare($staticSmartBlock));
++    }
++
++    public function testSynchronizationFailureSkipsPlaylistAndIsCached(): void
++    {
++        $playlist = $this->createPlaylist();
++
++        $synchronizer = $this->createMock(SmartBlockSynchronizerInterface::class);
++        $synchronizer
++            ->expects(self::once())
++            ->method('synchronize')
++            ->with($playlist)
++            ->willThrowException(new RuntimeException('Selection failed.'));
++
++        $preparer = new SmartBlockPlaybackPreparer($synchronizer, new NullLogger());
++
++        self::assertFalse($preparer->prepare($playlist));
++        self::assertFalse($preparer->prepare($playlist));
++    }
++
++    private function createPlaylist(): StationPlaylist
++    {
++        $playlist = new StationPlaylist(new Station());
++        $playlist->name = 'Smart Block';
++        $playlist->is_smart_block = true;
++        $playlist->smart_block_type = SmartBlockType::Dynamic;
++        (new ReflectionProperty($playlist, 'id'))->setValue($playlist, 10);
++
++        return $playlist;
++    }
++
++    /** @return array{matched: int, added: int, removed: int, unchanged: int, changed: bool} */
++    private function unchangedResult(): array
++    {
++        return [
++            'matched' => 1,
++            'added' => 0,
++            'removed' => 0,
++            'unchanged' => 1,
++            'changed' => false,
++        ];
++    }
++}
+diff --git a/tests/PureUnit/SmartBlockSynchronizerTest.php b/tests/PureUnit/SmartBlockSynchronizerTest.php
+new file mode 100644
+index 0000000..4286c8b
+--- /dev/null
++++ b/tests/PureUnit/SmartBlockSynchronizerTest.php
+@@ -0,0 +1,226 @@
++<?php
++
++declare(strict_types=1);
++
++namespace PureUnit;
++
++use App\Doctrine\ReloadableEntityManagerInterface;
++use App\Entity\Enums\PlaylistOrders;
++use App\Entity\Enums\StorageLocationAdapters;
++use App\Entity\Enums\StorageLocationTypes;
++use App\Entity\Repository\StationPlaylistMediaRepository;
++use App\Entity\Repository\StationPlaylistSmartBlockCriteriaRepository;
++use App\Entity\Repository\StationQueueRepository;
++use App\Entity\Station;
++use App\Entity\StationMedia;
++use App\Entity\StationPlaylist;
++use App\Entity\StationPlaylistMedia;
++use App\Entity\StorageLocation;
++use App\Radio\SmartBlock\SmartBlockCriteriaExpressionBuilder;
++use App\Radio\SmartBlock\SmartBlockSynchronizer;
++use Doctrine\ORM\EntityRepository;
++use Doctrine\ORM\Query;
++use PHPUnit\Framework\TestCase;
++use ReflectionProperty;
++
++final class SmartBlockSynchronizerTest extends TestCase
++{
++    public function testReconcileAddsAndRemovesOnlyTheDifference(): void
++    {
++        $playlist = $this->createPlaylist();
++        $kept = $this->createMedia(1, 'kept.mp3');
++        $removed = $this->createMedia(2, 'removed.mp3');
++        $added = $this->createMedia(3, 'added.mp3');
++        $keptMembership = new StationPlaylistMedia($playlist, $kept);
++        $removedMembership = new StationPlaylistMedia($playlist, $removed);
++
++        $objectRepository = $this->createMock(EntityRepository::class);
++        $objectRepository
++            ->expects(self::once())
++            ->method('findBy')
++            ->with(
++                ['playlist' => $playlist, 'folder' => null],
++                ['weight' => 'ASC']
++            )
++            ->willReturn([$keptMembership, $removedMembership]);
++        $objectRepository
++            ->expects(self::once())
++            ->method('findOneBy')
++            ->with([
++                'media' => $added,
++                'playlist' => $playlist,
++                'folder' => null,
++            ])
++            ->willReturn(null);
++
++        $highestWeightQuery = $this->createMock(Query::class);
++        $highestWeightQuery->method('setParameter')->willReturnSelf();
++        $highestWeightQuery->method('getSingleScalarResult')->willReturn(2);
++
++        $clearQueueQuery = $this->createMock(Query::class);
++        $clearQueueQuery->expects(self::exactly(2))->method('setParameter')->willReturnSelf();
++        $clearQueueQuery->expects(self::once())->method('execute')->willReturn(1);
++
++        $persisted = null;
++        $entityManager = $this->createMock(ReloadableEntityManagerInterface::class);
++        $entityManager->method('getRepository')->willReturn($objectRepository);
++        $entityManager
++            ->expects(self::exactly(2))
++            ->method('createQuery')
++            ->willReturnOnConsecutiveCalls($clearQueueQuery, $highestWeightQuery);
++        $entityManager
++            ->expects(self::once())
++            ->method('remove')
++            ->with($removedMembership);
++        $entityManager
++            ->expects(self::once())
++            ->method('persist')
++            ->willReturnCallback(static function (object $entity) use (&$persisted): void {
++                $persisted = $entity;
++            });
++        $entityManager->expects(self::once())->method('flush');
++
++        $synchronizer = $this->createSynchronizer($entityManager);
++        $result = $synchronizer->reconcile($playlist, [$kept, $added, $added]);
++
++        self::assertSame(
++            [
++                'matched' => 2,
++                'added' => 1,
++                'removed' => 1,
++                'unchanged' => 1,
++                'changed' => true,
++            ],
++            $result
++        );
++        self::assertInstanceOf(StationPlaylistMedia::class, $persisted);
++        self::assertSame($added, $persisted->media);
++        self::assertSame(3, $persisted->weight);
++    }
++
++    public function testReconcileIsIdempotentWhenMembershipsAlreadyMatch(): void
++    {
++        $playlist = $this->createPlaylist();
++        $first = $this->createMedia(1, 'first.mp3');
++        $second = $this->createMedia(2, 'second.mp3');
++
++        $objectRepository = $this->createMock(EntityRepository::class);
++        $objectRepository
++            ->expects(self::once())
++            ->method('findBy')
++            ->willReturn([
++                new StationPlaylistMedia($playlist, $first),
++                new StationPlaylistMedia($playlist, $second),
++            ]);
++        $objectRepository->expects(self::never())->method('findOneBy');
++
++        $entityManager = $this->createMock(ReloadableEntityManagerInterface::class);
++        $entityManager->method('getRepository')->willReturn($objectRepository);
++        $entityManager->expects(self::never())->method('createQuery');
++        $entityManager->expects(self::never())->method('persist');
++        $entityManager->expects(self::never())->method('remove');
++        $entityManager->expects(self::never())->method('flush');
++
++        $result = $this->createSynchronizer($entityManager)->reconcile(
++            $playlist,
++            [$first, $second]
++        );
++
++        self::assertSame(
++            [
++                'matched' => 2,
++                'added' => 0,
++                'removed' => 0,
++                'unchanged' => 2,
++                'changed' => false,
++            ],
++            $result
++        );
++    }
++
++    public function testReconcileRemovesDuplicateDirectMemberships(): void
++    {
++        $playlist = $this->createPlaylist();
++        $media = $this->createMedia(1, 'duplicate.mp3');
++        $keptMembership = new StationPlaylistMedia($playlist, $media);
++        $duplicateMembership = new StationPlaylistMedia($playlist, $media);
++
++        $objectRepository = $this->createMock(EntityRepository::class);
++        $objectRepository
++            ->expects(self::once())
++            ->method('findBy')
++            ->willReturn([$keptMembership, $duplicateMembership]);
++        $objectRepository->expects(self::never())->method('findOneBy');
++
++        $clearQueueQuery = $this->createMock(Query::class);
++        $clearQueueQuery->method('setParameter')->willReturnSelf();
++        $clearQueueQuery->expects(self::once())->method('execute')->willReturn(1);
++
++        $entityManager = $this->createMock(ReloadableEntityManagerInterface::class);
++        $entityManager->method('getRepository')->willReturn($objectRepository);
++        $entityManager->expects(self::once())->method('createQuery')->willReturn($clearQueueQuery);
++        $entityManager
++            ->expects(self::once())
++            ->method('remove')
++            ->with($duplicateMembership);
++        $entityManager->expects(self::never())->method('persist');
++        $entityManager->expects(self::once())->method('flush');
++
++        $result = $this->createSynchronizer($entityManager)->reconcile($playlist, [$media]);
++
++        self::assertSame(
++            [
++                'matched' => 1,
++                'added' => 0,
++                'removed' => 1,
++                'unchanged' => 1,
++                'changed' => true,
++            ],
++            $result
++        );
++    }
++
++    private function createSynchronizer(
++        ReloadableEntityManagerInterface $entityManager
++    ): SmartBlockSynchronizer {
++        $queueRepository = new StationQueueRepository();
++        $queueRepository->setEntityManager($entityManager);
++
++        $playlistMediaRepository = new StationPlaylistMediaRepository($queueRepository);
++        $playlistMediaRepository->setEntityManager($entityManager);
++
++        $criteriaRepository = new StationPlaylistSmartBlockCriteriaRepository(
++            new SmartBlockCriteriaExpressionBuilder()
++        );
++
++        return new SmartBlockSynchronizer($criteriaRepository, $playlistMediaRepository);
++    }
++
++    private function createPlaylist(): StationPlaylist
++    {
++        $playlist = new StationPlaylist(new Station());
++        $playlist->name = 'Smart Block';
++        $playlist->order = PlaylistOrders::Sequential;
++        $playlist->is_smart_block = true;
++        $this->setId($playlist, 10);
++
++        return $playlist;
++    }
++
++    private function createMedia(int $id, string $path): StationMedia
++    {
++        $storageLocation = new StorageLocation(
++            StorageLocationTypes::StationMedia,
++            StorageLocationAdapters::Local
++        );
++        $media = new StationMedia($storageLocation, $path);
++        $this->setId($media, $id);
++
++        return $media;
++    }
++
++    private function setId(object $entity, int $id): void
++    {
++        (new ReflectionProperty($entity, 'id'))->setValue($entity, $id);
++    }
++}
+-- 
+2.34.1
+

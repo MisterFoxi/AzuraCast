@@ -1,0 +1,439 @@
+From a8bc145f2c44cd9e7da2eee0a788914423710c88 Mon Sep 17 00:00:00 2001
+From: Johannes Nagy <johannes.nagy@icloud.com>
+Date: Sat, 8 Aug 2026 12:10:35 +0000
+Subject: [PATCH] fixing TOPH
+
+---
+ backend/config/routes/api_station.php         |  5 +
+ .../Overview/TopOfHourPerformanceAction.php   | 61 ++++++++++++
+ .../Repository/StationQueueRepository.php     | 84 ++++++++++++++++
+ .../components/Stations/Reports/Overview.vue  |  9 ++
+ .../Reports/Overview/HealthDashboardTab.vue   |  2 +-
+ .../Overview/TopOfHourComplianceSection.vue   | 96 +++++++++++++++++++
+ .../Overview/TopOfHourPerformanceTab.vue      | 65 +++++++++++++
+ frontend/components/Stations/TopOfHour.vue    |  1 +
+ 8 files changed, 322 insertions(+), 1 deletion(-)
+ create mode 100644 backend/src/Controller/Api/Stations/Reports/Overview/TopOfHourPerformanceAction.php
+ create mode 100644 frontend/components/Stations/Reports/Overview/TopOfHourComplianceSection.vue
+ create mode 100644 frontend/components/Stations/Reports/Overview/TopOfHourPerformanceTab.vue
+
+diff --git a/backend/config/routes/api_station.php b/backend/config/routes/api_station.php
+index 2e0e64a..a289a8b 100644
+--- a/backend/config/routes/api_station.php
++++ b/backend/config/routes/api_station.php
+@@ -1030,6 +1030,11 @@ return static function (RouteCollectorProxy $group) {
+                                 Controller\Api\Stations\Reports\Overview\ClockPerformanceAction::class
+                             )->setName('api:stations:reports:overview-clock-performance');
+ 
++                            $group->get(
++                                '/overview/top-of-hour-performance',
++                                Controller\Api\Stations\Reports\Overview\TopOfHourPerformanceAction::class
++                            )->setName('api:stations:reports:overview-top-of-hour-performance');
++
+                             $group->get(
+                                 '/overview/playlist-performance',
+                                 Controller\Api\Stations\Reports\Overview\PlaylistPerformanceAction::class
+diff --git a/backend/src/Controller/Api/Stations/Reports/Overview/TopOfHourPerformanceAction.php b/backend/src/Controller/Api/Stations/Reports/Overview/TopOfHourPerformanceAction.php
+new file mode 100644
+index 0000000..fede48e
+--- /dev/null
++++ b/backend/src/Controller/Api/Stations/Reports/Overview/TopOfHourPerformanceAction.php
+@@ -0,0 +1,61 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Controller\Api\Stations\Reports\Overview;
++
++use App\Entity\Api\Status;
++use App\Entity\Repository\StationQueueRepository;
++use App\Http\Response;
++use App\Http\ServerRequest;
++use App\OpenApi;
++use App\Radio\AutoDJ\HourBoundaryPlanner;
++use OpenApi\Attributes as OA;
++use Psr\Http\Message\ResponseInterface;
++
++#[OA\Get(
++    path: '/station/{station_id}/reports/overview/top-of-hour-performance',
++    operationId: 'getStationReportTopOfHourPerformance',
++    summary: 'Get station-wide Top of Hour ID compliance.',
++    tags: [OpenApi::TAG_STATIONS_REPORTS],
++    parameters: [
++        new OA\Parameter(ref: OpenApi::REF_STATION_ID_REQUIRED),
++    ],
++    responses: [
++        new OpenApi\Response\Success(),
++        new OpenApi\Response\AccessDenied(),
++        new OpenApi\Response\NotFound(),
++        new OpenApi\Response\GenericError(),
++    ]
++)]
++final class TopOfHourPerformanceAction extends AbstractReportAction
++{
++    public function __construct(
++        private readonly StationQueueRepository $queueRepo,
++        private readonly HourBoundaryPlanner $hourBoundaryPlanner,
++    ) {
++    }
++
++    public function __invoke(
++        ServerRequest $request,
++        Response $response,
++        array $params
++    ): ResponseInterface {
++        if (!$this->isAnalyticsEnabled()) {
++            return $response->withStatus(400)
++                ->withJson(new Status(false, 'Reporting is restricted due to system analytics level.'));
++        }
++
++        $station = $request->getStation();
++        $dateRange = $this->getDateRange($request, $station->getTimezoneObject());
++
++        return $response->withJson([
++            'compliance' => $this->queueRepo->getTopOfHourLegalIdComplianceSummary(
++                $station,
++                $dateRange->start,
++                $this->hourBoundaryPlanner->getComplianceToleranceSeconds($station),
++                $dateRange->end,
++            ),
++        ]);
++    }
++}
+diff --git a/backend/src/Entity/Repository/StationQueueRepository.php b/backend/src/Entity/Repository/StationQueueRepository.php
+index d88a316..e9a80d7 100644
+--- a/backend/src/Entity/Repository/StationQueueRepository.php
++++ b/backend/src/Entity/Repository/StationQueueRepository.php
+@@ -4,6 +4,7 @@ declare(strict_types=1);
+ 
+ namespace App\Entity\Repository;
+ 
++use App\Entity\Enums\StationMediaTypes;
+ use App\Entity\Interfaces\SongInterface;
+ use App\Entity\Station;
+ use App\Entity\StationMedia;
+@@ -163,6 +164,89 @@ final class StationQueueRepository extends AbstractStationBasedRepository
+             ->getArrayResult();
+     }
+ 
++    /**
++     * @return array{
++     *     tolerance_seconds: int,
++     *     hours_with_legal_id: int,
++     *     on_time_count: int,
++     *     late_count: int,
++     *     compliance_percent: float|null,
++     *     fallback_count: int,
++     *     late_events: array<int, array{expected_play_at: string, actual_play_at: string, drift_seconds: int}>
++     * }
++     */
++    public function getTopOfHourLegalIdComplianceSummary(
++        Station $station,
++        DateTimeImmutable $since,
++        int $toleranceSeconds,
++        ?DateTimeImmutable $until = null,
++    ): array {
++        $until ??= new DateTimeImmutable('now');
++
++        $rows = $this->em->createQuery(
++            <<<'DQL'
++                SELECT sq.timestamp_played, COALESCE(sm.type, '') AS media_type
++                FROM App\Entity\StationQueue sq
++                LEFT JOIN sq.media sm
++                WHERE sq.station = :station
++                AND sq.is_played = 1
++                AND sq.top_of_hour_legal_id = 1
++                AND sq.timestamp_played >= :since
++                AND sq.timestamp_played <= :until
++                ORDER BY sq.timestamp_played ASC
++            DQL
++        )->setParameter('station', $station)
++            ->setParameter('since', $since)
++            ->setParameter('until', $until)
++            ->getArrayResult();
++
++        $onTimeCount = 0;
++        $fallbackCount = 0;
++        $lateEvents = [];
++        $timezone = $station->getTimezoneObject();
++
++        foreach ($rows as $row) {
++            if (!$row['timestamp_played'] instanceof \DateTimeInterface) {
++                continue;
++            }
++
++            $actual = CarbonImmutable::instance($row['timestamp_played'])->setTimezone($timezone);
++            $hourStart = $actual->startOfHour();
++            $nextHour = $hourStart->addHour();
++            $expected = abs($actual->getTimestamp() - $hourStart->getTimestamp())
++                <= abs($nextHour->getTimestamp() - $actual->getTimestamp())
++                ? $hourStart
++                : $nextHour;
++            $driftSeconds = abs($actual->getTimestamp() - $expected->getTimestamp());
++
++            if ($driftSeconds <= $toleranceSeconds) {
++                $onTimeCount++;
++            } else {
++                $lateEvents[] = [
++                    'expected_play_at' => $expected->format(DateTimeImmutable::ATOM),
++                    'actual_play_at' => $actual->format(DateTimeImmutable::ATOM),
++                    'drift_seconds' => $driftSeconds,
++                ];
++            }
++
++            if (!StationMediaTypes::isStationId((string)$row['media_type'])) {
++                $fallbackCount++;
++            }
++        }
++
++        $total = $onTimeCount + count($lateEvents);
++
++        return [
++            'tolerance_seconds' => $toleranceSeconds,
++            'hours_with_legal_id' => $total,
++            'on_time_count' => $onTimeCount,
++            'late_count' => count($lateEvents),
++            'compliance_percent' => $total > 0 ? round(($onTimeCount / $total) * 100, 1) : null,
++            'fallback_count' => $fallbackCount,
++            'late_events' => $lateEvents,
++        ];
++    }
++
+     /**
+      * @param Station $station
+      * @return StationQueue[]
+diff --git a/frontend/components/Stations/Reports/Overview.vue b/frontend/components/Stations/Reports/Overview.vue
+index 560c147..c8ef5d6 100644
+--- a/frontend/components/Stations/Reports/Overview.vue
++++ b/frontend/components/Stations/Reports/Overview.vue
+@@ -60,6 +60,13 @@
+                     />
+                 </tab>
+ 
++                <tab :label="$gettext('Top of Hour')">
++                    <top-of-hour-performance-tab
++                        :api-url="topOfHourPerformanceUrl"
++                        :date-range="dateRange"
++                    />
++                </tab>
++
+                 <tab :label="$gettext('Playlist Performance')">
+                     <playlist-performance-tab
+                         :api-url="playlistPerformanceUrl"
+@@ -158,6 +165,7 @@ import ClientsTab from "~/components/Stations/Reports/Overview/ClientsTab.vue";
+ import ListeningTimeTab from "~/components/Stations/Reports/Overview/ListeningTimeTab.vue";
+ import HeatmapTab from "~/components/Stations/Reports/Overview/HeatmapTab.vue";
+ import ClockPerformanceTab from "~/components/Stations/Reports/Overview/ClockPerformanceTab.vue";
++import TopOfHourPerformanceTab from "~/components/Stations/Reports/Overview/TopOfHourPerformanceTab.vue";
+ import PlaylistPerformanceTab from "~/components/Stations/Reports/Overview/PlaylistPerformanceTab.vue";
+ import DropoutTab from "~/components/Stations/Reports/Overview/DropoutTab.vue";
+ import ListenerInsightsTab from "~/components/Stations/Reports/Overview/ListenerInsightsTab.vue";
+@@ -188,6 +196,7 @@ const byClientUrl = getStationApiUrl('/reports/overview/by-client');
+ const listeningTimeUrl = getStationApiUrl('/reports/overview/by-listening-time');
+ const heatmapUrl = getStationApiUrl('/reports/overview/heatmap');
+ const clockPerformanceUrl = getStationApiUrl('/reports/overview/clock-performance');
++const topOfHourPerformanceUrl = getStationApiUrl('/reports/overview/top-of-hour-performance');
+ const playlistPerformanceUrl = getStationApiUrl('/reports/overview/playlist-performance');
+ const dropoutUrl = getStationApiUrl('/reports/overview/dropout');
+ const listenerInsightsUrl = getStationApiUrl('/reports/overview/listener-insights');
+diff --git a/frontend/components/Stations/Reports/Overview/HealthDashboardTab.vue b/frontend/components/Stations/Reports/Overview/HealthDashboardTab.vue
+index 1b49ea7..5e3551c 100644
+--- a/frontend/components/Stations/Reports/Overview/HealthDashboardTab.vue
++++ b/frontend/components/Stations/Reports/Overview/HealthDashboardTab.vue
+@@ -54,7 +54,7 @@
+                             class="fs-6"
+                         >%</span>
+                     </div>
+-                    <div class="small text-muted">{{ $gettext('Legal ID compliance (7d)') }}</div>
++                    <div class="small text-muted">{{ $gettext('Top of Hour compliance (7d)') }}</div>
+                 </div>
+             </div>
+             <div class="col-6 col-md-3">
+diff --git a/frontend/components/Stations/Reports/Overview/TopOfHourComplianceSection.vue b/frontend/components/Stations/Reports/Overview/TopOfHourComplianceSection.vue
+new file mode 100644
+index 0000000..261fd22
+--- /dev/null
++++ b/frontend/components/Stations/Reports/Overview/TopOfHourComplianceSection.vue
+@@ -0,0 +1,96 @@
++<template>
++    <fieldset>
++        <legend>
++            {{ $gettext('Top of Hour compliance (station-wide)') }}
++            <span class="text-muted fw-normal small">
++                ({{ $gettext('tolerance') }}: {{ compliance.tolerance_seconds }}s)
++            </span>
++        </legend>
++
++        <div class="row g-3 mb-3">
++            <div class="col-6 col-md-3">
++                <div class="border rounded p-2 text-center">
++                    <div class="fs-4 fw-semibold">
++                        {{ compliance.compliance_percent ?? '—' }}<span
++                            v-if="compliance.compliance_percent != null"
++                            class="fs-6"
++                        >%</span>
++                    </div>
++                    <div class="small text-muted">
++                        {{ $gettext('On time') }}
++                    </div>
++                </div>
++            </div>
++            <div class="col-6 col-md-3">
++                <div class="border rounded p-2 text-center">
++                    <div class="fs-4 fw-semibold">
++                        {{ compliance.on_time_count }}
++                    </div>
++                    <div class="small text-muted">
++                        {{ $gettext('Compliant hours') }}
++                    </div>
++                </div>
++            </div>
++            <div class="col-6 col-md-3">
++                <div class="border rounded p-2 text-center">
++                    <div class="fs-4 fw-semibold text-warning">
++                        {{ compliance.late_count }}
++                    </div>
++                    <div class="small text-muted">
++                        {{ $gettext('Late (> tolerance)') }}
++                    </div>
++                </div>
++            </div>
++            <div class="col-6 col-md-3">
++                <div class="border rounded p-2 text-center">
++                    <div class="fs-4 fw-semibold text-secondary">
++                        {{ compliance.fallback_count }}
++                    </div>
++                    <div class="small text-muted">
++                        {{ $gettext('Fallback events') }}
++                    </div>
++                </div>
++            </div>
++        </div>
++
++        <ul
++            v-if="compliance.late_events.length > 0"
++            class="list-group list-group-flush mb-3"
++        >
++            <li
++                v-for="(event, index) in compliance.late_events"
++                :key="index"
++                class="list-group-item px-0 small"
++            >
++                {{ $gettext('Expected') }}: {{ formatDateTime(event.expected_play_at) }}
++                · {{ $gettext('Actual') }}: {{ formatDateTime(event.actual_play_at) }}
++                · {{ $gettext('Drift') }}: {{ event.drift_seconds }}s
++            </li>
++        </ul>
++    </fieldset>
++</template>
++
++<script setup lang="ts">
++import useStationDateTimeFormatter from "~/functions/useStationDateTimeFormatter.ts";
++
++defineProps<{
++    compliance: {
++        tolerance_seconds: number,
++        on_time_count: number,
++        late_count: number,
++        compliance_percent: number | null,
++        fallback_count: number,
++        late_events: Array<{
++            expected_play_at: string,
++            actual_play_at: string,
++            drift_seconds: number,
++        }>,
++    },
++}>();
++
++const {formatIsoAsDateTime} = useStationDateTimeFormatter();
++
++function formatDateTime(value: string): string {
++    return formatIsoAsDateTime(value) || '—';
++}
++</script>
+diff --git a/frontend/components/Stations/Reports/Overview/TopOfHourPerformanceTab.vue b/frontend/components/Stations/Reports/Overview/TopOfHourPerformanceTab.vue
+new file mode 100644
+index 0000000..b0c7706
+--- /dev/null
++++ b/frontend/components/Stations/Reports/Overview/TopOfHourPerformanceTab.vue
+@@ -0,0 +1,65 @@
++<template>
++    <loading
++        :loading="isLoading"
++        lazy
++    >
++        <top-of-hour-compliance-section
++            v-if="state"
++            :compliance="state.compliance"
++        />
++    </loading>
++</template>
++
++<script setup lang="ts">
++import {toRef} from "vue";
++import {useAxios} from "~/vendor/axios";
++import Loading from "~/components/Common/Loading.vue";
++import {useLuxon} from "~/vendor/luxon";
++import {DateRange} from "~/components/Stations/Reports/Overview/CommonMetricsView.vue";
++import {useQuery} from "@tanstack/vue-query";
++import {QueryKeys, queryKeyWithStation} from "~/entities/Queries.ts";
++import TopOfHourComplianceSection from "~/components/Stations/Reports/Overview/TopOfHourComplianceSection.vue";
++
++const props = defineProps<{
++    dateRange: DateRange,
++    apiUrl: string,
++}>();
++
++const dateRange = toRef(props, 'dateRange');
++const {axios} = useAxios();
++const {DateTime} = useLuxon();
++
++type TopOfHourPerformanceData = {
++    compliance: {
++        tolerance_seconds: number,
++        hours_with_legal_id: number,
++        on_time_count: number,
++        late_count: number,
++        compliance_percent: number | null,
++        fallback_count: number,
++        late_events: Array<{
++            expected_play_at: string,
++            actual_play_at: string,
++            drift_seconds: number,
++        }>,
++    },
++};
++
++const {data: state, isLoading} = useQuery<TopOfHourPerformanceData>({
++    queryKey: queryKeyWithStation([
++        QueryKeys.StationReports,
++        'top_of_hour_performance',
++        dateRange,
++    ]),
++    queryFn: async ({signal}) => {
++        const {data} = await axios.get<TopOfHourPerformanceData>(props.apiUrl, {
++            signal,
++            params: {
++                start: DateTime.fromJSDate(dateRange.value.startDate).toISO(),
++                end: DateTime.fromJSDate(dateRange.value.endDate).toISO(),
++            },
++        });
++        return data;
++    },
++});
++</script>
+diff --git a/frontend/components/Stations/TopOfHour.vue b/frontend/components/Stations/TopOfHour.vue
+index 4bd1b25..f61bd5d 100644
+--- a/frontend/components/Stations/TopOfHour.vue
++++ b/frontend/components/Stations/TopOfHour.vue
+@@ -213,6 +213,7 @@ interface TopOfHourSettings {
+     top_of_hour_compliance_tolerance_seconds: number;
+     top_of_hour_finish_buffer_seconds: number;
+     top_of_hour_id_max_seconds: number;
++    id_media_count?: number;
+     legal_id_media_count: number;
+     compliance?: TopOfHourCompliance;
+ }
+-- 
+2.34.1
+

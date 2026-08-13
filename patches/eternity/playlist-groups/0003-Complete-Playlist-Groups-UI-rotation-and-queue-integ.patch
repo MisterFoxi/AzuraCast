@@ -1,0 +1,2618 @@
+From 0838dc480b21f14d0bcda3f150513f8c79bd8a0a Mon Sep 17 00:00:00 2001
+From: Johannes Nagy <johannes.nagy@icloud.com>
+Date: Thu, 13 Aug 2026 06:32:20 +0000
+Subject: [PATCH 3/3] Complete Playlist Groups UI, rotation and queue
+ integration
+
+---
+ .../Playlists/GetGroupMembersAction.php       |   7 +
+ .../Playlists/PutGroupMembersAction.php       | 145 ++++++-
+ .../Api/Stations/QueueController.php          |   7 +
+ .../src/Entity/Api/StationQueueDetailed.php   |   7 +
+ .../Migration/Version20260810090000.php       |  34 ++
+ .../Migration/Version20260810123000.php       |  37 ++
+ .../StationPlaylistGroupMemberRepository.php  |  26 +-
+ .../Repository/StationQueueRepository.php     |  16 +-
+ backend/src/Entity/StationPlaylist.php        |   2 +-
+ .../src/Entity/StationPlaylistGroupMember.php |   6 +
+ backend/src/Entity/StationQueue.php           |  13 +
+ backend/src/Radio/AutoDJ/QueueBuilder.php     | 169 ++++++--
+ backend/src/Radio/AutoDJ/Scheduler.php        |  53 +--
+ backend/src/Tests/AutoDjTestHarness.php       |  30 +-
+ .../Stations/Media/MediaPlaylists.vue         |   4 +-
+ frontend/components/Stations/Playlists.vue    | 190 +++++++-
+ .../Stations/Playlists/EditModal.vue          |   2 -
+ .../Stations/Playlists/Form/BasicInfo.vue     |  47 +-
+ .../Stations/Playlists/GroupMembersModal.vue  | 409 ++++++++++++++++++
+ frontend/components/Stations/Queue.vue        |  13 +-
+ frontend/entities/ApiInterfaces.ts            |   3 +
+ .../PlaylistGroupMemberRepositoryTest.php     |  17 +-
+ .../PureUnit/PlaylistGroupMembersApiTest.php  | 168 ++++++-
+ tests/Unit/PlaylistGroupTest.php              | 285 +++++++++++-
+ tests/Unit/StationPlaylistTest.php            |  55 ++-
+ 25 files changed, 1578 insertions(+), 167 deletions(-)
+ create mode 100644 backend/src/Entity/Migration/Version20260810090000.php
+ create mode 100644 backend/src/Entity/Migration/Version20260810123000.php
+ create mode 100644 frontend/components/Stations/Playlists/GroupMembersModal.vue
+
+diff --git a/backend/src/Controller/Api/Stations/Playlists/GetGroupMembersAction.php b/backend/src/Controller/Api/Stations/Playlists/GetGroupMembersAction.php
+index 824e51a..8ff87db 100644
+--- a/backend/src/Controller/Api/Stations/Playlists/GetGroupMembersAction.php
++++ b/backend/src/Controller/Api/Stations/Playlists/GetGroupMembersAction.php
+@@ -5,6 +5,7 @@ declare(strict_types=1);
+ namespace App\Controller\Api\Stations\Playlists;
+ 
+ use App\Controller\SingleActionInterface;
++use App\Entity\Enums\PlaylistOrders;
+ use App\Entity\Enums\PlaylistSources;
+ use App\Entity\Repository\StationPlaylistGroupMemberRepository;
+ use App\Entity\Repository\StationPlaylistRepository;
+@@ -65,6 +66,12 @@ final readonly class GetGroupMembersAction implements SingleActionInterface
+                 'playlist_id' => $member->playlist->id,
+                 'name' => $member->playlist->name,
+                 'position' => $member->position,
++                'source' => $member->playlist->source->value,
++                'order' => $member->playlist->order->value,
++                'consecutive_plays' => $member->consecutive_plays,
++                'play_full_cycle' => $member->play_full_cycle,
++                'supports_full_cycle' => PlaylistSources::Songs === $member->playlist->source
++                    && PlaylistOrders::Random !== $member->playlist->order,
+             ],
+             $this->memberRepo->getMembers($group)
+         );
+diff --git a/backend/src/Controller/Api/Stations/Playlists/PutGroupMembersAction.php b/backend/src/Controller/Api/Stations/Playlists/PutGroupMembersAction.php
+index 4495a84..7467aff 100644
+--- a/backend/src/Controller/Api/Stations/Playlists/PutGroupMembersAction.php
++++ b/backend/src/Controller/Api/Stations/Playlists/PutGroupMembersAction.php
+@@ -5,6 +5,7 @@ declare(strict_types=1);
+ namespace App\Controller\Api\Stations\Playlists;
+ 
+ use App\Controller\SingleActionInterface;
++use App\Entity\Enums\PlaylistOrders;
+ use App\Entity\Enums\PlaylistSources;
+ use App\Entity\Repository\StationPlaylistGroupMemberRepository;
+ use App\Entity\Repository\StationPlaylistRepository;
+@@ -35,12 +36,39 @@ use Psr\Http\Message\ResponseInterface;
+     requestBody: new OA\RequestBody(
+         required: true,
+         content: new OA\JsonContent(
+-            required: ['playlist_ids'],
++            required: ['members'],
+             properties: [
+                 new OA\Property(
+-                    property: 'playlist_ids',
++                    property: 'members',
+                     type: 'array',
+-                    items: new OA\Items(type: 'integer', format: 'int64')
++                    items: new OA\Items(
++                        required: ['playlist_id', 'consecutive_plays', 'play_full_cycle'],
++                        properties: [
++                            new OA\Property(
++                                property: 'playlist_id',
++                                type: 'integer',
++                                format: 'int64'
++                            ),
++                            new OA\Property(
++                                property: 'consecutive_plays',
++                                type: 'integer',
++                                maximum: 65535,
++                                minimum: 1,
++                                default: 1
++                            ),
++                            new OA\Property(
++                                property: 'play_full_cycle',
++                                type: 'boolean',
++                                default: false
++                            ),
++                            new OA\Property(
++                                property: 'order',
++                                type: 'string',
++                                enum: ['shuffle', 'random', 'sequential']
++                            ),
++                        ],
++                        type: 'object'
++                    )
+                 ),
+             ],
+             type: 'object'
+@@ -55,6 +83,8 @@ use Psr\Http\Message\ResponseInterface;
+ )]
+ final readonly class PutGroupMembersAction implements SingleActionInterface
+ {
++    private const int MAX_CONSECUTIVE_PLAYS = 65535;
++
+     public function __construct(
+         private StationPlaylistRepository $playlistRepo,
+         private StationPlaylistGroupMemberRepository $memberRepo,
+@@ -76,19 +106,74 @@ final readonly class PutGroupMembersAction implements SingleActionInterface
+         }
+ 
+         $body = $request->getParsedBody();
+-        if (!is_array($body) || !array_key_exists('playlist_ids', $body)) {
+-            throw new ValidationException('playlist_ids is required.');
++        if (!is_array($body) || (!array_key_exists('members', $body) && !array_key_exists('playlist_ids', $body))) {
++            throw new ValidationException('members is required.');
+         }
+ 
+-        $playlistIds = $body['playlist_ids'];
+-        if (!is_array($playlistIds) || !array_is_list($playlistIds)) {
+-            throw new ValidationException('playlist_ids must be a list.');
++        $memberSettings = [];
++        if (array_key_exists('members', $body)) {
++            $memberDefinitions = $body['members'];
++            if (!is_array($memberDefinitions) || !array_is_list($memberDefinitions)) {
++                throw new ValidationException('members must be a list.');
++            }
++
++            $playlistIds = [];
++            foreach ($memberDefinitions as $memberDefinition) {
++                if (!is_array($memberDefinition)) {
++                    throw new ValidationException('Every member must be an object.');
++                }
++
++                $playlistIds[] = $memberDefinition['playlist_id'] ?? null;
++                $consecutivePlays = $memberDefinition['consecutive_plays'] ?? 1;
++                $playFullCycle = $memberDefinition['play_full_cycle'] ?? false;
++                $order = $memberDefinition['order'] ?? null;
++
++                if (
++                    !is_int($consecutivePlays)
++                    || $consecutivePlays < 1
++                    || $consecutivePlays > self::MAX_CONSECUTIVE_PLAYS
++                ) {
++                    throw new ValidationException('consecutive_plays must be an integer between 1 and 65535.');
++                }
++                if (!is_bool($playFullCycle)) {
++                    throw new ValidationException('play_full_cycle must be a boolean.');
++                }
++                if (null !== $order && !is_string($order)) {
++                    throw new ValidationException('order must be Sequential, Shuffle or Random.');
++                }
++
++                $playlistOrder = null !== $order
++                    ? PlaylistOrders::tryFrom($order)
++                    : null;
++                if (
++                    null !== $order
++                    && !in_array(
++                        $playlistOrder,
++                        [PlaylistOrders::Sequential, PlaylistOrders::Shuffle, PlaylistOrders::Random],
++                        true
++                    )
++                ) {
++                    throw new ValidationException('order must be Sequential, Shuffle or Random.');
++                }
++
++                $memberSettings[] = [
++                    'consecutive_plays' => $consecutivePlays,
++                    'play_full_cycle' => $playFullCycle,
++                    'order' => $playlistOrder,
++                ];
++            }
++        } else {
++            $playlistIds = $body['playlist_ids'];
++            if (!is_array($playlistIds) || !array_is_list($playlistIds)) {
++                throw new ValidationException('playlist_ids must be a list.');
++            }
+         }
+         if (count($playlistIds) > StationPlaylistGroupMemberRepository::MAX_MEMBERS) {
+             throw new ValidationException('A playlist group cannot contain more than 32768 members.');
+         }
+ 
+         $playlists = [];
++        $playlistOrders = [];
+         foreach ($playlistIds as $playlistId) {
+             if (!is_int($playlistId) || $playlistId <= 0) {
+                 throw new ValidationException('Every playlist ID must be a positive integer.');
+@@ -105,10 +190,46 @@ final readonly class PutGroupMembersAction implements SingleActionInterface
+                 throw new ValidationException('Nested playlist groups are not supported.');
+             }
+ 
++            $settings = $memberSettings[count($playlists)] ?? null;
++            $requestedOrder = $settings['order'] ?? null;
++            if ($requestedOrder instanceof PlaylistOrders) {
++                if (PlaylistSources::Songs !== $playlist->source) {
++                    throw new ValidationException('order can only be changed for song playlists.');
++                }
++
++                $existingOrder = $playlistOrders[$playlist->id] ?? null;
++                if ($existingOrder instanceof PlaylistOrders && $existingOrder !== $requestedOrder) {
++                    throw new ValidationException(
++                        'All occurrences of the same playlist must use the same order.'
++                    );
++                }
++                $playlistOrders[$playlist->id] = $requestedOrder;
++            }
++
+             $playlists[] = $playlist;
+         }
+ 
+-        $members = $this->memberRepo->setMembers($group, $playlists);
++        foreach ($playlists as $position => $playlist) {
++            $effectiveOrder = $playlistOrders[$playlist->id] ?? $playlist->order;
++            if (
++                true === ($memberSettings[$position]['play_full_cycle'] ?? false)
++                && (
++                    PlaylistSources::Songs !== $playlist->source
++                    || PlaylistOrders::Random === $effectiveOrder
++                )
++            ) {
++                throw new ValidationException(
++                    'play_full_cycle is only supported for Sequential or Shuffle song playlists.'
++                );
++            }
++        }
++
++        $members = $this->memberRepo->setMembers(
++            $group,
++            $playlists,
++            $memberSettings,
++            $playlistOrders
++        );
+ 
+         return $response->withJson(array_map(
+             static fn(StationPlaylistGroupMember $member): array => [
+@@ -116,6 +237,12 @@ final readonly class PutGroupMembersAction implements SingleActionInterface
+                 'playlist_id' => $member->playlist->id,
+                 'name' => $member->playlist->name,
+                 'position' => $member->position,
++                'source' => $member->playlist->source->value,
++                'order' => $member->playlist->order->value,
++                'consecutive_plays' => $member->consecutive_plays,
++                'play_full_cycle' => $member->play_full_cycle,
++                'supports_full_cycle' => PlaylistSources::Songs === $member->playlist->source
++                    && PlaylistOrders::Random !== $member->playlist->order,
+             ],
+             $members
+         ));
+diff --git a/backend/src/Controller/Api/Stations/QueueController.php b/backend/src/Controller/Api/Stations/QueueController.php
+index b27d0b9..81de73b 100644
+--- a/backend/src/Controller/Api/Stations/QueueController.php
++++ b/backend/src/Controller/Api/Stations/QueueController.php
+@@ -9,6 +9,7 @@ use App\Entity\Api\StationQueueDetailed;
+ use App\Entity\Api\Status;
+ use App\Entity\ApiGenerator\StationQueueApiGenerator;
+ use App\Entity\Repository\StationQueueRepository;
++use App\Entity\StationPlaylist;
+ use App\Entity\StationQueue;
+ use App\Http\Response;
+ use App\Http\ServerRequest;
+@@ -145,6 +146,12 @@ final class QueueController extends AbstractStationApiCrudController
+         $apiResponse->sent_to_autodj = $record->sent_to_autodj;
+         $apiResponse->is_played = $record->is_played;
+         $apiResponse->autodj_custom_uri = $record->autodj_custom_uri;
++
++        $groupPlaylist = $record->group_playlist;
++        if ($groupPlaylist instanceof StationPlaylist) {
++            $apiResponse->group_lists = [$groupPlaylist->name];
++        }
++
+         $apiResponse->log = $this->queueLogCache->getLog($record);
+ 
+         $apiResponse->links = [
+diff --git a/backend/src/Entity/Api/StationQueueDetailed.php b/backend/src/Entity/Api/StationQueueDetailed.php
+index e168492..4ef9e7f 100644
+--- a/backend/src/Entity/Api/StationQueueDetailed.php
++++ b/backend/src/Entity/Api/StationQueueDetailed.php
+@@ -31,6 +31,13 @@ final class StationQueueDetailed
+     )]
+     public ?string $autodj_custom_uri = null;
+ 
++    #[OA\Property(
++        description: 'Group List that queued this specific item.',
++        type: 'array',
++        items: new OA\Items(type: 'string')
++    )]
++    public array $group_lists = [];
++
+     #[OA\Property(
+         description: 'Log entries on how the specific queue item was picked by the AutoDJ.',
+         items: new OA\Items(type: 'any')
+diff --git a/backend/src/Entity/Migration/Version20260810090000.php b/backend/src/Entity/Migration/Version20260810090000.php
+new file mode 100644
+index 0000000..89cb0a8
+--- /dev/null
++++ b/backend/src/Entity/Migration/Version20260810090000.php
+@@ -0,0 +1,34 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Entity\Migration;
++
++use Doctrine\DBAL\Schema\Schema;
++use Doctrine\Migrations\AbstractMigration;
++
++final class Version20260810090000 extends AbstractMigration
++{
++    public function getDescription(): string
++    {
++        return 'Add per-occurrence playback modes to playlist group members.';
++    }
++
++    public function up(Schema $schema): void
++    {
++        $this->addSql(
++            'ALTER TABLE station_playlist_group_members
++             ADD COLUMN consecutive_plays SMALLINT UNSIGNED NOT NULL DEFAULT 1,
++             ADD COLUMN play_full_cycle TINYINT(1) NOT NULL DEFAULT 0'
++        );
++    }
++
++    public function down(Schema $schema): void
++    {
++        $this->addSql(
++            'ALTER TABLE station_playlist_group_members
++             DROP COLUMN consecutive_plays,
++             DROP COLUMN play_full_cycle'
++        );
++    }
++}
+diff --git a/backend/src/Entity/Migration/Version20260810123000.php b/backend/src/Entity/Migration/Version20260810123000.php
+new file mode 100644
+index 0000000..fe1a668
+--- /dev/null
++++ b/backend/src/Entity/Migration/Version20260810123000.php
+@@ -0,0 +1,37 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Entity\Migration;
++
++use Doctrine\DBAL\Schema\Schema;
++use Doctrine\Migrations\AbstractMigration;
++
++final class Version20260810123000 extends AbstractMigration
++{
++    public function getDescription(): string
++    {
++        return 'Track the originating Group List on queued member tracks.';
++    }
++
++    public function up(Schema $schema): void
++    {
++        $this->addSql(
++            'ALTER TABLE station_queue
++             ADD COLUMN group_playlist_id INT DEFAULT NULL,
++             ADD INDEX IDX_station_queue_group_playlist (group_playlist_id),
++             ADD CONSTRAINT FK_station_queue_group_playlist
++                 FOREIGN KEY (group_playlist_id) REFERENCES station_playlists (id) ON DELETE SET NULL'
++        );
++    }
++
++    public function down(Schema $schema): void
++    {
++        $this->addSql(
++            'ALTER TABLE station_queue
++             DROP FOREIGN KEY FK_station_queue_group_playlist,
++             DROP INDEX IDX_station_queue_group_playlist,
++             DROP COLUMN group_playlist_id'
++        );
++    }
++}
+diff --git a/backend/src/Entity/Repository/StationPlaylistGroupMemberRepository.php b/backend/src/Entity/Repository/StationPlaylistGroupMemberRepository.php
+index 7d611ff..c4edad1 100644
+--- a/backend/src/Entity/Repository/StationPlaylistGroupMemberRepository.php
++++ b/backend/src/Entity/Repository/StationPlaylistGroupMemberRepository.php
+@@ -5,6 +5,7 @@ declare(strict_types=1);
+ namespace App\Entity\Repository;
+ 
+ use App\Doctrine\Repository;
++use App\Entity\Enums\PlaylistOrders;
+ use App\Entity\Station;
+ use App\Entity\StationPlaylist;
+ use App\Entity\StationPlaylistGroupMember;
+@@ -29,16 +30,31 @@ final class StationPlaylistGroupMemberRepository extends Repository
+ 
+     /**
+      * @param list<StationPlaylist> $playlists
++     * @param list<array{consecutive_plays: int, play_full_cycle: bool}> $playbackSettings
++     * @param array<int, PlaylistOrders> $playlistOrders
+      * @return list<StationPlaylistGroupMember>
+      */
+-    public function setMembers(StationPlaylist $group, array $playlists): array
++    public function setMembers(
++        StationPlaylist $group,
++        array $playlists,
++        array $playbackSettings = [],
++        array $playlistOrders = [],
++    ): array
+     {
+         if (count($playlists) > self::MAX_MEMBERS) {
+             throw new \InvalidArgumentException('A playlist group cannot contain more than 32768 members.');
+         }
+ 
+         return $this->em->wrapInTransaction(
+-            function () use ($group, $playlists): array {
++            function () use ($group, $playlists, $playbackSettings, $playlistOrders): array {
++                foreach ($playlists as $playlist) {
++                    $order = $playlistOrders[$playlist->id] ?? null;
++                    if ($order instanceof PlaylistOrders) {
++                        $playlist->order = $order;
++                        $this->em->persist($playlist);
++                    }
++                }
++
+                 $existingMembers = $this->getMembers($group);
+                 $membersByPlaylistId = [];
+ 
+@@ -67,6 +83,12 @@ final class StationPlaylistGroupMemberRepository extends Repository
+                         $member->position = $position;
+                     }
+ 
++                    $settings = $playbackSettings[$position] ?? null;
++                    if (null !== $settings) {
++                        $member->consecutive_plays = $settings['consecutive_plays'];
++                        $member->play_full_cycle = $settings['play_full_cycle'];
++                    }
++
+                     $newMembers[] = $member;
+                 }
+ 
+diff --git a/backend/src/Entity/Repository/StationQueueRepository.php b/backend/src/Entity/Repository/StationQueueRepository.php
+index d88a316..462857c 100644
+--- a/backend/src/Entity/Repository/StationQueueRepository.php
++++ b/backend/src/Entity/Repository/StationQueueRepository.php
+@@ -43,7 +43,7 @@ final class StationQueueRepository extends AbstractStationBasedRepository
+         $this->em->createQuery(
+             <<<'DQL'
+                 DELETE FROM App\Entity\StationQueue sq
+-                WHERE sq.playlist = :playlist
++                WHERE (sq.playlist = :playlist OR sq.group_playlist = :playlist)
+                 AND sq.is_played = 0
+             DQL
+         )->setParameter('playlist', $playlist)
+@@ -97,10 +97,17 @@ final class StationQueueRepository extends AbstractStationBasedRepository
+ 
+         $recentPlayedQuery = $this->em->createQuery(
+             <<<'DQL'
+-                SELECT IDENTITY(sq.playlist) AS playlist_id
++                SELECT COALESCE(
++                    IDENTITY(sq.group_playlist),
++                    IDENTITY(sq.playlist)
++                ) AS playlist_id
+                 FROM App\Entity\StationQueue sq
+                 WHERE sq.station = :station
+-                AND (sq.playlist = :playlist OR sq.is_visible = 1)
++                AND (
++                    sq.group_playlist = :playlist
++                    OR sq.playlist = :playlist
++                    OR sq.is_visible = 1
++                )
+                 ORDER BY sq.id DESC
+             DQL
+         )->setParameters([
+@@ -232,11 +239,12 @@ final class StationQueueRepository extends AbstractStationBasedRepository
+     private function getBaseQuery(Station $station): QueryBuilder
+     {
+         return $this->em->createQueryBuilder()
+-            ->select('sq, sm, sp, scw')
++            ->select('sq, sm, sp, scw, gp')
+             ->from(StationQueue::class, 'sq')
+             ->leftJoin('sq.media', 'sm')
+             ->leftJoin('sq.playlist', 'sp')
+             ->leftJoin('sq.clock_wheel', 'scw')
++            ->leftJoin('sq.group_playlist', 'gp')
+             ->where('sq.station = :station')
+             ->setParameter('station', $station);
+     }
+diff --git a/backend/src/Entity/StationPlaylist.php b/backend/src/Entity/StationPlaylist.php
+index 0a17774..0e6be1f 100644
+--- a/backend/src/Entity/StationPlaylist.php
++++ b/backend/src/Entity/StationPlaylist.php
+@@ -91,7 +91,7 @@ final class StationPlaylist implements
+         set {
+             $this->source = $value;
+ 
+-            if (in_array($value, [PlaylistSources::RemoteUrl, PlaylistSources::Group], true)) {
++            if (PlaylistSources::RemoteUrl === $value) {
+                 $this->type = PlaylistTypes::Standard;
+             }
+ 
+diff --git a/backend/src/Entity/StationPlaylistGroupMember.php b/backend/src/Entity/StationPlaylistGroupMember.php
+index 72e7455..c3eda74 100644
+--- a/backend/src/Entity/StationPlaylistGroupMember.php
++++ b/backend/src/Entity/StationPlaylistGroupMember.php
+@@ -30,6 +30,12 @@ final class StationPlaylistGroupMember implements Interfaces\IdentifiableEntityI
+     #[ORM\Column(type: 'smallint', options: ['unsigned' => true])]
+     public int $position;
+ 
++    #[ORM\Column(type: 'smallint', options: ['unsigned' => true, 'default' => 1])]
++    public int $consecutive_plays = 1;
++
++    #[ORM\Column(options: ['default' => false])]
++    public bool $play_full_cycle = false;
++
+     public function __construct(StationPlaylist $group, StationPlaylist $playlist, int $position)
+     {
+         $this->group = $group;
+diff --git a/backend/src/Entity/StationQueue.php b/backend/src/Entity/StationQueue.php
+index 1e666ea..57e94f1 100644
+--- a/backend/src/Entity/StationQueue.php
++++ b/backend/src/Entity/StationQueue.php
+@@ -51,6 +51,19 @@ final class StationQueue implements
+     #[ORM\Column(nullable: true, insertable: false, updatable: false)]
+     public private(set) ?int $clock_wheel_id = null;
+ 
++    #[ORM\ManyToOne]
++    #[ORM\JoinColumn(
++        name: 'group_playlist_id',
++        referencedColumnName: 'id',
++        nullable: true,
++        onDelete: 'SET NULL'
++    )]
++    public ?StationPlaylist $group_playlist = null;
++
++    /* TODO Remove direct identifier access. */
++    #[ORM\Column(nullable: true, insertable: false, updatable: false)]
++    public private(set) ?int $group_playlist_id = null;
++
+     #[ORM\ManyToOne]
+     #[ORM\JoinColumn(name: 'media_id', referencedColumnName: 'id', nullable: true, onDelete: 'CASCADE')]
+     public ?StationMedia $media = null {
+diff --git a/backend/src/Radio/AutoDJ/QueueBuilder.php b/backend/src/Radio/AutoDJ/QueueBuilder.php
+index 3665d92..9a00713 100644
+--- a/backend/src/Radio/AutoDJ/QueueBuilder.php
++++ b/backend/src/Radio/AutoDJ/QueueBuilder.php
+@@ -296,13 +296,17 @@ final class QueueBuilder implements EventSubscriberInterface
+      * @param array $recentSongHistory
+      * @param DateTimeImmutable $expectedPlayTime
+      * @param bool $allowDuplicates Whether to return a media ID even if duplicates can't be prevented.
++     * @param bool $singleTrackOnly Whether an array-producing playlist should return only its first track.
++     * @param bool $deferQueuePersistence Whether StationQueue rows should be persisted by the caller.
+      * @return StationQueue|StationQueue[]|null
+      */
+     private function playSongFromPlaylist(
+         StationPlaylist $playlist,
+         array $recentSongHistory,
+         DateTimeImmutable $expectedPlayTime,
+-        bool $allowDuplicates = false
++        bool $allowDuplicates = false,
++        bool $singleTrackOnly = false,
++        bool $deferQueuePersistence = false,
+     ): StationQueue|array|null {
+         if (PlaylistSources::Group === $playlist->source) {
+             return $this->playSongFromGroup(
+@@ -314,16 +318,29 @@ final class QueueBuilder implements EventSubscriberInterface
+         }
+ 
+         if (PlaylistSources::RemoteUrl === $playlist->source) {
+-            return $this->getSongFromRemotePlaylist($playlist, $expectedPlayTime);
++            return $this->getSongFromRemotePlaylist(
++                $playlist,
++                $expectedPlayTime,
++                $deferQueuePersistence,
++            );
+         }
+ 
+-        if ($playlist->backendMerge()) {
++        if ($playlist->backendMerge() && !$singleTrackOnly) {
+             $this->spmRepo->resetQueue($playlist);
+ 
+             $queueEntries = array_filter(
+                 array_map(
+-                    function (StationPlaylistQueue $validTrack) use ($playlist, $expectedPlayTime) {
+-                        return $this->makeQueueFromApi($validTrack, $playlist, $expectedPlayTime);
++                    function (StationPlaylistQueue $validTrack) use (
++                        $playlist,
++                        $expectedPlayTime,
++                        $deferQueuePersistence,
++                    ) {
++                        return $this->makeQueueFromApi(
++                            $validTrack,
++                            $playlist,
++                            $expectedPlayTime,
++                            $deferQueuePersistence,
++                        );
+                     },
+                     $this->spmRepo->getQueue($playlist)
+                 )
+@@ -369,7 +386,12 @@ final class QueueBuilder implements EventSubscriberInterface
+                     return null;
+                 }
+ 
+-                $queueEntry = $this->makeQueueFromApi($validTrack, $playlist, $expectedPlayTime);
++                $queueEntry = $this->makeQueueFromApi(
++                    $validTrack,
++                    $playlist,
++                    $expectedPlayTime,
++                    $deferQueuePersistence,
++                );
+ 
+                 if (null !== $queueEntry) {
+                     $playlist->played_at = $expectedPlayTime;
+@@ -396,51 +418,125 @@ final class QueueBuilder implements EventSubscriberInterface
+         DateTimeImmutable $expectedPlayTime,
+         bool $allowDuplicates,
+     ): StationQueue|array|null {
+-        $members = $group->group_members->toArray();
++        $members = $this->groupMemberRepo->getMembers($group);
+         if ([] === $members) {
+             return null;
+         }
+ 
+-        $memberIndex = 0;
+-        foreach ($members as $index => $member) {
+-            if ($member->position >= $group->group_next_position) {
+-                $memberIndex = $index;
+-                break;
++        $queueEntries = [];
++        foreach ($members as $member) {
++            if (PlaylistSources::Group === $member->playlist->source) {
++                $this->logger->warning(
++                    'Nested playlist groups are not supported in this increment.',
++                    ['group_id' => $group->id, 'member_id' => $member->id]
++                );
++                continue;
+             }
+-        }
+ 
+-        /** @var StationPlaylistGroupMember $member */
+-        $member = $members[$memberIndex];
+-        if (PlaylistSources::Group === $member->playlist->source) {
+-            $this->logger->warning(
+-                'Nested playlist groups are not supported in this increment.',
+-                ['group_id' => $group->id, 'member_id' => $member->id]
+-            );
+-            return null;
++            $selectionCount = $this->getGroupMemberSelectionCount($member);
++            if (0 === $selectionCount) {
++                continue;
++            }
++
++            for ($play = 0; $play < $selectionCount; $play++) {
++                $selection = $this->playSongFromPlaylist(
++                    $member->playlist,
++                    $recentSongHistory,
++                    $expectedPlayTime,
++                    $allowDuplicates,
++                    true,
++                    true,
++                );
++
++                // A group is selected as one programmed passage. If duplicate
++                // prevention rejects a member, retry that member immediately
++                // with the normal duplicate fallback instead of accepting a
++                // block that stops at the preceding member.
++                if (null === $selection && !$allowDuplicates) {
++                    $selection = $this->playSongFromPlaylist(
++                        $member->playlist,
++                        $recentSongHistory,
++                        $expectedPlayTime,
++                        true,
++                        true,
++                        true,
++                    );
++                }
++
++                if (null === $selection) {
++                    break;
++                }
++
++                if (is_array($selection)) {
++                    foreach ($selection as $queueEntry) {
++                        $queueEntry->group_playlist = $group;
++                        $queueEntries[] = $queueEntry;
++                    }
++                } else {
++                    $selection->group_playlist = $group;
++                    $queueEntries[] = $selection;
++                }
++
++                // A group builds several selections in one pass. Persist the
++                // playlist cursor before selecting the next track, while the
++                // StationQueue rows themselves remain deferred until the block
++                // is complete.
++                $this->em->flush();
++            }
+         }
+ 
+-        $selection = $this->playSongFromPlaylist(
+-            $member->playlist,
+-            $recentSongHistory,
+-            $expectedPlayTime,
+-            $allowDuplicates
+-        );
+-        if (null === $selection) {
++        if ([] === $queueEntries) {
+             return null;
+         }
+ 
+-        $nextMemberIndex = ($memberIndex + 1) % count($members);
+-        $group->group_next_position = $members[$nextMemberIndex]->position;
++        $group->group_next_position = 0;
+         $group->played_at = $expectedPlayTime;
+         $this->em->persist($group);
+ 
+-        return $selection;
++        foreach ($queueEntries as $queueEntry) {
++            $this->em->persist($queueEntry);
++        }
++
++        return $queueEntries;
++    }
++
++    private function getGroupMemberSelectionCount(StationPlaylistGroupMember $member): int
++    {
++        if (!$member->play_full_cycle) {
++            return max(1, $member->consecutive_plays);
++        }
++
++        $playlist = $member->playlist;
++        if (
++            PlaylistSources::Songs !== $playlist->source
++            || PlaylistOrders::Random === $playlist->order
++        ) {
++            $this->logger->warning(
++                'Full-cycle playback is not supported for this playlist member.',
++                [
++                    'member_id' => $member->id,
++                    'playlist_id' => $playlist->id,
++                    'playlist_source' => $playlist->source->value,
++                    'playlist_order' => $playlist->order->value,
++                ]
++            );
++            return 0;
++        }
++
++        $cycleSize = count($this->spmRepo->getQueue($playlist));
++        if (0 === $cycleSize) {
++            $this->spmRepo->resetQueue($playlist);
++            $cycleSize = count($this->spmRepo->getQueue($playlist));
++        }
++
++        return $cycleSize;
+     }
+ 
+     private function makeQueueFromApi(
+         StationPlaylistQueue $validTrack,
+         StationPlaylist $playlist,
+         DateTimeImmutable $expectedPlayTime,
++        bool $deferQueuePersistence = false,
+     ): ?StationQueue {
+         $mediaToPlay = $this->em->find(StationMedia::class, $validTrack->media_id);
+         if (!$mediaToPlay instanceof StationMedia) {
+@@ -514,14 +610,17 @@ final class QueueBuilder implements EventSubscriberInterface
+             }
+         }
+ 
+-        $this->em->persist($stationQueueEntry);
++        if (!$deferQueuePersistence) {
++            $this->em->persist($stationQueueEntry);
++        }
+ 
+         return $stationQueueEntry;
+     }
+ 
+     private function getSongFromRemotePlaylist(
+         StationPlaylist $playlist,
+-        DateTimeImmutable $expectedPlayTime
++        DateTimeImmutable $expectedPlayTime,
++        bool $deferQueuePersistence = false,
+     ): ?StationQueue {
+         $mediaToPlay = $this->getMediaFromRemoteUrl($playlist);
+ 
+@@ -540,7 +639,9 @@ final class QueueBuilder implements EventSubscriberInterface
+             $stationQueueEntry->autodj_custom_uri = $mediaUri;
+             $stationQueueEntry->duration = $mediaDuration;
+ 
+-            $this->em->persist($stationQueueEntry);
++            if (!$deferQueuePersistence) {
++                $this->em->persist($stationQueueEntry);
++            }
+ 
+             return $stationQueueEntry;
+         }
+diff --git a/backend/src/Radio/AutoDJ/Scheduler.php b/backend/src/Radio/AutoDJ/Scheduler.php
+index 002cc69..80f3610 100644
+--- a/backend/src/Radio/AutoDJ/Scheduler.php
++++ b/backend/src/Radio/AutoDJ/Scheduler.php
+@@ -26,9 +26,6 @@ final class Scheduler
+     use LoggerAwareTrait;
+     use EntityManagerAwareTrait;
+ 
+-    /** Legacy fuzzy window for once-per-hour playlists when top-of-hour protection is off. */
+-    private const int ONCE_PER_HOUR_FUZZY_WINDOW_MINUTES = 15;
+-
+     public function __construct(
+         private readonly StationPlaylistMediaRepository $spmRepo,
+         private readonly StationQueueRepository $queueRepo,
+@@ -206,46 +203,26 @@ final class Scheduler
+             return false;
+         }
+ 
+-        $now = CarbonImmutable::instance($now);
+-
+-        if ($this->hourBoundaryPlanner->isTopOfHourProtectionEnabled($playlist->station)) {
+-            return $this->shouldPlaylistPlayNowPerHourStrict($playlist, $now);
+-        }
+-
+-        return $this->shouldPlaylistPlayNowPerHourFuzzy($playlist, $now);
+-    }
+-
+-    private function shouldPlaylistPlayNowPerHourStrict(
+-        StationPlaylist $playlist,
+-        CarbonImmutable $now,
+-    ): bool {
+-        if ($now->minute !== $playlist->play_per_hour_minute) {
+-            return false;
+-        }
+-
+-        return !$this->wasPlaylistPlayedInLastXMinutes($playlist, $now, 30);
+-    }
+-
+-    private function shouldPlaylistPlayNowPerHourFuzzy(
+-        StationPlaylist $playlist,
+-        CarbonImmutable $now,
+-    ): bool {
+-        $currentMinute = $now->minute;
+-        $targetMinute = $playlist->play_per_hour_minute;
++        $stationNow = CarbonImmutable::instance($now)
++            ->setTimezone($playlist->station->getTimezoneObject());
++        $targetTime = $stationNow
++            ->startOfHour()
++            ->addMinutes($playlist->play_per_hour_minute);
+ 
+-        if ($currentMinute < $targetMinute) {
+-            $targetTime = $now->subHour()->minute($targetMinute);
+-        } else {
+-            $targetTime = $now->minute($targetMinute);
++        $playedAt = $playlist->played_at;
++        if (null === $playedAt) {
++            // A newly-created playlist must wait for its first target minute,
++            // but remains due if the queue is not rebuilt exactly at that minute.
++            return !$targetTime->isAfter($stationNow);
+         }
+ 
+-        $playlistDiff = $targetTime->diffInMinutes($now);
+-
+-        if ($playlistDiff < 0 || $playlistDiff > self::ONCE_PER_HOUR_FUZZY_WINDOW_MINUTES) {
+-            return false;
++        if ($targetTime->isAfter($stationNow)) {
++            $targetTime = $targetTime->subHour();
+         }
+ 
+-        return !$this->wasPlaylistPlayedInLastXMinutes($playlist, $now, 30);
++        // played_at records when this playlist was last put in the queue. The
++        // latest hourly occurrence remains due until it has actually been queued.
++        return CarbonImmutable::instance($playedAt)->isBefore($targetTime);
+     }
+ 
+     private function wasPlaylistPlayedInLastXMinutes(
+diff --git a/backend/src/Tests/AutoDjTestHarness.php b/backend/src/Tests/AutoDjTestHarness.php
+index 3febc60..8bee17c 100644
+--- a/backend/src/Tests/AutoDjTestHarness.php
++++ b/backend/src/Tests/AutoDjTestHarness.php
+@@ -66,7 +66,12 @@ final class AutoDjTestHarness
+     /**
+      * @param array<string, non-empty-list<string>> $playlists
+      * @param non-empty-list<string> $memberOrder
+-     * @return array{station: Station, group: StationPlaylist, playlists: array<string, StationPlaylist>}
++     * @return array{
++     *     station: Station,
++     *     group: StationPlaylist,
++     *     playlists: array<string, StationPlaylist>,
++     *     members: list<StationPlaylistGroupMember>
++     * }
+      */
+     public function createSequentialGroup(array $playlists, array $memberOrder): array
+     {
+@@ -114,9 +119,32 @@ final class AutoDjTestHarness
+             'station' => $station,
+             'group' => $group,
+             'playlists' => $createdPlaylists,
++            'members' => array_values(array_filter(
++                $this->groupMembers,
++                static fn(StationPlaylistGroupMember $member): bool => $member->group === $group,
++            )),
+         ];
+     }
+ 
++    /**
++     * @param non-empty-list<string> $trackTitles
++     */
++    public function addSequentialPlaylist(
++        Station $station,
++        string $name,
++        array $trackTitles,
++    ): StationPlaylist {
++        if ([] === $trackTitles) {
++            throw new InvalidArgumentException('At least one track is required.');
++        }
++
++        $suffix = substr(uniqid('', true), -8);
++        $fixture = $this->createPlaylist($station, $name, $trackTitles, $suffix);
++        $this->em->flush();
++
++        return $fixture['playlist'];
++    }
++
+     private function createStation(string $suffix): Station
+     {
+         $station = new Station();
+diff --git a/frontend/components/Stations/Media/MediaPlaylists.vue b/frontend/components/Stations/Media/MediaPlaylists.vue
+index a9ee5af..f6616b3 100644
+--- a/frontend/components/Stations/Media/MediaPlaylists.vue
++++ b/frontend/components/Stations/Media/MediaPlaylists.vue
+@@ -13,7 +13,7 @@
+                     folder: playlist.folder
+                 }
+             )"
+-            @click.prevent="emit('filter', 'playlist:'+playlist.short_name)"
++            @click.prevent="emit('filter', 'playlist:'+playlist.id)"
+         >
+             <icon-ic-folder class="sm me-1"/>
+ 
+@@ -26,7 +26,7 @@
+             class="btn-search"
+             href="#"
+             :title="$gettext('View tracks in playlist')"
+-            @click.prevent="emit('filter', 'playlist:'+playlist.short_name)"
++            @click.prevent="emit('filter', 'playlist:'+playlist.id)"
+         >
+             {{ playlist.name }}
+         </a>
+diff --git a/frontend/components/Stations/Playlists.vue b/frontend/components/Stations/Playlists.vue
+index 5e34d89..af097a2 100644
+--- a/frontend/components/Stations/Playlists.vue
++++ b/frontend/components/Stations/Playlists.vue
+@@ -26,8 +26,10 @@
+                 destroy-on-hide
+             >
+                 <tab
+-                    id="all_playlists"
+-                    :label="$gettext('All Playlists')"
++                    v-for="playlistTab in playlistTabs"
++                    :id="playlistTab.id"
++                    :key="playlistTab.id"
++                    :label="$gettext(playlistTab.label)"
+                 >
+                     <div class="card-body-flush">
+                         <div class="card-body buttons">
+@@ -38,10 +40,10 @@
+                         </div>
+                         
+                         <data-table
+-                            id="station_playlists"
++                            :id="playlistTab.tableId"
+                             paginated
+                             :fields="fields"
+-                            :provider="listItemProvider"
++                            :provider="playlistTab.provider"
+                             detailed
+                         >
+                             <template #cell(name)="row">
+@@ -56,9 +58,12 @@
+                                         <template v-if="row.item.source === 'songs'">
+                                             {{ $gettext('Song-based') }}
+                                         </template>
+-                                        <template v-else>
++                                        <template v-else-if="row.item.source === 'remote_url'">
+                                             {{ $gettext('Remote URL') }}
+                                         </template>
++                                        <template v-else-if="row.item.source === 'group'">
++                                            {{ $gettext('Playlist Group') }}
++                                        </template>
+                                     </span>
+                                     <span
+                                         v-if="row.item.is_jingle"
+@@ -90,13 +95,20 @@
+                                     >
+                                         {{ $gettext('Disabled') }}
+                                     </span>
++                                    <span
++                                        v-for="group in row.item.member_of_groups"
++                                        :key="group.id"
++                                        class="badge text-bg-warning"
++                                    >
++                                        {{ $gettext('Member of: %{group}', {group: group.name}) }}
++                                    </span>
+                                 </div>
+                             </template>
+                             <template #cell(scheduling)="{ item }">
+                                 <template v-if="!item.is_enabled">
+                                     {{ $gettext('Disabled') }}
+                                 </template>
+-                                <template v-else-if="item.source !== 'songs'">
++                                <template v-else-if="item.source === 'remote_url'">
+                                     {{ $gettext('Remote URL') }}
+                                 </template>
+                                 <template v-else-if="item.type === 'default'">
+@@ -137,7 +149,7 @@
+                                         :to="{
+                                             name: 'stations:files:index',
+                                             params: {
+-                                                path: 'playlist:'+row.item.short_name
++                                                path: 'playlist:'+row.item.id
+                                             }
+                                         }"
+                                     >
+@@ -192,6 +204,14 @@
+                                     >
+                                         {{ $gettext('Reorder') }}
+                                     </button>
++                                    <button
++                                        v-if="item.links.members"
++                                        type="button"
++                                        class="btn btn-sm btn-primary"
++                                        @click="doManageMembers(item.links.members)"
++                                    >
++                                        {{ $gettext('Manage Members') }}
++                                    </button>
+                                     <button
+                                         type="button"
+                                         class="btn btn-sm"
+@@ -278,6 +298,11 @@
+         @needs-restart="() => mayNeedRestart()"
+     />
+     <reorder-modal ref="$reorderModal" />
++    <group-members-modal
++        ref="$groupMembersModal"
++        :playlists-url="listUrl"
++        @saved="relist"
++    />
+     <queue-modal ref="$queueModal" />
+     <reorder-modal ref="$reorderModal" />
+     <import-modal
+@@ -300,12 +325,13 @@
+ import DataTable, {DataTableField} from "~/components/Common/DataTable.vue";
+ import EditModal from "~/components/Stations/Playlists/EditModal.vue";
+ import ReorderModal from "~/components/Stations/Playlists/ReorderModal.vue";
++import GroupMembersModal from "~/components/Stations/Playlists/GroupMembersModal.vue";
+ import ImportModal from "~/components/Stations/Playlists/ImportModal.vue";
+ import QueueModal from "~/components/Stations/Playlists/QueueModal.vue";
+ import CloneModal from "~/components/Stations/Playlists/CloneModal.vue";
+ import ApplyToModal from "~/components/Stations/Playlists/ApplyToModal.vue";
+ import {useTranslate} from "~/vendor/gettext";
+-import {useTemplateRef} from "vue";
++import {computed, useTemplateRef} from "vue";
+ import useHasEditModal from "~/functions/useHasEditModal";
+ import {useMayNeedRestart} from "~/functions/useMayNeedRestart";
+ import {useNotify} from "~/components/Common/Toasts/useNotify.ts";
+@@ -317,19 +343,57 @@ import Tabs from "~/components/Common/Tabs.vue";
+ import Tab from "~/components/Common/Tab.vue";
+ import AddButton from "~/components/Common/AddButton.vue";
+ 
+-import {useApiItemProvider} from "~/functions/dataTable/useApiItemProvider.ts";
++import {useClientItemProvider} from "~/functions/dataTable/useClientItemProvider.ts";
+ import {QueryKeys, queryKeyWithStation} from "~/entities/Queries.ts";
+ import {useStationData} from "~/functions/useStationQuery.ts";
+ import {toRefs} from "@vueuse/core";
+ import IconBiContract from "~icons/bi/chevron-contract";
+ import IconBiExpand from "~icons/bi/chevron-expand";
+ import {useApiRouter} from "~/functions/useApiRouter.ts";
++import {useQuery} from "@tanstack/vue-query";
++import {PlaylistSources} from "~/entities/ApiInterfaces.ts";
++import type {StationPlaylist} from "~/entities/ApiInterfaces.ts";
++import type {DataTableItemProvider} from "~/functions/useHasDatatable.ts";
+ 
+ const {getStationApiUrl} = useApiRouter();
+ const listUrl = getStationApiUrl('/playlists');
+ 
+ 
+ const {$gettext} = useTranslate();
++const {axios} = useAxios();
++
++type GroupMemberResponse = {
++    playlist_id: number,
++}
++
++type PlaylistGroupReference = {
++    id: number,
++    name: string,
++}
++
++type PlaylistRow = StationPlaylist & {
++    id: number,
++    name: string,
++    source: PlaylistSources,
++    links: {
++        self: string,
++        toggle: string,
++        clone: string,
++        export: Record<string, string>,
++        order?: string,
++        members?: string,
++        empty?: string,
++        reshuffle?: string,
++        import?: string,
++        queue?: string,
++        applyto?: string,
++    },
++    member_of_groups: PlaylistGroupReference[],
++}
++
++type PlaylistListResponse = {
++    rows: PlaylistRow[],
++}
+ 
+ const fields: DataTableField[] = [
+     {key: 'name', isRowHeader: true, label: $gettext('Playlist'), sortable: true},
+@@ -338,11 +402,104 @@ const fields: DataTableField[] = [
+     {key: 'actions', label: $gettext('Actions'), sortable: false, class: 'shrink'}
+ ];
+ 
+-const listItemProvider = useApiItemProvider(
+-    listUrl,
+-    queryKeyWithStation([QueryKeys.StationPlaylists])
++const playlistsQuery = useQuery<PlaylistRow[]>({
++    queryKey: queryKeyWithStation([QueryKeys.StationPlaylists]),
++    queryFn: async ({signal}) => {
++        const {data} = await axios.get<PlaylistListResponse>(listUrl.value, {
++            params: {
++                internal: true,
++                rowCount: 0,
++            },
++            signal,
++        });
++
++        const rows = data.rows ?? [];
++        const membershipGroups = new Map<number, Map<number, PlaylistGroupReference>>();
++
++        await Promise.all(
++            rows
++                .filter((playlist) => (
++                    playlist.source === PlaylistSources.Group
++                    && playlist.links.members !== undefined
++                ))
++                .map(async (group) => {
++                    const {data: members} = await axios.get<GroupMemberResponse[]>(
++                        group.links.members as string,
++                        {signal}
++                    );
++
++                    members.forEach((member) => {
++                        const groups = membershipGroups.get(member.playlist_id) ?? new Map();
++                        groups.set(group.id, {
++                            id: group.id,
++                            name: group.name,
++                        });
++                        membershipGroups.set(member.playlist_id, groups);
++                    });
++                })
++        );
++
++        return rows.map((playlist) => ({
++            ...playlist,
++            member_of_groups: Array.from(
++                membershipGroups.get(playlist.id)?.values() ?? []
++            ),
++        }));
++    },
++});
++
++const standardPlaylists = computed(() =>
++    (playlistsQuery.data.value ?? []).filter(
++        (playlist) => playlist.source !== PlaylistSources.Group
++    )
++);
++
++const groupLists = computed(() =>
++    (playlistsQuery.data.value ?? []).filter(
++        (playlist) => playlist.source === PlaylistSources.Group
++    )
++);
++
++const refreshPlaylists = async (): Promise<void> => {
++    await playlistsQuery.refetch();
++};
++
++const standardPlaylistProvider = useClientItemProvider(
++    standardPlaylists,
++    playlistsQuery.isFetching,
++    undefined,
++    refreshPlaylists
++);
++
++const groupListProvider = useClientItemProvider(
++    groupLists,
++    playlistsQuery.isFetching,
++    undefined,
++    refreshPlaylists
+ );
+ 
++type PlaylistTab = {
++    id: string,
++    tableId: string,
++    label: string,
++    provider: DataTableItemProvider<PlaylistRow>,
++}
++
++const playlistTabs: PlaylistTab[] = [
++    {
++        id: 'playlists',
++        tableId: 'station_playlists',
++        label: 'Playlists',
++        provider: standardPlaylistProvider,
++    },
++    {
++        id: 'group_lists',
++        tableId: 'station_group_lists',
++        label: 'Group Lists',
++        provider: groupListProvider,
++    },
++];
++
+ const {Duration} = useLuxon();
+ 
+ const formatLength = (length: number) => {
+@@ -355,7 +512,7 @@ const formatLength = (length: number) => {
+ };
+ 
+ const relist = () => {
+-    void listItemProvider.refresh();
++    void refreshPlaylists();
+ }
+ 
+ const $editModal = useTemplateRef('$editModal');
+@@ -368,6 +525,12 @@ const doReorder = (url: string) => {
+     $reorderModal.value?.open(url);
+ };
+ 
++const $groupMembersModal = useTemplateRef('$groupMembersModal');
++
++const doManageMembers = (url: string) => {
++    void $groupMembersModal.value?.open(url);
++};
++
+ const $queueModal = useTemplateRef('$queueModal');
+ 
+ const doQueue = (url: string) => {
+@@ -406,7 +569,6 @@ const mayNeedRestart = () => {
+ };
+ 
+ const {notifySuccess} = useNotify();
+-const {axios} = useAxios();
+ 
+ const doModify = async (url: string) => {
+     const {data} = await axios.put(url);
+diff --git a/frontend/components/Stations/Playlists/EditModal.vue b/frontend/components/Stations/Playlists/EditModal.vue
+index d6308c1..082e5ca 100644
+--- a/frontend/components/Stations/Playlists/EditModal.vue
++++ b/frontend/components/Stations/Playlists/EditModal.vue
+@@ -10,7 +10,6 @@
+     >
+         <tabs>
+             <form-basic-info/>
+-            <form-schedule v-model:schedule-items="form.schedule_items" />
+             <form-advanced/>
+         </tabs>
+     </modal-form>
+@@ -18,7 +17,6 @@
+ 
+ <script setup lang="ts">
+ import FormBasicInfo from "~/components/Stations/Playlists/Form/BasicInfo.vue";
+-import FormSchedule from "~/components/Stations/Playlists/Form/Schedule.vue";
+ import FormAdvanced from "~/components/Stations/Playlists/Form/Advanced.vue";
+ import {BaseEditModalEmits, BaseEditModalProps, useBaseEditModal} from "~/functions/useBaseEditModal";
+ import {computed, toRef, useTemplateRef} from "vue";
+diff --git a/frontend/components/Stations/Playlists/Form/BasicInfo.vue b/frontend/components/Stations/Playlists/Form/BasicInfo.vue
+index a2b7407..35feccf 100644
+--- a/frontend/components/Stations/Playlists/Form/BasicInfo.vue
++++ b/frontend/components/Stations/Playlists/Form/BasicInfo.vue
+@@ -40,18 +40,19 @@
+         </div>
+ 
+         <section
+-            v-show="form.source === 'songs'"
++            v-show="form.source === 'songs' || form.source === 'group'"
+             class="card mb-3"
+             role="region"
+         >
+             <div class="card-header text-bg-primary">
+                 <h2 class="card-title">
+-                    {{ $gettext('Song-Based Playlist') }}
++                    {{ form.source === 'group' ? $gettext('Playlist Group Rotation') : $gettext('Song-Based Playlist') }}
+                 </h2>
+             </div>
+             <div class="card-body">
+                 <div class="row g-3 mb-3">
+                     <form-group-checkbox
++                        v-if="form.source === 'songs'"
+                         id="form_edit_avoid_duplicates"
+                         class="col-md-6"
+                         :field="r$.avoid_duplicates"
+@@ -60,6 +61,7 @@
+                     />
+ 
+                     <form-group-checkbox
++                        v-if="form.source === 'songs'"
+                         id="form_edit_include_in_on_demand"
+                         class="col-md-6"
+                         :field="r$.include_in_on_demand"
+@@ -68,6 +70,7 @@
+                     />
+ 
+                     <form-group-checkbox
++                        v-if="form.source === 'songs'"
+                         id="form_edit_include_in_requests"
+                         class="col-md-6"
+                         :field="r$.include_in_requests"
+@@ -76,6 +79,7 @@
+                     />
+ 
+                     <form-group-checkbox
++                        v-if="form.source === 'songs'"
+                         id="form_edit_is_jingle"
+                         class="col-md-6"
+                         :field="r$.is_jingle"
+@@ -90,7 +94,7 @@
+                         id="edit_form_type"
+                         class="col-md-6"
+                         :field="r$.type"
+-                        :options="typeOptions"
++                        :options="availableTypeOptions"
+                         stacked
+                         radio
+                         :label="$gettext('Playlist Type')"
+@@ -106,6 +110,7 @@
+                     </form-group-multi-check>
+ 
+                     <form-group-multi-check
++                        v-if="form.source === 'songs'"
+                         id="edit_form_order"
+                         class="col-md-6"
+                         :field="r$.order"
+@@ -116,6 +121,7 @@
+                     />
+ 
+                     <form-group-field
++                        v-if="form.source === 'songs'"
+                         id="form_edit_rotation_goal_days"
+                         class="col-md-6"
+                         :field="r$.rotation_goal_days"
+@@ -125,6 +131,7 @@
+                     />
+ 
+                     <form-group-field
++                        v-if="form.source === 'songs'"
+                         id="form_edit_aging_threshold_days"
+                         class="col-md-6"
+                         :field="r$.aging_threshold_days"
+@@ -134,6 +141,7 @@
+                     />
+ 
+                     <form-group-field
++                        v-if="form.source === 'songs'"
+                         id="form_edit_crossfade_profile"
+                         class="col-md-6"
+                         :field="r$.crossfade_profile"
+@@ -271,8 +279,9 @@ import {useTranslate} from "~/vendor/gettext";
+ import Tab from "~/components/Common/Tab.vue";
+ import {storeToRefs} from "pinia";
+ import {useFormTabClass} from "~/functions/useFormTabClass.ts";
+-import {computed} from "vue";
++import {computed, watch} from "vue";
+ import {useStationsPlaylistsForm} from "~/components/Stations/Playlists/Form/form.ts";
++import {PlaylistSources, PlaylistTypes} from "~/entities/ApiInterfaces.ts";
+ 
+ const {r$, form} = storeToRefs(useStationsPlaylistsForm());
+ 
+@@ -290,37 +299,57 @@ const sourceOptions = [
+         value: 'remote_url',
+         text: $gettext('Remote URL'),
+         description: $gettext('A playlist that instructs the station to play from a remote URL.')
++    },
++    {
++        value: 'group',
++        text: $gettext('Playlist Group'),
++        description: $gettext('A sequential group that plays one item from each member playlist in order.')
+     }
+ ];
+ 
+ const typeOptions = [
+     {
+-        value: 'default',
++        value: PlaylistTypes.Standard,
+         text: $gettext('General Rotation'),
+         description: $gettext('Standard playlist, shuffles with other standard playlists based on weight.')
+     },
+     {
+-        value: 'once_per_x_songs',
++        value: PlaylistTypes.OncePerXSongs,
+         text: $gettext('Once per x Songs'),
+         description: $gettext('Play once every $x songs.')
+     },
+     {
+-        value: 'once_per_x_minutes',
++        value: PlaylistTypes.OncePerXMinutes,
+         text: $gettext('Once per x Minutes'),
+         description: $gettext('Play once every $x minutes.')
+     },
+     {
+-        value: 'once_per_hour',
++        value: PlaylistTypes.OncePerHour,
+         text: $gettext('Once per Hour'),
+         description: $gettext('Play once per hour at the specified minute.')
+     },
+     {
+-        value: 'custom',
++        value: PlaylistTypes.Advanced,
+         text: $gettext('Advanced'),
+         description: $gettext('Manually define how this playlist is used in Liquidsoap configuration.')
+     }
+ ];
+ 
++const availableTypeOptions = computed(() => {
++    return form.value.source === PlaylistSources.Group
++        ? typeOptions.filter((option) => option.value !== PlaylistTypes.Advanced)
++        : typeOptions;
++});
++
++watch(
++    () => form.value.source,
++    (source) => {
++        if (source === PlaylistSources.Group && form.value.type === PlaylistTypes.Advanced) {
++            form.value.type = PlaylistTypes.Standard;
++        }
++    }
++);
++
+ const orderOptions = [
+     {
+         value: 'shuffle',
+diff --git a/frontend/components/Stations/Playlists/GroupMembersModal.vue b/frontend/components/Stations/Playlists/GroupMembersModal.vue
+new file mode 100644
+index 0000000..de2989f
+--- /dev/null
++++ b/frontend/components/Stations/Playlists/GroupMembersModal.vue
+@@ -0,0 +1,409 @@
++<template>
++    <modal-form
++        ref="$modal"
++        size="lg"
++        :loading="loading"
++        :title="$gettext('Manage Group Members')"
++        :error="error"
++        @submit="save"
++        @hidden="clear"
++    >
++        <p class="text-muted">
++            {{ $gettext('Add playlists in the order they should be selected by this group. The same playlist can be added more than once.') }}
++            {{ $gettext('Each occurrence can play a fixed number of consecutive tracks or finish its current Sequential or Shuffle cycle.') }}
++        </p>
++
++        <div class="row g-2 align-items-end mb-3">
++            <form-group-select
++                id="group_member_playlist"
++                v-model="selectedPlaylistId"
++                class="col-md-9"
++                :label="$gettext('Playlist')"
++                :options="playlistOptions"
++            />
++            <div class="col-md-3 d-grid">
++                <button
++                    type="button"
++                    class="btn btn-secondary"
++                    :disabled="selectedPlaylistId === null"
++                    @click="addMember"
++                >
++                    {{ $gettext('Add Member') }}
++                </button>
++            </div>
++        </div>
++
++        <div
++            v-if="members.length === 0"
++            class="alert alert-info mb-0"
++        >
++            {{ $gettext('This group has no members.') }}
++        </div>
++
++        <div
++            v-else
++            class="table-responsive"
++        >
++            <table class="table table-striped align-middle mb-0">
++                <thead>
++                    <tr>
++                        <th class="shrink">
++                            {{ $gettext('Position') }}
++                        </th>
++                        <th>
++                            {{ $gettext('Playlist') }}
++                        </th>
++                        <th class="shrink text-nowrap">
++                            {{ $gettext('Playback Order') }}
++                        </th>
++                        <th class="shrink text-nowrap">
++                            {{ $gettext('Consecutive Tracks') }}
++                        </th>
++                        <th class="shrink text-nowrap">
++                            {{ $gettext('Full Cycle') }}
++                        </th>
++                        <th class="shrink">
++                            {{ $gettext('Actions') }}
++                        </th>
++                    </tr>
++                </thead>
++                <tbody>
++                    <tr
++                        v-for="(member, index) in members"
++                        :key="member.key"
++                    >
++                        <td>{{ index + 1 }}</td>
++                        <td>
++                            <router-link
++                                :to="{
++                                    name: 'stations:files:index',
++                                    params: {
++                                        path: 'playlist:'+member.playlist_id
++                                    }
++                                }"
++                                :title="$gettext('View tracks in playlist')"
++                            >
++                                {{ member.name }}
++                            </router-link>
++                        </td>
++                        <td>
++                            <select
++                                v-if="member.source === PlaylistSources.Songs"
++                                :id="`group_member_order_${member.key}`"
++                                v-model="member.order"
++                                class="form-select form-select-sm"
++                                :aria-label="$gettext('Playback Order')"
++                                @change="changeMemberOrder(member)"
++                            >
++                                <option
++                                    v-for="option in orderOptions"
++                                    :key="option.value"
++                                    :value="option.value"
++                                >
++                                    {{ option.text }}
++                                </option>
++                            </select>
++                            <span v-else class="text-muted">
++                                {{ $gettext('Not applicable') }}
++                            </span>
++                        </td>
++                        <td>
++                            <input
++                                :id="`group_member_consecutive_${member.key}`"
++                                v-model.number="member.consecutive_plays"
++                                class="form-control form-control-sm"
++                                type="number"
++                                min="1"
++                                max="65535"
++                                :disabled="member.play_full_cycle"
++                                :aria-label="$gettext('Consecutive Tracks')"
++                            >
++                        </td>
++                        <td class="text-center">
++                            <input
++                                :id="`group_member_full_cycle_${member.key}`"
++                                v-model="member.play_full_cycle"
++                                class="form-check-input"
++                                type="checkbox"
++                                :disabled="!member.supports_full_cycle"
++                                :title="fullCycleTitle(member)"
++                                :aria-label="$gettext('Play Full Cycle')"
++                            >
++                        </td>
++                        <td>
++                            <div class="btn-group btn-group-sm">
++                                <button
++                                    type="button"
++                                    class="btn btn-primary"
++                                    :disabled="index === 0"
++                                    :title="$gettext('Move Up')"
++                                    @click="moveUp(index)"
++                                >
++                                    <icon-bi-chevron-up />
++                                </button>
++                                <button
++                                    type="button"
++                                    class="btn btn-primary"
++                                    :disabled="index === members.length - 1"
++                                    :title="$gettext('Move Down')"
++                                    @click="moveDown(index)"
++                                >
++                                    <icon-bi-chevron-down />
++                                </button>
++                                <button
++                                    type="button"
++                                    class="btn btn-danger"
++                                    :title="$gettext('Remove')"
++                                    @click="removeMember(index)"
++                                >
++                                    <icon-bi-trash />
++                                </button>
++                            </div>
++                        </td>
++                    </tr>
++                </tbody>
++            </table>
++        </div>
++    </modal-form>
++</template>
++
++<script setup lang="ts">
++import {computed, ref, useTemplateRef} from "vue";
++import type {AxiosError} from "axios";
++import IconBiChevronDown from "~icons/bi/chevron-down";
++import IconBiChevronUp from "~icons/bi/chevron-up";
++import IconBiTrash from "~icons/bi/trash";
++import ModalForm from "~/components/Common/ModalForm.vue";
++import FormGroupSelect from "~/components/Form/FormGroupSelect.vue";
++import {PlaylistOrders, PlaylistSources} from "~/entities/ApiInterfaces.ts";
++import type {ApiError, StationPlaylist} from "~/entities/ApiInterfaces.ts";
++import {useAxios} from "~/vendor/axios";
++import {useNotify} from "~/components/Common/Toasts/useNotify.ts";
++import {useTranslate} from "~/vendor/gettext";
++
++type GroupMemberResponse = {
++    id: number,
++    playlist_id: number,
++    name: string,
++    position: number,
++    source: PlaylistSources,
++    order: PlaylistOrders,
++    consecutive_plays: number,
++    play_full_cycle: boolean,
++    supports_full_cycle: boolean
++}
++
++type GroupMember = GroupMemberResponse & {
++    key: string
++}
++
++type PlaylistListItem = Required<Pick<StationPlaylist, 'id' | 'name' | 'source' | 'order'>>
++
++const props = defineProps<{
++    playlistsUrl: string
++}>();
++
++const emit = defineEmits<{
++    (e: 'saved'): void
++}>();
++
++const {$gettext} = useTranslate();
++const {axios} = useAxios();
++const {notifySuccess} = useNotify();
++
++const $modal = useTemplateRef('$modal');
++const loading = ref(false);
++const error = ref<string | null>(null);
++const membersUrl = ref<string | null>(null);
++const members = ref<GroupMember[]>([]);
++const playlists = ref<PlaylistListItem[]>([]);
++const selectedPlaylistId = ref<number | null>(null);
++let nextKey = 0;
++
++const playlistOptions = computed(() => [
++    {
++        value: null,
++        text: $gettext('Select a playlist')
++    },
++    ...playlists.value.map((playlist) => ({
++        value: playlist.id,
++        text: playlist.name
++    }))
++]);
++
++const orderOptions = [
++    {value: PlaylistOrders.Sequential, text: $gettext('Sequential')},
++    {value: PlaylistOrders.Shuffle, text: $gettext('Shuffle')},
++    {value: PlaylistOrders.Random, text: $gettext('Random')}
++];
++
++const normalizeOrder = (order: PlaylistOrders): PlaylistOrders => {
++    return order === PlaylistOrders.SmartShuffle
++        ? PlaylistOrders.Shuffle
++        : order;
++};
++
++const clear = () => {
++    loading.value = false;
++    error.value = null;
++    membersUrl.value = null;
++    members.value = [];
++    playlists.value = [];
++    selectedPlaylistId.value = null;
++    nextKey = 0;
++};
++
++const open = async (newMembersUrl: string) => {
++    clear();
++    membersUrl.value = newMembersUrl;
++    loading.value = true;
++    $modal.value?.show();
++
++    try {
++        const [membersResponse, playlistsResponse] = await Promise.all([
++            axios.get<GroupMemberResponse[]>(newMembersUrl),
++            axios.get<{rows: PlaylistListItem[]}>(props.playlistsUrl, {
++                params: {rowCount: 0}
++            })
++        ]);
++
++        members.value = membersResponse.data.map((member) => {
++            const order = normalizeOrder(member.order);
++            return {
++                ...member,
++                order,
++                supports_full_cycle: member.source === PlaylistSources.Songs
++                    && order !== PlaylistOrders.Random,
++                key: `existing-${member.id}`
++            };
++        });
++        playlists.value = (playlistsResponse.data.rows ?? []).filter(
++            (playlist) => playlist.source !== PlaylistSources.Group
++        );
++    } catch (err) {
++        const axiosError = err as AxiosError<ApiError>;
++        error.value = axiosError.response?.data?.message ?? $gettext('An error occurred.');
++    } finally {
++        loading.value = false;
++    }
++};
++
++const addMember = () => {
++    if (selectedPlaylistId.value === null) {
++        return;
++    }
++
++    const playlist = playlists.value.find(
++        (item) => item.id === selectedPlaylistId.value
++    );
++    if (!playlist) {
++        return;
++    }
++
++    const existingMember = members.value.find(
++        (member) => member.playlist_id === playlist.id
++    );
++    const order = existingMember?.order ?? normalizeOrder(playlist.order);
++
++    nextKey++;
++    members.value.push({
++        id: 0,
++        playlist_id: playlist.id,
++        name: playlist.name,
++        position: members.value.length,
++        source: playlist.source,
++        order,
++        consecutive_plays: 1,
++        play_full_cycle: false,
++        supports_full_cycle: playlist.source === PlaylistSources.Songs
++            && order !== PlaylistOrders.Random,
++        key: `new-${nextKey}`
++    });
++};
++
++const moveUp = (index: number) => {
++    if (index <= 0) {
++        return;
++    }
++
++    const member = members.value.splice(index, 1)[0];
++    members.value.splice(index - 1, 0, member);
++};
++
++const moveDown = (index: number) => {
++    if (index >= members.value.length - 1) {
++        return;
++    }
++
++    const member = members.value.splice(index, 1)[0];
++    members.value.splice(index + 1, 0, member);
++};
++
++const removeMember = (index: number) => {
++    members.value.splice(index, 1);
++};
++
++const changeMemberOrder = (changedMember: GroupMember) => {
++    const order = normalizeOrder(changedMember.order);
++
++    members.value.forEach((member) => {
++        if (member.playlist_id !== changedMember.playlist_id) {
++            return;
++        }
++
++        member.order = order;
++        member.supports_full_cycle = member.source === PlaylistSources.Songs
++            && order !== PlaylistOrders.Random;
++        if (!member.supports_full_cycle) {
++            member.play_full_cycle = false;
++        }
++    });
++};
++
++const fullCycleTitle = (member: GroupMember): string => {
++    if (member.supports_full_cycle) {
++        return $gettext('Play one complete playlist cycle before continuing to the next member.');
++    }
++
++    return $gettext('Full-cycle playback is only available for Sequential or Shuffle song playlists.');
++};
++
++const save = async () => {
++    if (!membersUrl.value) {
++        return;
++    }
++
++    loading.value = true;
++    error.value = null;
++
++    try {
++        const {data} = await axios.put<GroupMemberResponse[]>(membersUrl.value, {
++            members: members.value.map((member) => ({
++                playlist_id: member.playlist_id,
++                order: member.source === PlaylistSources.Songs
++                    ? normalizeOrder(member.order)
++                    : undefined,
++                consecutive_plays: member.consecutive_plays,
++                play_full_cycle: member.play_full_cycle
++            }))
++        });
++
++        members.value = data.map((member) => ({
++            ...member,
++            key: `existing-${member.id}`
++        }));
++        notifySuccess();
++        emit('saved');
++        $modal.value?.hide();
++    } catch (err) {
++        const axiosError = err as AxiosError<ApiError>;
++        error.value = axiosError.response?.data?.message ?? $gettext('An error occurred.');
++    } finally {
++        loading.value = false;
++    }
++};
++
++defineExpose({
++    open
++});
++</script>
+diff --git a/frontend/components/Stations/Queue.vue b/frontend/components/Stations/Queue.vue
+index b0a0667..aea3fa6 100644
+--- a/frontend/components/Stations/Queue.vue
++++ b/frontend/components/Stations/Queue.vue
+@@ -66,7 +66,18 @@
+                     {{ $gettext('Listener Request') }}
+                 </div>
+                 <div v-else-if="row.item.playlist">
+-                    {{ $gettext('Playlist') }}: {{ row.item.playlist }}
++                    <div>
++                        {{ $gettext('Playlist') }}: {{ row.item.playlist }}
++                    </div>
++                    <div v-if="row.item.group_lists?.length">
++                        <span
++                            v-for="groupList in row.item.group_lists"
++                            :key="groupList"
++                            class="badge text-bg-info me-1"
++                        >
++                            {{ $gettext('Group List') }}: {{ groupList }}
++                        </span>
++                    </div>
+                 </div>
+                 <div v-else-if="row.item.clock_wheel">
+                     {{ $gettext('Clock Wheel') }}: {{ row.item.clock_wheel }}
+diff --git a/frontend/entities/ApiInterfaces.ts b/frontend/entities/ApiInterfaces.ts
+index cb53fa4..db81719 100644
+--- a/frontend/entities/ApiInterfaces.ts
++++ b/frontend/entities/ApiInterfaces.ts
+@@ -200,6 +200,7 @@ export enum PlaylistTypes {
+ export enum PlaylistSources {
+   Songs = "songs",
+   RemoteUrl = "remote_url",
++  Group = "group",
+ }
+ 
+ export enum PlaylistRemoteTypes {
+@@ -1321,6 +1322,8 @@ export type ApiStationQueueDetailed = HasLinks & {
+    * @example ""
+    */
+   autodj_custom_uri?: string | null;
++  /** Group List that queued this specific item. */
++  group_lists?: string[];
+   /** Log entries on how the specific queue item was picked by the AutoDJ. */
+   log?: any[] | null;
+ };
+diff --git a/tests/PureUnit/PlaylistGroupMemberRepositoryTest.php b/tests/PureUnit/PlaylistGroupMemberRepositoryTest.php
+index 667b92a..f2e9bea 100644
+--- a/tests/PureUnit/PlaylistGroupMemberRepositoryTest.php
++++ b/tests/PureUnit/PlaylistGroupMemberRepositoryTest.php
+@@ -57,7 +57,14 @@ final class PlaylistGroupMemberRepositoryTest extends TestCase
+         $repository = new StationPlaylistGroupMemberRepository();
+         $repository->setEntityManager($em);
+ 
+-        $members = $repository->setMembers($group, [$playlistA, $playlistA]);
++        $members = $repository->setMembers(
++            $group,
++            [$playlistA, $playlistA],
++            [
++                ['consecutive_plays' => 2, 'play_full_cycle' => false],
++                ['consecutive_plays' => 1, 'play_full_cycle' => true],
++            ],
++        );
+ 
+         self::assertSame([$firstA, $secondA], $members);
+         self::assertSame([100, 102], array_map(
+@@ -68,6 +75,14 @@ final class PlaylistGroupMemberRepositoryTest extends TestCase
+             static fn(StationPlaylistGroupMember $member): int => $member->position,
+             $members
+         ));
++        self::assertSame([2, 1], array_map(
++            static fn(StationPlaylistGroupMember $member): int => $member->consecutive_plays,
++            $members
++        ));
++        self::assertSame([false, true], array_map(
++            static fn(StationPlaylistGroupMember $member): bool => $member->play_full_cycle,
++            $members
++        ));
+         self::assertSame(0, $group->group_next_position);
+     }
+ 
+diff --git a/tests/PureUnit/PlaylistGroupMembersApiTest.php b/tests/PureUnit/PlaylistGroupMembersApiTest.php
+index 4930046..a16c4dd 100644
+--- a/tests/PureUnit/PlaylistGroupMembersApiTest.php
++++ b/tests/PureUnit/PlaylistGroupMembersApiTest.php
+@@ -7,6 +7,7 @@ namespace PureUnit;
+ use App\Controller\Api\Stations\Playlists\GetGroupMembersAction;
+ use App\Controller\Api\Stations\Playlists\PutGroupMembersAction;
+ use App\Doctrine\ReloadableEntityManagerInterface;
++use App\Entity\Enums\PlaylistOrders;
+ use App\Entity\Enums\PlaylistSources;
+ use App\Entity\Repository\StationPlaylistGroupMemberRepository;
+ use App\Entity\Repository\StationPlaylistRepository;
+@@ -56,9 +57,39 @@ final class PlaylistGroupMembersApiTest extends TestCase
+ 
+         self::assertSame(
+             [
+-                ['id' => 100, 'playlist_id' => 20, 'name' => 'A', 'position' => 0],
+-                ['id' => 101, 'playlist_id' => 30, 'name' => 'B', 'position' => 1],
+-                ['id' => 102, 'playlist_id' => 20, 'name' => 'A', 'position' => 2],
++                [
++                    'id' => 100,
++                    'playlist_id' => 20,
++                    'name' => 'A',
++                    'position' => 0,
++                    'source' => 'songs',
++                    'order' => 'shuffle',
++                    'consecutive_plays' => 1,
++                    'play_full_cycle' => false,
++                    'supports_full_cycle' => true,
++                ],
++                [
++                    'id' => 101,
++                    'playlist_id' => 30,
++                    'name' => 'B',
++                    'position' => 1,
++                    'source' => 'songs',
++                    'order' => 'shuffle',
++                    'consecutive_plays' => 1,
++                    'play_full_cycle' => false,
++                    'supports_full_cycle' => true,
++                ],
++                [
++                    'id' => 102,
++                    'playlist_id' => 20,
++                    'name' => 'A',
++                    'position' => 2,
++                    'source' => 'songs',
++                    'order' => 'shuffle',
++                    'consecutive_plays' => 1,
++                    'play_full_cycle' => false,
++                    'supports_full_cycle' => true,
++                ],
+             ],
+             json_decode((string)$result->getBody(), true, flags: JSON_THROW_ON_ERROR)
+         );
+@@ -80,7 +111,7 @@ final class PlaylistGroupMembersApiTest extends TestCase
+         );
+     }
+ 
+-    public function testPutAcceptsRepeatedPlaylistIdsAndReturnsNewOrder(): void
++    public function testPutAcceptsPerOccurrencePlaybackSettingsAndReturnsNewOrder(): void
+     {
+         $station = new Station();
+         $group = $this->makePlaylist($station, 10, 'Group', PlaylistSources::Group);
+@@ -103,20 +134,73 @@ final class PlaylistGroupMembersApiTest extends TestCase
+ 
+         $action = new PutGroupMembersAction($playlistRepo, $memberRepo);
+         $result = $action(
+-            $this->makeRequest($station, ['playlist_ids' => [20, 30, 20]]),
++            $this->makeRequest($station, [
++                'members' => [
++                    [
++                        'playlist_id' => 20,
++                        'order' => 'sequential',
++                        'consecutive_plays' => 2,
++                        'play_full_cycle' => false,
++                    ],
++                    [
++                        'playlist_id' => 30,
++                        'order' => 'shuffle',
++                        'consecutive_plays' => 1,
++                        'play_full_cycle' => true,
++                    ],
++                    [
++                        'playlist_id' => 20,
++                        'order' => 'sequential',
++                        'consecutive_plays' => 3,
++                        'play_full_cycle' => false,
++                    ],
++                ],
++            ]),
+             $this->makeResponse(),
+             ['id' => '10']
+         );
+ 
+         self::assertSame(
+             [
+-                ['id' => 100, 'playlist_id' => 20, 'name' => 'A', 'position' => 0],
+-                ['id' => 101, 'playlist_id' => 30, 'name' => 'B', 'position' => 1],
+-                ['id' => 1000, 'playlist_id' => 20, 'name' => 'A', 'position' => 2],
++                [
++                    'id' => 100,
++                    'playlist_id' => 20,
++                    'name' => 'A',
++                    'position' => 0,
++                    'source' => 'songs',
++                    'order' => 'sequential',
++                    'consecutive_plays' => 2,
++                    'play_full_cycle' => false,
++                    'supports_full_cycle' => true,
++                ],
++                [
++                    'id' => 101,
++                    'playlist_id' => 30,
++                    'name' => 'B',
++                    'position' => 1,
++                    'source' => 'songs',
++                    'order' => 'shuffle',
++                    'consecutive_plays' => 1,
++                    'play_full_cycle' => true,
++                    'supports_full_cycle' => true,
++                ],
++                [
++                    'id' => 1000,
++                    'playlist_id' => 20,
++                    'name' => 'A',
++                    'position' => 2,
++                    'source' => 'songs',
++                    'order' => 'sequential',
++                    'consecutive_plays' => 3,
++                    'play_full_cycle' => false,
++                    'supports_full_cycle' => true,
++                ],
+             ],
+             json_decode((string)$result->getBody(), true, flags: JSON_THROW_ON_ERROR)
+         );
+         self::assertSame(0, $group->group_next_position);
++        self::assertSame(PlaylistOrders::Sequential, $playlistA->order);
++        self::assertSame(PlaylistOrders::Shuffle, $playlistB->order);
+     }
+ 
+     public function testPutRejectsInvalidPlaylistIdWithoutStartingTransaction(): void
+@@ -139,7 +223,7 @@ final class PlaylistGroupMembersApiTest extends TestCase
+         );
+     }
+ 
+-    public function testPutRequiresPlaylistIds(): void
++    public function testPutRequiresMembers(): void
+     {
+         $station = new Station();
+         $group = $this->makePlaylist($station, 10, 'Group', PlaylistSources::Group);
+@@ -147,7 +231,7 @@ final class PlaylistGroupMembersApiTest extends TestCase
+ 
+         $action = new PutGroupMembersAction($playlistRepo, $memberRepo);
+ 
+-        $this->expectValidation('playlist_ids is required.');
++        $this->expectValidation('members is required.');
+         $action(
+             $this->makeRequest($station, []),
+             $this->makeResponse(),
+@@ -228,6 +312,70 @@ final class PlaylistGroupMembersApiTest extends TestCase
+         );
+     }
+ 
++    public function testPutRejectsFullCycleForRandomPlaylist(): void
++    {
++        $station = new Station();
++        $group = $this->makePlaylist($station, 10, 'Group', PlaylistSources::Group);
++        $randomPlaylist = $this->makePlaylist($station, 20, 'Random');
++        [$playlistRepo, $memberRepo] = $this->makeRepositories([
++            10 => $group,
++            20 => $randomPlaylist,
++        ]);
++
++        $action = new PutGroupMembersAction($playlistRepo, $memberRepo);
++
++        $this->expectValidation(
++            'play_full_cycle is only supported for Sequential or Shuffle song playlists.'
++        );
++        $action(
++            $this->makeRequest($station, [
++                'members' => [[
++                    'playlist_id' => 20,
++                    'order' => 'random',
++                    'consecutive_plays' => 1,
++                    'play_full_cycle' => true,
++                ]],
++            ]),
++            $this->makeResponse(),
++            ['id' => '10']
++        );
++    }
++
++    public function testPutRejectsConflictingOrdersForRepeatedPlaylist(): void
++    {
++        $station = new Station();
++        $group = $this->makePlaylist($station, 10, 'Group', PlaylistSources::Group);
++        $playlist = $this->makePlaylist($station, 20, 'Songs');
++        [$playlistRepo, $memberRepo] = $this->makeRepositories([
++            10 => $group,
++            20 => $playlist,
++        ]);
++
++        $action = new PutGroupMembersAction($playlistRepo, $memberRepo);
++
++        $this->expectValidation('All occurrences of the same playlist must use the same order.');
++        $action(
++            $this->makeRequest($station, [
++                'members' => [
++                    [
++                        'playlist_id' => 20,
++                        'order' => 'sequential',
++                        'consecutive_plays' => 1,
++                        'play_full_cycle' => false,
++                    ],
++                    [
++                        'playlist_id' => 20,
++                        'order' => 'random',
++                        'consecutive_plays' => 1,
++                        'play_full_cycle' => false,
++                    ],
++                ],
++            ]),
++            $this->makeResponse(),
++            ['id' => '10']
++        );
++    }
++
+     /**
+      * @param array<int, StationPlaylist> $playlistsById
+      * @param list<StationPlaylistGroupMember> $members
+diff --git a/tests/Unit/PlaylistGroupTest.php b/tests/Unit/PlaylistGroupTest.php
+index 8749118..66ed9cc 100644
+--- a/tests/Unit/PlaylistGroupTest.php
++++ b/tests/Unit/PlaylistGroupTest.php
+@@ -4,7 +4,12 @@ declare(strict_types=1);
+ 
+ namespace Unit;
+ 
++use App\Entity\Enums\PlaylistOrders;
++use App\Entity\Enums\PlaylistTypes;
+ use App\Entity\Station;
++use App\Entity\StationPlaylist;
++use App\Entity\StationQueue;
++use App\Event\Radio\BuildQueue;
+ use App\Radio\AutoDJ\QueueBuilder;
+ use App\Tests\AutoDjTestHarness;
+ use App\Tests\Module;
+@@ -23,22 +28,30 @@ final class PlaylistGroupTest extends Unit
+         );
+     }
+ 
+-    public function testGroupRotatesOccurrencesSequentiallyAndWraps(): void
++    public function testGroupQueuesAllMembersAsOneOrderedBlock(): void
+     {
+         $fixture = $this->harness->createSequentialGroup(
+             [
+-                'A' => ['A'],
++                'A' => ['A1', 'A2'],
+                 'B' => ['B'],
+                 'C' => ['C'],
+             ],
+             ['A', 'B', 'C'],
+         );
++        $fixture['playlists']['A']->backend_options = [StationPlaylist::OPTION_MERGE];
+ 
+         try {
+-            self::assertSame(
+-                ['A', 'B', 'C', 'A', 'B', 'C'],
+-                $this->selectTitles($fixture['station'], 6),
++            $event = $this->calculateNextSong($fixture['station']);
++
++            self::assertSame(['A1', 'B', 'C'], $this->getTitles($event->getNextSongs()));
++            $this->assertGroupOrigin($fixture['group'], $event->getNextSongs());
++
++            $nextEvent = $this->calculateNextSong(
++                $fixture['station'],
++                CarbonImmutable::parse('2026-08-09 10:03:00', 'UTC'),
+             );
++            self::assertSame(['A2', 'B', 'C'], $this->getTitles($nextEvent->getNextSongs()));
++            $this->assertGroupOrigin($fixture['group'], $nextEvent->getNextSongs());
+         } finally {
+             $this->harness->cleanUp();
+         }
+@@ -56,27 +69,265 @@ final class PlaylistGroupTest extends Unit
+         );
+ 
+         try {
+-            self::assertSame(
+-                ['Jingle', 'Hot', 'Music', 'Hot'],
+-                $this->selectTitles($fixture['station'], 4),
++            $event = $this->calculateNextSong($fixture['station']);
++
++            self::assertSame(['Jingle', 'Hot', 'Music', 'Hot'], $this->getTitles($event->getNextSongs()));
++        } finally {
++            $this->harness->cleanUp();
++        }
++    }
++
++    public function testShuffleMemberDuplicateFallbackDoesNotTruncateGroupBlock(): void
++    {
++        $fixture = $this->harness->createSequentialGroup(
++            [
++                'A' => ['A'],
++                'B' => ['B'],
++            ],
++            ['A', 'B'],
++        );
++        $fixture['playlists']['A']->order = PlaylistOrders::Shuffle;
++        $fixture['playlists']['A']->avoid_duplicates = false;
++        $fixture['playlists']['B']->order = PlaylistOrders::Shuffle;
++        $fixture['playlists']['B']->avoid_duplicates = true;
++
++        try {
++            $firstEvent = $this->calculateNextSong($fixture['station']);
++            self::assertSame(['A', 'B'], $this->getTitles($firstEvent->getNextSongs()));
++
++            $secondEvent = $this->calculateNextSong(
++                $fixture['station'],
++                CarbonImmutable::parse('2026-08-09 10:03:00', 'UTC'),
++            );
++            self::assertSame(['A', 'B'], $this->getTitles($secondEvent->getNextSongs()));
++        } finally {
++            $this->harness->cleanUp();
++        }
++    }
++
++    public function testConsecutivePlaysAreConfiguredPerOccurrence(): void
++    {
++        $fixture = $this->harness->createSequentialGroup(
++            [
++                'A' => ['A1', 'A2', 'A3'],
++                'B' => ['B'],
++            ],
++            ['A', 'B', 'A'],
++        );
++        $fixture['members'][0]->consecutive_plays = 2;
++
++        try {
++            $event = $this->calculateNextSong($fixture['station']);
++
++            self::assertSame(['A1', 'A2', 'B', 'A3'], $this->getTitles($event->getNextSongs()));
++        } finally {
++            $this->harness->cleanUp();
++        }
++    }
++
++    public function testFullCyclePlaysTheRestOfTheCurrentSequentialCycle(): void
++    {
++        $fixture = $this->harness->createSequentialGroup(
++            [
++                'A' => ['A1', 'A2', 'A3'],
++                'B' => ['B'],
++            ],
++            ['A', 'B', 'A'],
++        );
++        $fixture['members'][2]->play_full_cycle = true;
++
++        try {
++            $event = $this->calculateNextSong($fixture['station']);
++
++            self::assertSame(['A1', 'B', 'A2', 'A3'], $this->getTitles($event->getNextSongs()));
++        } finally {
++            $this->harness->cleanUp();
++        }
++    }
++
++    public function testFullCyclePlaysACompleteShuffleCycle(): void
++    {
++        $fixture = $this->harness->createSequentialGroup(
++            ['A' => ['A1', 'A2', 'A3']],
++            ['A'],
++        );
++        $fixture['playlists']['A']->order = PlaylistOrders::Shuffle;
++        $fixture['members'][0]->play_full_cycle = true;
++
++        try {
++            $event = $this->calculateNextSong($fixture['station']);
++
++            self::assertSame(['A1', 'A2', 'A3'], $this->getTitles($event->getNextSongs()));
++        } finally {
++            $this->harness->cleanUp();
++        }
++    }
++
++    public function testGroupBlockIsQueuedAheadOfAnIndependentRootPlaylist(): void
++    {
++        $fixture = $this->harness->createSequentialGroup(
++            [
++                'A' => ['A'],
++                'B' => ['B'],
++                'C' => ['C'],
++            ],
++            ['A', 'B', 'C'],
++        );
++        $this->harness->addSequentialPlaylist($fixture['station'], 'Independent Root', ['Root']);
++
++        $fixture['group']->type = PlaylistTypes::OncePerHour;
++        $fixture['group']->play_per_hour_minute = 0;
++
++        try {
++            $groupEvent = $this->calculateNextSong($fixture['station']);
++            self::assertSame(['A', 'B', 'C'], $this->getTitles($groupEvent->getNextSongs()));
++
++            $rootEvent = $this->calculateNextSong(
++                $fixture['station'],
++                CarbonImmutable::parse('2026-08-09 10:03:00', 'UTC'),
++            );
++            self::assertSame(['Root'], $this->getTitles($rootEvent->getNextSongs()));
++        } finally {
++            $this->harness->cleanUp();
++        }
++    }
++
++    public function testOncePerHourGroupAtMinute25TracksItsHourlyOccurrence(): void
++    {
++        $fixture = $this->harness->createSequentialGroup(
++            [
++                'A' => ['A'],
++                'B' => ['B'],
++            ],
++            ['A', 'B'],
++        );
++        $fixture['station']->backend_config->top_of_hour_id_enabled = true;
++        $fixture['group']->type = PlaylistTypes::OncePerHour;
++        $fixture['group']->play_per_hour_minute = 25;
++        $fixture['group']->played_at = CarbonImmutable::parse('2026-08-09 09:30:00', 'UTC');
++
++        try {
++            $event = $this->calculateNextSong(
++                $fixture['station'],
++                CarbonImmutable::parse('2026-08-09 10:42:00', 'UTC'),
++            );
++
++            self::assertSame(['A', 'B'], $this->getTitles($event->getNextSongs()));
++            $this->assertGroupOrigin($fixture['group'], $event->getNextSongs());
++
++            $sameOccurrence = $this->calculateNextSong(
++                $fixture['station'],
++                CarbonImmutable::parse('2026-08-09 10:45:00', 'UTC'),
++            );
++            self::assertSame([], $sameOccurrence->getNextSongs());
++
++            $nextOccurrence = $this->calculateNextSong(
++                $fixture['station'],
++                CarbonImmutable::parse('2026-08-09 11:25:00', 'UTC'),
++            );
++            self::assertSame(['A', 'B'], $this->getTitles($nextOccurrence->getNextSongs()));
++        } finally {
++            $this->harness->cleanUp();
++        }
++    }
++
++    public function testOncePerXSongsCountsAWholeGroupAsOneProgrammedPassage(): void
++    {
++        $fixture = $this->harness->createSequentialGroup(
++            [
++                'A' => ['A'],
++                'B' => ['B'],
++            ],
++            ['A', 'B'],
++        );
++        $this->harness->addSequentialPlaylist($fixture['station'], 'Independent Root', ['Root']);
++
++        $fixture['group']->type = PlaylistTypes::OncePerXSongs;
++        $fixture['group']->play_per_songs = 5;
++
++        try {
++            $groupEvent = $this->calculateNextSong($fixture['station']);
++            self::assertSame(['A', 'B'], $this->getTitles($groupEvent->getNextSongs()));
++            $this->assertGroupOrigin($fixture['group'], $groupEvent->getNextSongs());
++
++            for ($song = 1; $song <= 5; $song++) {
++                $rootEvent = $this->calculateNextSong(
++                    $fixture['station'],
++                    CarbonImmutable::parse('2026-08-09 10:00:00', 'UTC')->addMinutes($song * 3),
++                );
++                self::assertSame(['Root'], $this->getTitles($rootEvent->getNextSongs()));
++            }
++
++            $nextGroupEvent = $this->calculateNextSong(
++                $fixture['station'],
++                CarbonImmutable::parse('2026-08-09 10:18:00', 'UTC'),
+             );
++            self::assertSame(['A', 'B'], $this->getTitles($nextGroupEvent->getNextSongs()));
++            $this->assertGroupOrigin($fixture['group'], $nextGroupEvent->getNextSongs());
+         } finally {
+             $this->harness->cleanUp();
+         }
+     }
+ 
+-    /** @return list<string|null> */
+-    private function selectTitles(Station $station, int $count): array
++    public function testGroupOriginIsRecordedForEverySupportedRotationType(): void
+     {
+-        $titles = [];
+-        $time = CarbonImmutable::parse('2026-08-09 10:00:00', 'UTC');
++        foreach (
++            [
++                PlaylistTypes::Standard,
++                PlaylistTypes::OncePerXSongs,
++                PlaylistTypes::OncePerXMinutes,
++                PlaylistTypes::OncePerHour,
++            ] as $type
++        ) {
++            $fixture = $this->harness->createSequentialGroup(
++                [
++                    'A' => ['A'],
++                    'B' => ['B'],
++                ],
++                ['A', 'B'],
++            );
++            $fixture['group']->type = $type;
++            $fixture['group']->play_per_hour_minute = 0;
++
++            try {
++                $event = $this->calculateNextSong($fixture['station']);
+ 
+-        for ($i = 0; $i < $count; $i++) {
+-            $event = $this->harness->calculateNextSong($station, $time->addMinutes($i * 3));
+-            self::assertCount(1, $event->getNextSongs());
+-            $titles[] = $event->getNextSongs()[0]->media?->title;
++                self::assertSame(['A', 'B'], $this->getTitles($event->getNextSongs()));
++                $this->assertGroupOrigin($fixture['group'], $event->getNextSongs());
++            } finally {
++                $this->harness->cleanUp();
++            }
+         }
++    }
++
++    private function calculateNextSong(
++        Station $station,
++        ?CarbonImmutable $time = null,
++    ): BuildQueue {
++        $time ??= CarbonImmutable::parse('2026-08-09 10:00:00', 'UTC');
+ 
+-        return $titles;
++        return $this->harness->calculateNextSong($station, $time);
++    }
++
++    /**
++     * @param list<StationQueue> $queueEntries
++     * @return list<string|null>
++     */
++    private function getTitles(array $queueEntries): array
++    {
++        return array_map(
++            static fn(StationQueue $queueEntry): ?string => $queueEntry->media?->title,
++            $queueEntries,
++        );
++    }
++
++    /**
++     * @param list<StationQueue> $queueEntries
++     */
++    private function assertGroupOrigin(StationPlaylist $group, array $queueEntries): void
++    {
++        foreach ($queueEntries as $queueEntry) {
++            self::assertSame($group, $queueEntry->group_playlist);
++        }
+     }
+ }
+diff --git a/tests/Unit/StationPlaylistTest.php b/tests/Unit/StationPlaylistTest.php
+index f15d489..c79c390 100644
+--- a/tests/Unit/StationPlaylistTest.php
++++ b/tests/Unit/StationPlaylistTest.php
+@@ -4,6 +4,7 @@ declare(strict_types=1);
+ 
+ namespace Unit;
+ 
++use App\Entity\Enums\PlaylistSources;
+ use App\Entity\Enums\PlaylistTypes;
+ use App\Entity\Station;
+ use App\Entity\StationPlaylist;
+@@ -21,6 +22,16 @@ class StationPlaylistTest extends Unit
+ 
+     protected Scheduler $scheduler;
+ 
++    public function testGroupSourcePreservesAutoDjRotationType(): void
++    {
++        $playlist = new StationPlaylist(new Station());
++        $playlist->type = PlaylistTypes::OncePerXSongs;
++
++        $playlist->source = PlaylistSources::Group;
++
++        self::assertSame(PlaylistTypes::OncePerXSongs, $playlist->type);
++    }
++
+     protected function _inject(Module $testsModule): void
+     {
+         $di = $testsModule->container;
+@@ -92,36 +103,30 @@ class StationPlaylistTest extends Unit
+         self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay));
+     }
+ 
+-    public function testOncePerHourPlaylist()
++    public function testOncePerHourPlaylistTracksItsTargetOccurrence(): void
+     {
+         $station = $this->makeStation();
+ 
+         $playlist = new StationPlaylist($station);
+         $playlist->name = 'Test Playlist';
+         $playlist->type = PlaylistTypes::OncePerHour;
+-        $playlist->play_per_hour_minute = 50;
++        $playlist->play_per_hour_minute = 25;
+ 
+         $utc = new DateTimeZone('UTC');
+         $testDay = CarbonImmutable::create(2018, 1, 15, 0, 0, 0, $utc);
+ 
+-        // Playlist SHOULD try to play at 11:59 PM.
+-        $testTime = $testDay->setTime(23, 59);
+-        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testTime));
++        // A new playlist waits for its first :25 occurrence.
++        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(10, 20)));
++        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(10, 25)));
++        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(10, 42)));
+ 
+-        // Playlist SHOULD try to play at 12:04 PM.
+-        $testTime = $testDay->setTime(12, 4);
+-        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testTime));
+-
+-        // Playlist SHOULD NOT try to play at 11:49 PM.
+-        $testTime = $testDay->setTime(23, 49);
+-        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testTime));
+-
+-        // Playlist SHOULD NOT try to play at 12:06 PM.
+-        $testTime = $testDay->setTime(12, 6);
+-        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testTime));
++        // Once queued, the same occurrence cannot be selected twice.
++        $playlist->played_at = $testDay->setTime(10, 42);
++        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(11, 24)));
++        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(11, 25)));
+     }
+ 
+-    public function testOncePerHourPlaylistStrictWhenTopOfHourProtectionEnabled(): void
++    public function testOncePerHourPlaylistTracksOccurrencesWithTopOfHourProtectionEnabled(): void
+     {
+         $station = $this->makeStation();
+         $station->backend_config->top_of_hour_id_enabled = true;
+@@ -129,15 +134,21 @@ class StationPlaylistTest extends Unit
+         $playlist = new StationPlaylist($station);
+         $playlist->name = 'Hourly Promo';
+         $playlist->type = PlaylistTypes::OncePerHour;
+-        $playlist->play_per_hour_minute = 50;
++        $playlist->play_per_hour_minute = 25;
+ 
+         $utc = new DateTimeZone('UTC');
+         $testDay = CarbonImmutable::create(2018, 1, 15, 0, 0, 0, $utc);
+ 
+-        // Strict: only at :50, not within 15-minute fuzzy window.
+-        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(12, 50)));
+-        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(12, 4)));
+-        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(23, 59)));
++        $playlist->played_at = $testDay->setTime(11, 30);
++
++        // TOPH only owns :00. The :25 occurrence stays due until queued.
++        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(12, 24)));
++        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(12, 25)));
++        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(12, 42)));
++
++        $playlist->played_at = $testDay->setTime(12, 42);
++        self::assertFalse($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(13, 24)));
++        self::assertTrue($this->scheduler->shouldPlaylistPlayNow($playlist, $testDay->setTime(13, 25)));
+     }
+ 
+     public function testOncePerHourAtTopOfHourSuppressedWhenProtectionEnabled(): void
+-- 
+2.34.1
+

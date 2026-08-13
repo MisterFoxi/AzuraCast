@@ -1,0 +1,1054 @@
+From f56539f68f4bffa256e792073139bf331e79e48a Mon Sep 17 00:00:00 2001
+From: Johannes Nagy <johannes.nagy@icloud.com>
+Date: Thu, 13 Aug 2026 06:51:41 +0000
+Subject: [PATCH] Create playlists from media genre tags
+
+---
+ .../Api/Stations/Files/BatchAction.php        |  43 ++-
+ .../StationPlaylistMediaRepository.php        |  36 +++
+ backend/src/Media/GenrePlaylistFactory.php    |  26 ++
+ backend/src/Media/GenrePlaylistPlanner.php    | 141 ++++++++++
+ backend/src/Media/GenrePlaylistService.php    | 158 +++++++++++
+ .../Stations/Media/GenrePlaylistsModal.vue    | 252 ++++++++++++++++++
+ .../Stations/Media/MediaToolbar.vue           |  28 ++
+ tests/PureUnit/GenrePlaylistFactoryTest.php   |  28 ++
+ tests/PureUnit/GenrePlaylistPlannerTest.php   |  95 +++++++
+ .../StationPlaylistMediaRepositoryTest.php    | 102 +++++++
+ 10 files changed, 908 insertions(+), 1 deletion(-)
+ create mode 100644 backend/src/Media/GenrePlaylistFactory.php
+ create mode 100644 backend/src/Media/GenrePlaylistPlanner.php
+ create mode 100644 backend/src/Media/GenrePlaylistService.php
+ create mode 100644 frontend/components/Stations/Media/GenrePlaylistsModal.vue
+ create mode 100644 tests/PureUnit/GenrePlaylistFactoryTest.php
+ create mode 100644 tests/PureUnit/GenrePlaylistPlannerTest.php
+ create mode 100644 tests/PureUnit/StationPlaylistMediaRepositoryTest.php
+
+diff --git a/backend/src/Controller/Api/Stations/Files/BatchAction.php b/backend/src/Controller/Api/Stations/Files/BatchAction.php
+index 32c8e95..faaef3a 100644
+--- a/backend/src/Controller/Api/Stations/Files/BatchAction.php
++++ b/backend/src/Controller/Api/Stations/Files/BatchAction.php
+@@ -30,6 +30,7 @@ use App\Flysystem\StationFilesystems;
+ use App\Http\Response;
+ use App\Http\ServerRequest;
+ use App\Media\BatchUtilities;
++use App\Media\GenrePlaylistService;
+ use App\Message;
+ use App\OpenApi;
+ use App\Radio\Adapters;
+@@ -84,7 +85,8 @@ final class BatchAction implements SingleActionInterface
+         private readonly StationPlaylistFolderRepository $playlistFolderRepo,
+         private readonly StationQueueRepository $queueRepo,
+         private readonly StationFilesystems $stationFilesystems,
+-        private readonly MediaListCache $mediaListCache
++        private readonly MediaListCache $mediaListCache,
++        private readonly GenrePlaylistService $genrePlaylistService
+     ) {
+     }
+ 
+@@ -107,6 +109,13 @@ final class BatchAction implements SingleActionInterface
+             'reprocess' => $this->doReprocess($request, $station, $storageLocation, $fsMedia),
+             'clear-extra' => $this->doClearExtra($request, $station, $storageLocation, $fsMedia),
+             'classify' => $this->doClassify($request, $station, $storageLocation, $fsMedia),
++            'genre-playlists-preview' => $this->doGenrePlaylistsPreview(
++                $request,
++                $station,
++                $storageLocation,
++                $fsMedia
++            ),
++            'genre-playlists' => $this->doGenrePlaylists($request, $station, $storageLocation, $fsMedia),
+             default => throw new InvalidArgumentException('Invalid batch action specified.')
+         };
+ 
+@@ -582,6 +591,38 @@ final class BatchAction implements SingleActionInterface
+         return $result;
+     }
+ 
++    private function doGenrePlaylistsPreview(
++        ServerRequest $request,
++        Station $station,
++        StorageLocation $storageLocation,
++        ExtendedFilesystemInterface $fs
++    ): MediaBatchResult {
++        $result = $this->parseRequest($request, $fs, true);
++        $result->responseRecord = $this->genrePlaylistService->preview(
++            $station,
++            $this->batchUtilities->iterateMedia($storageLocation, $result->files)
++        );
++
++        return $result;
++    }
++
++    private function doGenrePlaylists(
++        ServerRequest $request,
++        Station $station,
++        StorageLocation $storageLocation,
++        ExtendedFilesystemInterface $fs
++    ): MediaBatchResult {
++        $result = $this->parseRequest($request, $fs, true);
++        $result->responseRecord = $this->genrePlaylistService->execute(
++            $station,
++            $this->batchUtilities->iterateMedia($storageLocation, $result->files)
++        );
++
++        $this->mediaListCache->clearCache($storageLocation);
++
++        return $result;
++    }
++
+     private function parseRequest(
+         ServerRequest $request,
+         ExtendedFilesystemInterface $fs,
+diff --git a/backend/src/Entity/Repository/StationPlaylistMediaRepository.php b/backend/src/Entity/Repository/StationPlaylistMediaRepository.php
+index 938361e..fe27354 100644
+--- a/backend/src/Entity/Repository/StationPlaylistMediaRepository.php
++++ b/backend/src/Entity/Repository/StationPlaylistMediaRepository.php
+@@ -174,6 +174,42 @@ final class StationPlaylistMediaRepository extends Repository
+         return $weight;
+     }
+ 
++    /**
++     * Add a direct media membership only when one does not already exist.
++     *
++     * Unlike addMediaToPlaylist(), this is idempotent for sequential playlists.
++     * Folder-derived memberships do not count as direct memberships.
++     */
++    public function addMediaToPlaylistIfMissing(
++        StationMedia $media,
++        StationPlaylist $playlist
++    ): bool {
++        if (PlaylistSources::Songs !== $playlist->source) {
++            throw new RuntimeException('This playlist is not meant to contain songs!');
++        }
++
++        $existingRecord = $this->repository->findOneBy([
++            'media' => $media,
++            'playlist' => $playlist,
++            'folder' => null,
++        ]);
++
++        if ($existingRecord instanceof StationPlaylistMedia) {
++            return false;
++        }
++
++        $weight = $this->getHighestSongWeight($playlist) + 1;
++        if (PlaylistOrders::Sequential !== $playlist->order) {
++            $weight = random_int(1, $weight);
++        }
++
++        $record = new StationPlaylistMedia($playlist, $media);
++        $record->weight = $weight;
++        $this->em->persist($record);
++
++        return true;
++    }
++
+     public function getHighestSongWeight(StationPlaylist $playlist): int
+     {
+         try {
+diff --git a/backend/src/Media/GenrePlaylistFactory.php b/backend/src/Media/GenrePlaylistFactory.php
+new file mode 100644
+index 0000000..ba15cb9
+--- /dev/null
++++ b/backend/src/Media/GenrePlaylistFactory.php
+@@ -0,0 +1,26 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Media;
++
++use App\Entity\Enums\PlaylistOrders;
++use App\Entity\Enums\PlaylistSources;
++use App\Entity\Enums\PlaylistTypes;
++use App\Entity\Station;
++use App\Entity\StationPlaylist;
++
++final class GenrePlaylistFactory
++{
++    public function create(Station $station, string $name): StationPlaylist
++    {
++        $playlist = new StationPlaylist($station);
++        $playlist->name = $name;
++        $playlist->source = PlaylistSources::Songs;
++        $playlist->type = PlaylistTypes::Standard;
++        $playlist->order = PlaylistOrders::Shuffle;
++        $playlist->is_enabled = false;
++
++        return $playlist;
++    }
++}
+diff --git a/backend/src/Media/GenrePlaylistPlanner.php b/backend/src/Media/GenrePlaylistPlanner.php
+new file mode 100644
+index 0000000..11b84c0
+--- /dev/null
++++ b/backend/src/Media/GenrePlaylistPlanner.php
+@@ -0,0 +1,141 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Media;
++
++use App\Entity\Enums\PlaylistSources;
++
++final class GenrePlaylistPlanner
++{
++    /**
++     * @param array<int, array{id: int, path: string, genre: ?string}> $media
++     * @param array<int, array{id: int, name: string, source: PlaylistSources}> $playlists
++     * @return array{
++     *     entries: array<int, array{
++     *         name: string,
++     *         media_ids: int[],
++     *         files: string[],
++     *         media_count: int,
++     *         status: 'create'|'reuse'|'conflict',
++     *         playlist_id: ?int,
++     *         conflict_source: ?string
++     *     }>,
++     *     skipped_files: string[],
++     *     skipped_count: int
++     * }
++     */
++    public function plan(array $media, array $playlists): array
++    {
++        $groupedMedia = [];
++        $skippedFiles = [];
++
++        foreach ($media as $item) {
++            $genre = self::cleanGenre($item['genre']);
++            if (null === $genre) {
++                $skippedFiles[] = $item['path'];
++                continue;
++            }
++
++            $genreKey = self::normalizeName($genre);
++            if (!isset($groupedMedia[$genreKey])) {
++                $groupedMedia[$genreKey] = [
++                    'name' => self::toPlaylistName($genre),
++                    'media_ids' => [],
++                    'files' => [],
++                ];
++            }
++
++            $groupedMedia[$genreKey]['media_ids'][] = $item['id'];
++            $groupedMedia[$genreKey]['files'][] = $item['path'];
++        }
++
++        $existingByName = [];
++        foreach ($playlists as $playlist) {
++            $existingByName[self::normalizeName(self::toPlaylistName($playlist['name']))][] = $playlist;
++        }
++
++        $entriesByPlaylistName = [];
++        foreach ($groupedMedia as $group) {
++            $playlistNameKey = self::normalizeName($group['name']);
++
++            if (isset($entriesByPlaylistName[$playlistNameKey])) {
++                $entriesByPlaylistName[$playlistNameKey]['media_ids'] = array_merge(
++                    $entriesByPlaylistName[$playlistNameKey]['media_ids'],
++                    $group['media_ids']
++                );
++                $entriesByPlaylistName[$playlistNameKey]['files'] = array_merge(
++                    $entriesByPlaylistName[$playlistNameKey]['files'],
++                    $group['files']
++                );
++                $entriesByPlaylistName[$playlistNameKey]['media_count'] = count(
++                    $entriesByPlaylistName[$playlistNameKey]['media_ids']
++                );
++                continue;
++            }
++
++            $matchingPlaylists = $existingByName[$playlistNameKey] ?? [];
++            $incompatiblePlaylist = null;
++            $compatiblePlaylist = null;
++
++            foreach ($matchingPlaylists as $playlist) {
++                if (PlaylistSources::Songs === $playlist['source']) {
++                    $compatiblePlaylist ??= $playlist;
++                } else {
++                    $incompatiblePlaylist ??= $playlist;
++                }
++            }
++
++            if (null !== $incompatiblePlaylist) {
++                $status = 'conflict';
++                $playlistId = null;
++                $conflictSource = $incompatiblePlaylist['source']->value;
++            } elseif (null !== $compatiblePlaylist) {
++                $status = 'reuse';
++                $playlistId = $compatiblePlaylist['id'];
++                $conflictSource = null;
++            } else {
++                $status = 'create';
++                $playlistId = null;
++                $conflictSource = null;
++            }
++
++            $entriesByPlaylistName[$playlistNameKey] = [
++                'name' => $group['name'],
++                'media_ids' => $group['media_ids'],
++                'files' => $group['files'],
++                'media_count' => count($group['media_ids']),
++                'status' => $status,
++                'playlist_id' => $playlistId,
++                'conflict_source' => $conflictSource,
++            ];
++        }
++
++        return [
++            'entries' => array_values($entriesByPlaylistName),
++            'skipped_files' => $skippedFiles,
++            'skipped_count' => count($skippedFiles),
++        ];
++    }
++
++    private static function cleanGenre(?string $genre): ?string
++    {
++        if (null === $genre) {
++            return null;
++        }
++
++        $cleaned = preg_replace('/\s+/u', ' ', trim($genre));
++        return (null === $cleaned || '' === $cleaned) ? null : $cleaned;
++    }
++
++    private static function toPlaylistName(string $name): string
++    {
++        return mb_substr(str_replace(';', ':', $name), 0, 200, 'UTF-8');
++    }
++
++    private static function normalizeName(string $name): string
++    {
++        $cleaned = preg_replace('/\s+/u', ' ', trim($name)) ?? '';
++        return mb_strtolower($cleaned, 'UTF-8');
++    }
++}
+diff --git a/backend/src/Media/GenrePlaylistService.php b/backend/src/Media/GenrePlaylistService.php
+new file mode 100644
+index 0000000..cae9d41
+--- /dev/null
++++ b/backend/src/Media/GenrePlaylistService.php
+@@ -0,0 +1,158 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Media;
++
++use App\Container\EntityManagerAwareTrait;
++use App\Entity\Enums\PlaylistSources;
++use App\Entity\Repository\StationPlaylistMediaRepository;
++use App\Entity\Repository\StationPlaylistRepository;
++use App\Entity\Station;
++use App\Entity\StationMedia;
++use App\Entity\StationPlaylist;
++
++final class GenrePlaylistService
++{
++    use EntityManagerAwareTrait;
++
++    public function __construct(
++        private readonly GenrePlaylistPlanner $planner,
++        private readonly GenrePlaylistFactory $playlistFactory,
++        private readonly StationPlaylistRepository $playlistRepo,
++        private readonly StationPlaylistMediaRepository $playlistMediaRepo,
++        private readonly BatchUtilities $batchUtilities
++    ) {
++    }
++
++    /**
++     * @param iterable<StationMedia> $media
++     * @return array<string, mixed>
++     */
++    public function preview(Station $station, iterable $media): array
++    {
++        $mediaRecords = $this->collectMedia($media);
++        $station = $this->em->refetch($station);
++
++        return $this->planner->plan(
++            $mediaRecords,
++            $this->describePlaylists($this->playlistRepo->getAllForStation($station))
++        );
++    }
++
++    /**
++     * @param iterable<StationMedia> $media
++     * @return array<string, mixed>
++     */
++    public function execute(Station $station, iterable $media): array
++    {
++        $mediaRecords = $this->collectMedia($media);
++        $station = $this->em->refetch($station);
++
++        $plan = $this->planner->plan(
++            $mediaRecords,
++            $this->describePlaylists($this->playlistRepo->getAllForStation($station))
++        );
++
++        $created = 0;
++        $reused = 0;
++        $added = 0;
++        $alreadyPresent = 0;
++        $affectedPlaylistIds = [];
++
++        foreach ($plan['entries'] as &$entry) {
++            if ('conflict' === $entry['status']) {
++                continue;
++            }
++
++            if ('create' === $entry['status']) {
++                $playlist = $this->playlistFactory->create($station, $entry['name']);
++
++                $this->em->persist($playlist);
++                $this->em->flush();
++
++                $entry['playlist_id'] = $playlist->id;
++                ++$created;
++            } else {
++                ++$reused;
++            }
++
++            $playlistId = $entry['playlist_id'];
++            if (null === $playlistId) {
++                continue;
++            }
++
++            foreach ($entry['media_ids'] as $mediaId) {
++                $mediaEntity = $this->em->find(StationMedia::class, $mediaId);
++                $playlistEntity = $this->em->find(StationPlaylist::class, $playlistId);
++
++                if (!$mediaEntity instanceof StationMedia || !$playlistEntity instanceof StationPlaylist) {
++                    continue;
++                }
++
++                if ($this->playlistMediaRepo->addMediaToPlaylistIfMissing($mediaEntity, $playlistEntity)) {
++                    ++$added;
++                    $affectedPlaylistIds[$playlistId] = $playlistId;
++                } else {
++                    ++$alreadyPresent;
++                }
++            }
++        }
++        unset($entry);
++
++        $this->em->flush();
++        $this->batchUtilities->writePlaylistChanges($affectedPlaylistIds);
++
++        $conflicted = count(
++            array_filter($plan['entries'], static fn(array $entry): bool => 'conflict' === $entry['status'])
++        );
++
++        return [
++            ...$plan,
++            'summary' => [
++                'created' => $created,
++                'reused' => $reused,
++                'added' => $added,
++                'already_present' => $alreadyPresent,
++                'skipped' => $plan['skipped_count'],
++                'conflicted' => $conflicted,
++            ],
++            'affected_playlist_ids' => array_values($affectedPlaylistIds),
++        ];
++    }
++
++    /**
++     * @param iterable<StationMedia> $media
++     * @return array<int, array{id: int, path: string, genre: ?string}>
++     */
++    private function collectMedia(iterable $media): array
++    {
++        $records = [];
++
++        foreach ($media as $item) {
++            $records[$item->id] = [
++                'id' => $item->id,
++                'path' => $item->path,
++                'genre' => $item->genre,
++            ];
++        }
++
++        return array_values($records);
++    }
++
++    /**
++     * @param StationPlaylist[] $playlists
++     * @return array<int, array{id: int, name: string, source: PlaylistSources}>
++     */
++    private function describePlaylists(array $playlists): array
++    {
++        return array_map(
++            static fn(StationPlaylist $playlist): array => [
++                'id' => $playlist->id,
++                'name' => $playlist->name,
++                'source' => $playlist->source,
++            ],
++            $playlists
++        );
++    }
++}
+diff --git a/frontend/components/Stations/Media/GenrePlaylistsModal.vue b/frontend/components/Stations/Media/GenrePlaylistsModal.vue
+new file mode 100644
+index 0000000..b989279
+--- /dev/null
++++ b/frontend/components/Stations/Media/GenrePlaylistsModal.vue
+@@ -0,0 +1,252 @@
++<template>
++    <modal
++        id="genre_playlists"
++        ref="$modal"
++        size="lg"
++        centered
++        :busy="loading"
++        :title="$gettext('Create Playlists from Genre')"
++        @hidden="reset"
++    >
++        <template v-if="preview">
++            <div
++                v-if="preview.entries.length === 0"
++                class="alert alert-info"
++            >
++                {{ $gettext('No selected MP3 files contain a genre.') }}
++            </div>
++
++            <div
++                v-else
++                class="table-responsive"
++            >
++                <table class="table table-striped align-middle mb-0">
++                    <thead>
++                        <tr>
++                            <th>{{ $gettext('Playlist') }}</th>
++                            <th>{{ $gettext('Files') }}</th>
++                            <th>{{ $gettext('Action') }}</th>
++                        </tr>
++                    </thead>
++                    <tbody>
++                        <tr
++                            v-for="entry in preview.entries"
++                            :key="entry.name"
++                        >
++                            <td>{{ entry.name }}</td>
++                            <td>{{ entry.media_count }}</td>
++                            <td>
++                                <span
++                                    v-if="entry.status === 'create'"
++                                    class="badge text-bg-success"
++                                >
++                                    {{ $gettext('Create') }}
++                                </span>
++                                <span
++                                    v-else-if="entry.status === 'reuse'"
++                                    class="badge text-bg-info"
++                                >
++                                    {{ $gettext('Reuse') }}
++                                </span>
++                                <span
++                                    v-else
++                                    class="badge text-bg-danger"
++                                >
++                                    {{ conflictLabel(entry) }}
++                                </span>
++                            </td>
++                        </tr>
++                    </tbody>
++                </table>
++            </div>
++
++            <details
++                v-if="preview.skipped_count > 0"
++                class="mt-3"
++            >
++                <summary class="text-muted">
++                    {{ $gettext(
++                        '%{count} file(s) without a genre will be skipped.',
++                        {count: String(preview.skipped_count)}
++                    ) }}
++                </summary>
++                <ul class="mb-0 mt-2">
++                    <li
++                        v-for="file in preview.skipped_files"
++                        :key="file"
++                    >
++                        {{ file }}
++                    </li>
++                </ul>
++            </details>
++        </template>
++
++        <template #modal-footer>
++            <button
++                type="button"
++                class="btn btn-secondary"
++                :disabled="loading"
++                @click="hide"
++            >
++                {{ $gettext('Cancel') }}
++            </button>
++            <button
++                type="button"
++                class="btn btn-primary"
++                :disabled="loading || actionableCount === 0"
++                @click="execute"
++            >
++                {{ $gettext('Create and Populate Playlists') }}
++            </button>
++        </template>
++    </modal>
++</template>
++
++<script setup lang="ts">
++import {computed, ref, useTemplateRef} from "vue";
++import Modal from "~/components/Common/Modal.vue";
++import {useHasModal} from "~/functions/useHasModal.ts";
++import {useTranslate} from "~/vendor/gettext.ts";
++import {useAxios} from "~/vendor/axios.ts";
++import {useNotify} from "~/components/Common/Toasts/useNotify.ts";
++import type {MediaInitialPlaylist, MediaSelectedItems} from "~/components/Stations/Media.vue";
++
++type GenrePlaylistEntry = {
++    name: string,
++    media_ids: number[],
++    files: string[],
++    media_count: number,
++    status: 'create' | 'reuse' | 'conflict',
++    playlist_id: number | null,
++    conflict_source: string | null,
++};
++
++type GenrePlaylistPreview = {
++    entries: GenrePlaylistEntry[],
++    skipped_files: string[],
++    skipped_count: number,
++};
++
++type GenrePlaylistResult = GenrePlaylistPreview & {
++    summary: {
++        created: number,
++        reused: number,
++        added: number,
++        already_present: number,
++        skipped: number,
++        conflicted: number,
++    },
++};
++
++type GenrePlaylistBatchResponse<T> = {
++    success: boolean,
++    errors: string[],
++    record: T,
++};
++
++const props = defineProps<{
++    selectedItems: MediaSelectedItems,
++    currentDirectory: string,
++    batchUrl: string,
++}>();
++
++const emit = defineEmits<{
++    (e: 'relist'): void,
++    (e: 'add-playlist', playlist: MediaInitialPlaylist): void,
++}>();
++
++const {$gettext} = useTranslate();
++const {axios} = useAxios();
++const {notifyError, notifySuccess} = useNotify();
++
++const loading = ref(false);
++const preview = ref<GenrePlaylistPreview | null>(null);
++
++const actionableCount = computed(
++    () => preview.value?.entries.filter((entry) => entry.status !== 'conflict').length ?? 0
++);
++
++const payload = (action: string) => ({
++    do: action,
++    current_directory: props.currentDirectory,
++    files: props.selectedItems.files,
++    dirs: props.selectedItems.directories,
++});
++
++const $modal = useTemplateRef('$modal');
++const {show, hide} = useHasModal($modal);
++
++const reset = () => {
++    preview.value = null;
++    loading.value = false;
++};
++
++const conflictLabel = (entry: GenrePlaylistEntry): string => {
++    return $gettext(
++        'Conflict: %{source}',
++        {source: entry.conflict_source ?? $gettext('Unknown')}
++    );
++};
++
++const open = async () => {
++    show();
++    loading.value = true;
++
++    try {
++        const {data} = await axios.put<GenrePlaylistBatchResponse<GenrePlaylistPreview>>(
++            props.batchUrl,
++            payload('genre-playlists-preview')
++        );
++        preview.value = data.record;
++    } catch {
++        notifyError($gettext('Could not preview playlists from genre.'));
++        hide();
++    } finally {
++        loading.value = false;
++    }
++};
++
++const execute = async () => {
++    loading.value = true;
++
++    try {
++        const {data} = await axios.put<GenrePlaylistBatchResponse<GenrePlaylistResult>>(
++            props.batchUrl,
++            payload('genre-playlists')
++        );
++        const result = data.record;
++
++        for (const entry of result.entries) {
++            if (entry.status === 'create' && entry.playlist_id !== null) {
++                emit('add-playlist', {
++                    id: entry.playlist_id,
++                    name: entry.name,
++                });
++            }
++        }
++
++        notifySuccess(
++            $gettext(
++                '%{created} playlist(s) created, %{reused} reused, %{added} file(s) added, %{present} already present, %{skipped} skipped, %{conflicted} conflict(s).',
++                {
++                    created: String(result.summary.created),
++                    reused: String(result.summary.reused),
++                    added: String(result.summary.added),
++                    present: String(result.summary.already_present),
++                    skipped: String(result.summary.skipped),
++                    conflicted: String(result.summary.conflicted),
++                }
++            )
++        );
++
++        hide();
++        emit('relist');
++    } catch {
++        notifyError($gettext('Could not create playlists from genre.'));
++    } finally {
++        loading.value = false;
++    }
++};
++
++defineExpose({open});
++</script>
+diff --git a/frontend/components/Stations/Media/MediaToolbar.vue b/frontend/components/Stations/Media/MediaToolbar.vue
+index 1671a6d..a22c347 100644
+--- a/frontend/components/Stations/Media/MediaToolbar.vue
++++ b/frontend/components/Stations/Media/MediaToolbar.vue
+@@ -250,6 +250,18 @@
+                                 {{ $gettext('Clear Extra Metadata') }}
+                             </button>
+                         </li>
++                        <li><hr class="dropdown-divider"></li>
++                        <li>
++                            <button
++                                type="button"
++                                class="dropdown-item"
++                                :disabled="!hasSelectedClassifyItems"
++                                :title="$gettext('Create or populate playlists from the MP3 genre of selected files')"
++                                @click="createGenrePlaylists"
++                            >
++                                {{ $gettext('Create Playlists from Genre') }}
++                            </button>
++                        </li>
+                     </ul>
+                 </div>
+             </div>
+@@ -280,6 +292,15 @@
+             </button>
+         </div>
+     </div>
++
++    <genre-playlists-modal
++        ref="$genrePlaylistsModal"
++        :selected-items="selectedItems"
++        :current-directory="currentDirectory"
++        :batch-url="batchUrl"
++        @relist="emit('relist')"
++        @add-playlist="(playlist) => emit('add-playlist', playlist)"
++    />
+ </template>
+ 
+ <script setup lang="ts">
+@@ -299,6 +320,7 @@ import IconIcFolder from "~icons/ic/baseline-folder";
+ import IconIcMoreHoriz from "~icons/ic/baseline-more-horiz";
+ import IconIcOpenWith from "~icons/ic/baseline-open-with";
+ import {formatMediaType, getMediaTypeOptions} from "~/functions/mediaTypes.ts";
++import GenrePlaylistsModal from "~/components/Stations/Media/GenrePlaylistsModal.vue";
+ 
+ const props = defineProps<{
+     currentDirectory: string,
+@@ -577,6 +599,12 @@ const moveFiles = () => {
+ const createDirectory = () => {
+     emit('create-directory');
+ }
++
++const $genrePlaylistsModal = useTemplateRef('$genrePlaylistsModal');
++
++const createGenrePlaylists = () => {
++    void $genrePlaylistsModal.value?.open();
++};
+ </script>
+ 
+ <style lang="scss" scoped>
+diff --git a/tests/PureUnit/GenrePlaylistFactoryTest.php b/tests/PureUnit/GenrePlaylistFactoryTest.php
+new file mode 100644
+index 0000000..6d8486b
+--- /dev/null
++++ b/tests/PureUnit/GenrePlaylistFactoryTest.php
+@@ -0,0 +1,28 @@
++<?php
++
++declare(strict_types=1);
++
++namespace PureUnit;
++
++use App\Entity\Enums\PlaylistOrders;
++use App\Entity\Enums\PlaylistSources;
++use App\Entity\Enums\PlaylistTypes;
++use App\Entity\Station;
++use App\Media\GenrePlaylistFactory;
++use PHPUnit\Framework\TestCase;
++
++final class GenrePlaylistFactoryTest extends TestCase
++{
++    public function testCreatesDisabledShuffleSongsPlaylist(): void
++    {
++        $station = new Station();
++        $playlist = (new GenrePlaylistFactory())->create($station, 'Rock');
++
++        self::assertSame($station, $playlist->station);
++        self::assertSame('Rock', $playlist->name);
++        self::assertSame(PlaylistSources::Songs, $playlist->source);
++        self::assertSame(PlaylistTypes::Standard, $playlist->type);
++        self::assertSame(PlaylistOrders::Shuffle, $playlist->order);
++        self::assertFalse($playlist->is_enabled);
++    }
++}
+diff --git a/tests/PureUnit/GenrePlaylistPlannerTest.php b/tests/PureUnit/GenrePlaylistPlannerTest.php
+new file mode 100644
+index 0000000..218d637
+--- /dev/null
++++ b/tests/PureUnit/GenrePlaylistPlannerTest.php
+@@ -0,0 +1,95 @@
++<?php
++
++declare(strict_types=1);
++
++namespace PureUnit;
++
++use App\Entity\Enums\PlaylistSources;
++use App\Media\GenrePlaylistPlanner;
++use PHPUnit\Framework\TestCase;
++
++final class GenrePlaylistPlannerTest extends TestCase
++{
++    public function testGroupsOneScalarGenreIgnoringCaseAndWhitespace(): void
++    {
++        $plan = (new GenrePlaylistPlanner())->plan(
++            [
++                ['id' => 1, 'path' => 'one.mp3', 'genre' => ' Rock '],
++                ['id' => 2, 'path' => 'two.mp3', 'genre' => "ROCK\t"],
++            ],
++            []
++        );
++
++        self::assertCount(1, $plan['entries']);
++        self::assertSame('Rock', $plan['entries'][0]['name']);
++        self::assertSame([1, 2], $plan['entries'][0]['media_ids']);
++        self::assertSame('create', $plan['entries'][0]['status']);
++    }
++
++    public function testSkipsEmptyGenre(): void
++    {
++        $plan = (new GenrePlaylistPlanner())->plan(
++            [
++                ['id' => 1, 'path' => 'null.mp3', 'genre' => null],
++                ['id' => 2, 'path' => 'empty.mp3', 'genre' => '   '],
++            ],
++            []
++        );
++
++        self::assertSame([], $plan['entries']);
++        self::assertSame(2, $plan['skipped_count']);
++        self::assertSame(['null.mp3', 'empty.mp3'], $plan['skipped_files']);
++    }
++
++    public function testCreatesOneEntryForEachDistinctGenre(): void
++    {
++        $plan = (new GenrePlaylistPlanner())->plan(
++            [
++                ['id' => 1, 'path' => 'rock.mp3', 'genre' => 'Rock'],
++                ['id' => 2, 'path' => 'jazz.mp3', 'genre' => 'Jazz'],
++            ],
++            []
++        );
++
++        self::assertSame(['Rock', 'Jazz'], array_column($plan['entries'], 'name'));
++        self::assertSame([1, 1], array_column($plan['entries'], 'media_count'));
++    }
++
++    public function testReusesCompatibleSongsPlaylist(): void
++    {
++        $plan = (new GenrePlaylistPlanner())->plan(
++            [['id' => 1, 'path' => 'song.mp3', 'genre' => 'Rock']],
++            [['id' => 10, 'name' => ' rock ', 'source' => PlaylistSources::Songs]]
++        );
++
++        self::assertSame('reuse', $plan['entries'][0]['status']);
++        self::assertSame(10, $plan['entries'][0]['playlist_id']);
++    }
++
++    public function testRejectsIncompatiblePlaylistName(): void
++    {
++        $plan = (new GenrePlaylistPlanner())->plan(
++            [['id' => 1, 'path' => 'song.mp3', 'genre' => 'Rock']],
++            [['id' => 10, 'name' => 'ROCK', 'source' => PlaylistSources::RemoteUrl]]
++        );
++
++        self::assertSame('conflict', $plan['entries'][0]['status']);
++        self::assertNull($plan['entries'][0]['playlist_id']);
++        self::assertSame(PlaylistSources::RemoteUrl->value, $plan['entries'][0]['conflict_source']);
++    }
++
++    public function testDetectsCollisionAfterPlaylistNameSanitization(): void
++    {
++        $plan = (new GenrePlaylistPlanner())->plan(
++            [
++                ['id' => 1, 'path' => 'one.mp3', 'genre' => 'Rock;Pop'],
++                ['id' => 2, 'path' => 'two.mp3', 'genre' => 'Rock:Pop'],
++            ],
++            []
++        );
++
++        self::assertCount(1, $plan['entries']);
++        self::assertSame('Rock:Pop', $plan['entries'][0]['name']);
++        self::assertSame([1, 2], $plan['entries'][0]['media_ids']);
++    }
++}
+diff --git a/tests/PureUnit/StationPlaylistMediaRepositoryTest.php b/tests/PureUnit/StationPlaylistMediaRepositoryTest.php
+new file mode 100644
+index 0000000..9f41650
+--- /dev/null
++++ b/tests/PureUnit/StationPlaylistMediaRepositoryTest.php
+@@ -0,0 +1,102 @@
++<?php
++
++declare(strict_types=1);
++
++namespace PureUnit;
++
++use App\Doctrine\ReloadableEntityManagerInterface;
++use App\Entity\Enums\PlaylistOrders;
++use App\Entity\Enums\StorageLocationAdapters;
++use App\Entity\Enums\StorageLocationTypes;
++use App\Entity\Repository\StationPlaylistMediaRepository;
++use App\Entity\Repository\StationQueueRepository;
++use App\Entity\Station;
++use App\Entity\StationMedia;
++use App\Entity\StationPlaylist;
++use App\Entity\StationPlaylistMedia;
++use App\Entity\StorageLocation;
++use Doctrine\ORM\EntityRepository;
++use Doctrine\ORM\Query;
++use PHPUnit\Framework\TestCase;
++
++final class StationPlaylistMediaRepositoryTest extends TestCase
++{
++    public function testIdempotentAddDoesNotDuplicateSequentialDirectMembership(): void
++    {
++        $station = new Station();
++        $playlist = new StationPlaylist($station);
++        $playlist->name = 'Sequential';
++        $playlist->order = PlaylistOrders::Sequential;
++
++        $storageLocation = new StorageLocation(
++            StorageLocationTypes::StationMedia,
++            StorageLocationAdapters::Local
++        );
++        $media = new StationMedia($storageLocation, 'song.mp3');
++        $existing = new StationPlaylistMedia($playlist, $media);
++
++        $objectRepository = $this->createMock(EntityRepository::class);
++        $objectRepository
++            ->expects(self::once())
++            ->method('findOneBy')
++            ->with([
++                'media' => $media,
++                'playlist' => $playlist,
++                'folder' => null,
++            ])
++            ->willReturn($existing);
++
++        $em = $this->createMock(ReloadableEntityManagerInterface::class);
++        $em->method('getRepository')->willReturn($objectRepository);
++        $em->expects(self::never())->method('persist');
++
++        $repository = new StationPlaylistMediaRepository(
++            new StationQueueRepository()
++        );
++        $repository->setEntityManager($em);
++
++        self::assertFalse($repository->addMediaToPlaylistIfMissing($media, $playlist));
++    }
++
++    public function testIdempotentAddCreatesMissingDirectMembership(): void
++    {
++        $station = new Station();
++        $playlist = new StationPlaylist($station);
++        $playlist->name = 'Sequential';
++        $playlist->order = PlaylistOrders::Sequential;
++
++        $storageLocation = new StorageLocation(
++            StorageLocationTypes::StationMedia,
++            StorageLocationAdapters::Local
++        );
++        $media = new StationMedia($storageLocation, 'song.mp3');
++
++        $objectRepository = $this->createStub(EntityRepository::class);
++        $objectRepository->method('findOneBy')->willReturn(null);
++
++        $query = $this->createMock(Query::class);
++        $query->method('setParameter')->willReturnSelf();
++        $query->method('getSingleScalarResult')->willReturn(4);
++
++        $persisted = null;
++        $em = $this->createMock(ReloadableEntityManagerInterface::class);
++        $em->method('getRepository')->willReturn($objectRepository);
++        $em->method('createQuery')->willReturn($query);
++        $em
++            ->expects(self::once())
++            ->method('persist')
++            ->willReturnCallback(static function (object $entity) use (&$persisted): void {
++                $persisted = $entity;
++            });
++
++        $repository = new StationPlaylistMediaRepository(new StationQueueRepository());
++        $repository->setEntityManager($em);
++
++        self::assertTrue($repository->addMediaToPlaylistIfMissing($media, $playlist));
++        self::assertInstanceOf(StationPlaylistMedia::class, $persisted);
++        self::assertSame($media, $persisted->media);
++        self::assertSame($playlist, $persisted->playlist);
++        self::assertNull($persisted->folder);
++        self::assertSame(5, $persisted->weight);
++    }
++}
+-- 
+2.34.1
+
