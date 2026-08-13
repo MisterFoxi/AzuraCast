@@ -31,7 +31,7 @@ final class GenrePlaylistPlanner
         $skippedFiles = [];
 
         foreach ($media as $item) {
-            $genre = self::cleanGenre($item['genre']);
+            $genre = Id3GenreCatalog::normalize($item['genre']);
             if (null === $genre) {
                 $skippedFiles[] = $item['path'];
                 continue;
@@ -116,16 +116,6 @@ final class GenrePlaylistPlanner
             'skipped_files' => $skippedFiles,
             'skipped_count' => count($skippedFiles),
         ];
-    }
-
-    private static function cleanGenre(?string $genre): ?string
-    {
-        if (null === $genre) {
-            return null;
-        }
-
-        $cleaned = preg_replace('/\s+/u', ' ', trim($genre));
-        return (null === $cleaned || '' === $cleaned) ? null : $cleaned;
     }
 
     private static function toPlaylistName(string $name): string

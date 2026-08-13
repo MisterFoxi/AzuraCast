@@ -10,6 +10,8 @@ use App\Entity\Interfaces\SongInterface;
 use App\Flysystem\StationFilesystems;
 use App\Media\Metadata;
 use App\Media\MetadataInterface;
+use App\Media\Id3GenreCatalog;
+use App\Media\MetadataTextNormalizer;
 use App\Utilities\Types;
 use Azura\Normalizer\Attributes\DeepNormalize;
 use Doctrine\Common\Collections\ArrayCollection;
@@ -48,6 +50,35 @@ final class StationMedia implements
 
     #[ORM\Column(length: 255, nullable: true)]
     public ?string $genre = null {
+        set => $this->truncateNullableString($value);
+    }
+
+    #[
+        ORM\ManyToOne,
+        ORM\JoinColumn(
+            name: 'genre_reference_id',
+            referencedColumnName: 'id',
+            nullable: true,
+            onDelete: 'SET NULL'
+        )
+    ]
+    public ?MediaGenre $genre_reference = null;
+
+    #[ORM\Column(nullable: true, insertable: false, updatable: false)]
+    public private(set) ?int $genre_reference_id = null;
+
+    #[ORM\Column(length: 255, nullable: true)]
+    public ?string $original_genre = null {
+        set => $this->truncateNullableString($value);
+    }
+
+    #[ORM\Column(length: 255, nullable: true)]
+    public ?string $original_artist = null {
+        set => $this->truncateNullableString($value);
+    }
+
+    #[ORM\Column(length: 255, nullable: true)]
+    public ?string $original_title = null {
         set => $this->truncateNullableString($value);
     }
 
@@ -233,7 +264,35 @@ final class StationMedia implements
         }
 
         $this->extra_metadata = $metadata->getExtraTags();
+        $this->normalizeMetadataFields();
         $this->updateMetaFields();
+    }
+
+    public function normalizeMetadataFields(): void
+    {
+        $rawArtist = $this->artist;
+        $normalizedArtist = MetadataTextNormalizer::normalize($rawArtist);
+        if ($rawArtist !== $normalizedArtist && null === $this->original_artist) {
+            $this->original_artist = $rawArtist;
+        }
+        $this->artist = $normalizedArtist;
+
+        $rawTitle = $this->title;
+        $normalizedTitle = MetadataTextNormalizer::normalize($rawTitle);
+        if ($rawTitle !== $normalizedTitle && null === $this->original_title) {
+            $this->original_title = $rawTitle;
+        }
+        $this->title = $normalizedTitle;
+
+        $rawGenre = $this->genre;
+        $normalizedGenre = Id3GenreCatalog::normalize($rawGenre);
+        if ($rawGenre !== $normalizedGenre && null === $this->original_genre) {
+            $this->original_genre = $rawGenre;
+        }
+        $this->genre = $normalizedGenre;
+
+        // Station media does not expose a separately editable text field; rebuild it from normalized tags.
+        $this->text = null;
     }
 
     public function toMetadata(): MetadataInterface

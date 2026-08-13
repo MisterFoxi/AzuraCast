@@ -29,7 +29,67 @@
                 class="col-md-6"
                 :field="r$.genre"
                 :label="$gettext('Song Genre')"
-            />
+            >
+                <template #default="{id, model, inputAttrs, fieldClass}">
+                    <div
+                        v-if="!genreListMode"
+                        class="input-group"
+                    >
+                        <input
+                            :id="id"
+                            v-model="model.$model"
+                            v-bind="inputAttrs"
+                            type="text"
+                            class="form-control"
+                            :class="fieldClass"
+                        >
+                        <button
+                            class="btn btn-outline-secondary"
+                            type="button"
+                            @click="genreFilter = String(model.$model ?? ''); genreListMode = true"
+                        >
+                            {{ $gettext('List') }}
+                        </button>
+                    </div>
+                    <div v-else>
+                        <div class="input-group mb-2">
+                            <input
+                                v-model="genreFilter"
+                                type="search"
+                                class="form-control"
+                                :placeholder="$gettext('Type the first characters of the genre')"
+                            >
+                            <button
+                                class="btn btn-outline-secondary"
+                                type="button"
+                                @click="genreListMode = false"
+                            >
+                                {{ $gettext('Entry') }}
+                            </button>
+                        </div>
+                        <div
+                            class="list-group overflow-auto"
+                            style="max-height: 20rem"
+                        >
+                            <span
+                                v-if="filteredGenres.length === 0"
+                                class="list-group-item text-muted"
+                            >
+                                {{ $gettext('No matching genre') }}
+                            </span>
+                            <button
+                                v-for="genre in filteredGenres"
+                                :key="genre.id"
+                                type="button"
+                                class="list-group-item list-group-item-action py-1"
+                                @click="model.$model = genre.name; genreListMode = false"
+                            >
+                                {{ genre.name }}
+                            </button>
+                        </div>
+                    </div>
+                </template>
+            </form-group-field>
 
             <form-group-field
                 id="edit_form_album"
@@ -196,9 +256,21 @@ const tabClass = useFormTabClass(computed(() => r$.value.$groups.basicInfoTab));
 
 const {getStationApiUrl} = useApiRouter();
 const categoriesUrl = getStationApiUrl('/media-categories');
+const genresUrl = getStationApiUrl('/media-genres');
 const {axios} = useAxios();
 
 const categories = ref<{id: number; name: string}[]>([]);
+const genres = ref<{id: number; id3_id: number | null; name: string; is_custom: boolean}[]>([]);
+const genreListMode = ref(false);
+const genreFilter = ref('');
+const filteredGenres = computed(() => {
+    const prefix = genreFilter.value.trim().toLocaleLowerCase();
+    if (prefix === '') {
+        return genres.value;
+    }
+
+    return genres.value.filter((genre) => genre.name.toLocaleLowerCase().startsWith(prefix));
+});
 
 const dayOptions = [
     {value: 1, text: $gettext('Monday')},
@@ -249,11 +321,16 @@ const allowedEndTimeDisplay = computed<number | null>({
 });
 
 onMounted(async () => {
-    try {
-        const resp = await axios.get(categoriesUrl.value);
-        categories.value = resp.data?.rows ?? resp.data ?? [];
-    } catch {
-        categories.value = [];
-    }
+    const [categoriesResult, genresResult] = await Promise.allSettled([
+        axios.get(categoriesUrl.value),
+        axios.get(genresUrl.value),
+    ]);
+
+    categories.value = categoriesResult.status === 'fulfilled'
+        ? categoriesResult.value.data?.rows ?? categoriesResult.value.data ?? []
+        : [];
+    genres.value = genresResult.status === 'fulfilled'
+        ? genresResult.value.data?.rows ?? genresResult.value.data ?? []
+        : [];
 });
 </script>

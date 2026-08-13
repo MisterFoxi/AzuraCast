@@ -59,25 +59,61 @@
                 </option>
             </select>
 
-            <input
-                id="bulk_media_genre"
-                v-model="bulkGenre"
-                type="text"
-                class="form-control form-control-sm bulk-classify-select"
-                :disabled="!hasSelectedClassifyItems || classifyPending"
-                :title="$gettext('Set genre on selected files')"
-                :placeholder="$gettext('Set genre…')"
-                @keyup.enter="onBulkGenreApply"
-            >
-
-            <button
-                type="button"
-                class="btn btn-sm btn-primary"
-                :disabled="!hasSelectedClassifyItems || classifyPending || bulkGenre.trim() === ''"
-                @click="onBulkGenreApply"
-            >
-                {{ $gettext('Apply Genre') }}
-            </button>
+            <div class="dropdown allow-focus">
+                <button
+                    class="btn btn-sm btn-primary dropdown-toggle"
+                    type="button"
+                    data-bs-toggle="dropdown"
+                    data-bs-auto-close="outside"
+                    aria-expanded="false"
+                    :disabled="!hasSelectedClassifyItems || classifyPending"
+                >
+                    {{ $gettext('Set Genre…') }}
+                </button>
+                <div
+                    class="dropdown-menu p-2"
+                    style="width: 20rem"
+                >
+                    <div class="input-group input-group-sm mb-2">
+                        <input
+                            id="bulk_media_genre"
+                            v-model="bulkGenre"
+                            type="search"
+                            class="form-control"
+                            :placeholder="$gettext('Type the first characters or a new genre')"
+                            @keyup.enter="onBulkGenreApply"
+                        >
+                        <button
+                            type="button"
+                            class="btn btn-primary"
+                            :disabled="bulkGenre.trim() === '' || classifyPending"
+                            @click="onBulkGenreApply"
+                        >
+                            {{ $gettext('Apply') }}
+                        </button>
+                    </div>
+                    <div
+                        class="list-group overflow-auto"
+                        style="max-height: 18rem"
+                    >
+                        <span
+                            v-if="filteredBulkGenres.length === 0"
+                            class="list-group-item text-muted"
+                        >
+                            {{ $gettext('No matching genre; use Apply to create it.') }}
+                        </span>
+                        <button
+                            v-for="genre in filteredBulkGenres"
+                            :key="genre.id"
+                            type="button"
+                            class="list-group-item list-group-item-action py-1"
+                            @click="onBulkGenreSelect(genre.name)"
+                        >
+                            {{ genre.name }}
+                        </button>
+                    </div>
+                </div>
+            </div>
 
             <div
                 class="btn-group btn-group-sm dropdown allow-focus"
@@ -329,6 +365,7 @@ const props = defineProps<{
     batchUrl: string,
     supportsImmediateQueue: boolean,
     mediaCategories?: {id: number; name: string}[],
+    mediaGenres?: {id: number; id3_id: number | null; name: string; is_custom: boolean}[],
 }>();
 
 const emit = defineEmits<{
@@ -351,6 +388,7 @@ const hasSelectedClassifyItems = computed(
 );
 
 const mediaCategories = computed(() => props.mediaCategories ?? []);
+const mediaGenres = computed(() => props.mediaGenres ?? []);
 const mediaTypeOptions = computed(() =>
     getMediaTypeOptions($gettext).map((opt) => ({
         ...opt,
@@ -360,6 +398,14 @@ const mediaTypeOptions = computed(() =>
 
 const classifyPending = ref(false);
 const bulkGenre = ref('');
+const filteredBulkGenres = computed(() => {
+    const prefix = bulkGenre.value.trim().toLocaleLowerCase();
+    if (prefix === '') {
+        return mediaGenres.value;
+    }
+
+    return mediaGenres.value.filter((genre) => genre.name.toLocaleLowerCase().startsWith(prefix));
+});
 
 const checkedPlaylists = ref<(number | string)[]>([]);
 const newPlaylist = ref('');
@@ -486,6 +532,11 @@ const onBulkGenreApply = async () => {
 
     await applyClassify({genre});
     bulkGenre.value = '';
+};
+
+const onBulkGenreSelect = async (genre: string) => {
+    bulkGenre.value = genre;
+    await onBulkGenreApply();
 };
 
 const doImmediateQueue = () => {

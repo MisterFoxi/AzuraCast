@@ -19,6 +19,7 @@ use App\Exception\ValidationException;
 use App\Http\Response;
 use App\Http\ServerRequest;
 use App\OpenApi;
+use App\Media\MediaGenreResolver;
 use App\Service\Flow;
 use App\Utilities\Types;
 use League\Csv\Reader;
@@ -85,6 +86,7 @@ final class UploadAction implements SingleActionInterface
         private readonly StationPlaylistMediaRepository $spmRepo,
         private readonly Serializer $serializer,
         private readonly ValidatorInterface $validator,
+        private readonly MediaGenreResolver $mediaGenreResolver,
     ) {
     }
 
@@ -320,6 +322,8 @@ final class UploadAction implements SingleActionInterface
                     AbstractNormalizer::OBJECT_TO_POPULATE => $record,
                 ]
             );
+
+            $this->mediaGenreResolver->normalizeAndResolve($record);
 
             $errors = $this->validator->validate($record);
             if (count($errors) > 0) {

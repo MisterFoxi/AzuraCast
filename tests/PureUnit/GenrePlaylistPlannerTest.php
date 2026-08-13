@@ -26,6 +26,21 @@ final class GenrePlaylistPlannerTest extends TestCase
         self::assertSame('create', $plan['entries'][0]['status']);
     }
 
+    public function testGroupsId3GenreAliasesUnderTheirCanonicalName(): void
+    {
+        $plan = (new GenrePlaylistPlanner())->plan(
+            [
+                ['id' => 1, 'path' => 'one.mp3', 'genre' => 'J-Pop'],
+                ['id' => 2, 'path' => 'two.mp3', 'genre' => 'Jpop'],
+            ],
+            []
+        );
+
+        self::assertCount(1, $plan['entries']);
+        self::assertSame('Jpop', $plan['entries'][0]['name']);
+        self::assertSame([1, 2], $plan['entries'][0]['media_ids']);
+    }
+
     public function testSkipsEmptyGenre(): void
     {
         $plan = (new GenrePlaylistPlanner())->plan(

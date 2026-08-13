@@ -550,6 +550,8 @@ final class BatchAction implements SingleActionInterface
             $oldType = $media->type;
             $oldCategory = $media->category;
             $oldGenre = $media->genre;
+            $oldGenreReference = $media->genre_reference;
+            $oldOriginalGenre = $media->original_genre;
 
             try {
                 if ($updateType) {
@@ -562,6 +564,7 @@ final class BatchAction implements SingleActionInterface
 
                 if ($updateGenre) {
                     $media->genre = $genre;
+                    $this->mediaRepo->normalizeAndResolveMetadata($media);
 
                     if (!$this->mediaRepo->writeToFile($media, $fs)) {
                         throw new RuntimeException('Could not write media metadata to file.');
@@ -573,6 +576,9 @@ final class BatchAction implements SingleActionInterface
                 $media->type = $oldType;
                 $media->category = $oldCategory;
                 $media->genre = $oldGenre;
+                $media->genre_reference = $oldGenreReference;
+                $media->original_genre = $oldOriginalGenre;
+                $media->updateMetaFields();
 
                 $result->errors[] = sprintf(
                     '%s: %s',

@@ -765,6 +765,12 @@ return static function (RouteCollectorProxy $group) {
                         }
                     )->add(new Middleware\Permissions(StationPermissions::Media, true));
 
+                    $group->get(
+                        '/media-genres',
+                        Controller\Api\Stations\MediaGenres\GetMediaGenresAction::class
+                    )->setName('api:stations:media-genres')
+                        ->add(new Middleware\Permissions(StationPermissions::Media, true));
+
                     $group->group(
                         '',
                         function (RouteCollectorProxy $group) {

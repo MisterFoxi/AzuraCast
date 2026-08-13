@@ -59,6 +59,7 @@
                 :supports-immediate-queue="supportsImmediateQueue"
                 :playlists="playlists"
                 :media-categories="mediaCategories"
+                :media-genres="mediaGenres"
                 @add-playlist="onAddPlaylist"
                 @relist="onTriggerRelist"
                 @create-directory="createDirectory"
@@ -353,6 +354,7 @@ const {$gettext} = useTranslate();
 const {formatTimestampAsDateTime} = useStationDateTimeFormatter();
 
 const mediaCategories = ref<{id: number; name: string}[]>([]);
+const mediaGenres = ref<{id: number; id3_id: number | null; name: string; is_custom: boolean}[]>([]);
 
 const {axios} = useAxios();
 
@@ -363,6 +365,15 @@ onMounted(() => {
         },
         () => {
             mediaCategories.value = [];
+        }
+    );
+
+    void axios.get(getStationApiUrl('/media-genres').value).then(
+        (resp) => {
+            mediaGenres.value = resp.data?.rows ?? resp.data ?? [];
+        },
+        () => {
+            mediaGenres.value = [];
         }
     );
 });

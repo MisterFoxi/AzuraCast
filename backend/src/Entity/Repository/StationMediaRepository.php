@@ -15,6 +15,7 @@ use App\Exception\NotFoundException;
 use App\Flysystem\ExtendedFilesystemInterface;
 use App\Media\AlbumArt;
 use App\Media\MetadataManager;
+use App\Media\MediaGenreResolver;
 use App\Media\RemoteAlbumArt;
 use App\Service\AudioWaveform;
 use Exception;
@@ -40,6 +41,7 @@ final class StationMediaRepository extends Repository
         private readonly CustomFieldRepository $customFieldRepo,
         private readonly StationPlaylistMediaRepository $spmRepo,
         private readonly StorageLocationRepository $storageLocationRepo,
+        private readonly MediaGenreResolver $mediaGenreResolver,
     ) {
     }
 
@@ -226,8 +228,15 @@ final class StationMediaRepository extends Repository
             $media->setSong($songObj);
         }
 
+        $this->mediaGenreResolver->normalizeAndResolve($media);
+
         // Generate a song_id hash based on the track
         $media->updateMetaFields();
+    }
+
+    public function normalizeAndResolveMetadata(StationMedia $media): void
+    {
+        $this->mediaGenreResolver->normalizeAndResolve($media);
     }
 
     public function updateAlbumArt(

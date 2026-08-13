@@ -360,6 +360,7 @@ final class FilesController extends AbstractStationApiCrudController
         $isRenamed = (isset($data['path']) && $data['path'] !== $oldPath);
 
         $record = $this->fromArray($data, $record);
+        $this->mediaRepo->normalizeAndResolveMetadata($record);
 
         if ($isRenamed) {
             $fsMedia->move($oldPath, $record->path);
