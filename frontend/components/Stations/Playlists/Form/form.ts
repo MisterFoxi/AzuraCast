@@ -15,6 +15,12 @@ export type StationPlaylistsRecord = Required<
         StationPlaylist,
         | 'id'
         | 'podcasts'
+        | 'is_smart_block'
+        | 'smart_block_type'
+        | 'smart_block_match_type'
+        | 'smart_block_limit'
+        | 'smart_block_limit_type'
+        | 'smart_block_sort'
     >
 > & {
     id: number | null

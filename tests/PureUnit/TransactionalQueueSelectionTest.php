@@ -44,4 +44,28 @@ final class TransactionalQueueSelectionTest extends TestCase
         );
         self::assertStringNotContainsString('$event->setNextSongs(null)', $source);
     }
+
+    public function testNowPlayingReloadsStationAfterTransactionalQueueBuild(): void
+    {
+        $source = file_get_contents(
+            __DIR__ . '/../../backend/src/Console/Command/Sync/NowPlayingPerStationCommand.php'
+        );
+
+        self::assertIsString($source);
+
+        $buildPosition = strpos($source, '$this->buildQueueTask->run($station);');
+        self::assertNotFalse($buildPosition);
+
+        $reloadPosition = strpos(
+            $source,
+            '$station = $this->stationRepo->findByIdentifier($stationName);',
+            $buildPosition + 1
+        );
+        $nowPlayingPosition = strpos($source, '$this->nowPlayingTask->run($station);');
+
+        self::assertNotFalse($reloadPosition);
+        self::assertNotFalse($nowPlayingPosition);
+        self::assertGreaterThan($buildPosition, $reloadPosition);
+        self::assertGreaterThan($reloadPosition, $nowPlayingPosition);
+    }
 }

@@ -1,7 +1,7 @@
 <template>
     <tab :label="$gettext('Smart Block')">
         <smart-block-criteria-editor
-            v-if="smartBlockUrl"
+            v-if="form.id !== null"
             :smart-block-url="smartBlockUrl"
         />
     </tab>

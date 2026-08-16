@@ -372,9 +372,9 @@ import IconBiContract from "~icons/bi/chevron-contract";
 import IconBiExpand from "~icons/bi/chevron-expand";
 import {useApiRouter} from "~/functions/useApiRouter.ts";
 import {useQuery} from "@tanstack/vue-query";
-import {PlaylistSources} from "~/entities/ApiInterfaces.ts";
+import {PlaylistSources, SmartBlockType} from "~/entities/ApiInterfaces.ts";
 import type {StationPlaylist} from "~/entities/ApiInterfaces.ts";
-import type {DataTableItemProvider} from "~/functions/useHasDatatable.ts";
+import type {DataTableItemProvider, DataTableRow} from "~/functions/useHasDatatable.ts";
 
 const {getStationApiUrl} = useApiRouter();
 const listUrl = getStationApiUrl('/playlists');
@@ -475,10 +475,15 @@ const playlistsQuery = useQuery<PlaylistRow[]>({
     },
 });
 
-const isDynamicList = (playlist: PlaylistRow): boolean =>
-    playlist.is_smart_block === true && playlist.smart_block_type === 'dynamic';
+type SmartBlockDataTableRow = DataTableRow & {
+    is_smart_block?: boolean,
+    smart_block_type?: SmartBlockType,
+};
 
-const isSmartBlock = (playlist: PlaylistRow): boolean => playlist.is_smart_block === true;
+const isDynamicList = (playlist: SmartBlockDataTableRow): boolean =>
+    playlist.is_smart_block === true && playlist.smart_block_type === SmartBlockType.Dynamic;
+
+const isSmartBlock = (playlist: SmartBlockDataTableRow): boolean => playlist.is_smart_block === true;
 
 const pageTitle = computed(() => props.view === 'smart-blocks'
     ? $gettext('Smart Blocks')

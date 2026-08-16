@@ -73,6 +73,16 @@ final class NowPlayingPerStationCommand extends AbstractSyncCommand
             );
         }
 
+        // Queue selection can roll back and clear the EntityManager while retrying
+        // rejected candidates. Always reload the station before the remaining
+        // Now Playing work so it never receives the detached pre-retry graph.
+        $station = $this->stationRepo->findByIdentifier($stationName);
+        if (!($station instanceof Station)) {
+            $this->logger->error('Station disappeared after queue building.');
+            $this->logger->popProcessor();
+            return 1;
+        }
+
         try {
             $this->nowPlayingTask->run($station);
         } catch (Throwable $e) {
