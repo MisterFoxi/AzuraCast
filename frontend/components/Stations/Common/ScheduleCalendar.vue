@@ -26,7 +26,7 @@
 <script setup lang="ts">
 import Schedule from "~/components/Common/ScheduleView.vue";
 import IconIcAdd from "~icons/ic/baseline-add";
-import {Calendar, EventClickArg, SlotLabelContentArg} from "@fullcalendar/core";
+import {Calendar, CalendarOptions, DateClickArg, EventApi, EventClickArg, SlotLabelContentArg} from "@fullcalendar/core";
 import {EventImpl} from "@fullcalendar/core/internal";
 import {computed, nextTick, useTemplateRef, toValue} from "vue";
 import {useStationData} from "~/functions/useStationQuery.ts";
@@ -43,6 +43,8 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
     click: [event: EventImpl],
     create: [],
+    dateClick: [date: Date],
+    move: [event: EventApi, revert: () => void],
 }>();
 
 const stationData = useStationData();
@@ -61,7 +63,7 @@ const renderSlotLabel = (arg: SlotLabelContentArg): string => {
     return `${stationTime} · ${utcTime} UTC`;
 };
 
-const calendarOptions = computed(() => {
+const calendarOptions = computed<CalendarOptions>(() => {
     const rawUrls = props.scheduleUrl;
     const urls = Array.isArray(rawUrls)
         ? rawUrls.map(u => toValue(u))
@@ -75,13 +77,21 @@ const calendarOptions = computed(() => {
         timeZone: timezone.value,
         slotLabelContent: renderSlotLabel,
         eventSources: urls,
-        eventClick: onClick
+        editable: true,
+        eventClick: onClick,
+        dateClick: onDateClick,
+        eventDrop: (arg) => emit('move', arg.event, arg.revert),
+        eventResize: (arg) => emit('move', arg.event, arg.revert),
     };
 });
 
 const onClick = (arg: EventClickArg) => {
     emit('click', arg.event);
 }
+
+const onDateClick = (arg: DateClickArg) => {
+    emit('dateClick', arg.date);
+};
 
 const $schedule = useTemplateRef('$schedule');
 

@@ -26,8 +26,8 @@ final readonly class DateRange
 
     public function isWithin(self $toCompare): bool
     {
-        return $this->end >= $toCompare->start
-            && $this->start <= $toCompare->end;
+        return $this->start < $toCompare->end
+            && $toCompare->start < $this->end;
     }
 
     public function format(

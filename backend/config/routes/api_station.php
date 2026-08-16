@@ -655,6 +655,11 @@ return static function (RouteCollectorProxy $group) {
                                     )->setName('api:stations:playlist:toggle');
 
                                     $group->put(
+                                        '/schedule/{schedule_id}',
+                                        Controller\Api\Stations\Playlists\PutScheduleAction::class
+                                    )->setName('api:stations:playlist:schedule');
+
+                                    $group->put(
                                         '/reshuffle',
                                         Controller\Api\Stations\Playlists\ReshuffleAction::class
                                     )->setName('api:stations:playlist:reshuffle');

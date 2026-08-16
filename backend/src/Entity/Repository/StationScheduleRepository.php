@@ -14,6 +14,7 @@ use App\Entity\Station;
 use App\Entity\StationPlaylist;
 use App\Entity\StationSchedule;
 use App\Entity\StationStreamer;
+use App\Exception\NotFoundException;
 use App\Exception\ValidationException;
 use App\Radio\AutoDJ\Scheduler;
 use App\Radio\Schedule\ScheduleConflictChecker;
@@ -28,6 +29,26 @@ use DateTimeImmutable;
  */
 final class StationScheduleRepository extends Repository
 {
+    private const array UPDATE_FIELDS = [
+        'start_time',
+        'end_time',
+        'start_date',
+        'end_date',
+        'days',
+        'loop_once',
+        'is_emergency',
+        'strict_start',
+        'recurrence_type',
+        'recurrence_interval',
+        'recurrence_monthly_pattern',
+        'recurrence_monthly_day',
+        'recurrence_monthly_week',
+        'recurrence_monthly_day_of_week',
+        'recurrence_end_type',
+        'recurrence_end_after',
+        'recurrence_end_date',
+    ];
+
     protected string $entityClass = StationSchedule::class;
 
     public function __construct(
@@ -66,39 +87,7 @@ final class StationScheduleRepository extends Repository
                 $record = new StationSchedule($relation);
             }
 
-            $record->start_time = (int)$item['start_time'];
-            $record->end_time = (int)$item['end_time'];
-            $record->start_date = $item['start_date'] ?? null;
-            $record->end_date = $item['end_date'] ?? null;
-            $daysInput = $item['days'] ?? [];
-            if (!is_array($daysInput)) {
-                $daysInput = [];
-            }
-            $record->days = array_values(array_unique(array_filter(
-                array_map(static fn ($d) => (int) $d, $daysInput),
-                static fn (int $d) => $d >= 1 && $d <= 7
-            )));
-            $record->loop_once = $item['loop_once'] ?? false;
-            $record->is_emergency = (bool)($item['is_emergency'] ?? false);
-            $record->strict_start = (bool)($item['strict_start'] ?? false);
-
-            $record->recurrence_type = isset($item['recurrence_type'])
-                ? (is_string($item['recurrence_type']) ? RecurrenceType::tryFrom($item['recurrence_type']) : $item['recurrence_type'])
-                : null;
-            $record->recurrence_interval = isset($item['recurrence_interval'])
-                ? max(1, (int)$item['recurrence_interval'])
-                : 1;
-            $record->recurrence_monthly_pattern = isset($item['recurrence_monthly_pattern'])
-                ? (is_string($item['recurrence_monthly_pattern']) ? RecurrenceMonthlyPattern::tryFrom($item['recurrence_monthly_pattern']) : $item['recurrence_monthly_pattern'])
-                : null;
-            $record->recurrence_monthly_day = isset($item['recurrence_monthly_day']) ? (int)$item['recurrence_monthly_day'] : null;
-            $record->recurrence_monthly_week = isset($item['recurrence_monthly_week']) ? (int)$item['recurrence_monthly_week'] : null;
-            $record->recurrence_monthly_day_of_week = isset($item['recurrence_monthly_day_of_week']) ? (int)$item['recurrence_monthly_day_of_week'] : null;
-            $record->recurrence_end_type = isset($item['recurrence_end_type'])
-                ? (is_string($item['recurrence_end_type']) ? RecurrenceEndType::tryFrom($item['recurrence_end_type']) ?? RecurrenceEndType::Never : $item['recurrence_end_type'])
-                : RecurrenceEndType::Never;
-            $record->recurrence_end_after = isset($item['recurrence_end_after']) ? (int)$item['recurrence_end_after'] : null;
-            $record->recurrence_end_date = $item['recurrence_end_date'] ?? null;
+            $this->populateScheduleItem($record, $item);
 
             $this->em->persist($record);
         }
@@ -108,6 +97,114 @@ final class StationScheduleRepository extends Repository
         }
 
         $this->em->flush();
+    }
+
+    /**
+     * Update one schedule without replacing the relation's full schedule collection.
+     *
+     * @param array<string, mixed> $changes
+     */
+    public function updateScheduleItem(
+        StationPlaylist $playlist,
+        int $scheduleId,
+        array $changes,
+    ): StationSchedule {
+        $record = $this->find($scheduleId);
+        if (!$record instanceof StationSchedule || $record->playlist?->id !== $playlist->id) {
+            throw NotFoundException::generic();
+        }
+
+        $candidate = $this->mergeScheduleItemUpdate($record, $changes);
+        $this->validateRecurrenceItem($candidate);
+
+        $items = [];
+        foreach ($this->findByRelation($playlist) as $scheduleItem) {
+            $items[] = $scheduleItem->id === $scheduleId
+                ? $candidate
+                : $this->scheduleItemToArray($scheduleItem);
+        }
+
+        $this->conflictChecker->assertBatchHasNoConflicts($playlist->station, $playlist, $items);
+
+        $this->populateScheduleItem($record, $candidate);
+        $this->em->persist($record);
+        $this->em->flush();
+
+        return $record;
+    }
+
+    /**
+     * @param array<string, mixed> $changes
+     * @return array<string, mixed>
+     */
+    private function mergeScheduleItemUpdate(StationSchedule $record, array $changes): array
+    {
+        $allowedChanges = array_intersect_key($changes, array_flip(self::UPDATE_FIELDS));
+
+        return array_replace($this->scheduleItemToArray($record), $allowedChanges);
+    }
+
+    /** @return array<string, mixed> */
+    private function scheduleItemToArray(StationSchedule $record): array
+    {
+        return [
+            'start_time' => $record->start_time,
+            'end_time' => $record->end_time,
+            'start_date' => $record->start_date,
+            'end_date' => $record->end_date,
+            'days' => $record->days,
+            'loop_once' => $record->loop_once,
+            'is_emergency' => $record->is_emergency,
+            'strict_start' => $record->strict_start,
+            'recurrence_type' => $record->recurrence_type,
+            'recurrence_interval' => $record->recurrence_interval,
+            'recurrence_monthly_pattern' => $record->recurrence_monthly_pattern,
+            'recurrence_monthly_day' => $record->recurrence_monthly_day,
+            'recurrence_monthly_week' => $record->recurrence_monthly_week,
+            'recurrence_monthly_day_of_week' => $record->recurrence_monthly_day_of_week,
+            'recurrence_end_type' => $record->recurrence_end_type,
+            'recurrence_end_after' => $record->recurrence_end_after,
+            'recurrence_end_date' => $record->recurrence_end_date,
+        ];
+    }
+
+    /** @param array<string, mixed> $item */
+    private function populateScheduleItem(StationSchedule $record, array $item): void
+    {
+        $record->start_time = (int)$item['start_time'];
+        $record->end_time = (int)$item['end_time'];
+        $record->start_date = $item['start_date'] ?? null;
+        $record->end_date = $item['end_date'] ?? null;
+
+        $daysInput = $item['days'] ?? [];
+        if (!is_array($daysInput)) {
+            $daysInput = [];
+        }
+        $record->days = array_values(array_unique(array_filter(
+            array_map(static fn ($d) => (int)$d, $daysInput),
+            static fn (int $d) => $d >= 1 && $d <= 7
+        )));
+
+        $record->loop_once = $item['loop_once'] ?? false;
+        $record->is_emergency = (bool)($item['is_emergency'] ?? false);
+        $record->strict_start = (bool)($item['strict_start'] ?? false);
+        $record->recurrence_type = isset($item['recurrence_type'])
+            ? (is_string($item['recurrence_type']) ? RecurrenceType::tryFrom($item['recurrence_type']) : $item['recurrence_type'])
+            : null;
+        $record->recurrence_interval = isset($item['recurrence_interval'])
+            ? max(1, (int)$item['recurrence_interval'])
+            : 1;
+        $record->recurrence_monthly_pattern = isset($item['recurrence_monthly_pattern'])
+            ? (is_string($item['recurrence_monthly_pattern']) ? RecurrenceMonthlyPattern::tryFrom($item['recurrence_monthly_pattern']) : $item['recurrence_monthly_pattern'])
+            : null;
+        $record->recurrence_monthly_day = isset($item['recurrence_monthly_day']) ? (int)$item['recurrence_monthly_day'] : null;
+        $record->recurrence_monthly_week = isset($item['recurrence_monthly_week']) ? (int)$item['recurrence_monthly_week'] : null;
+        $record->recurrence_monthly_day_of_week = isset($item['recurrence_monthly_day_of_week']) ? (int)$item['recurrence_monthly_day_of_week'] : null;
+        $record->recurrence_end_type = isset($item['recurrence_end_type'])
+            ? (is_string($item['recurrence_end_type']) ? RecurrenceEndType::tryFrom($item['recurrence_end_type']) ?? RecurrenceEndType::Never : $item['recurrence_end_type'])
+            : RecurrenceEndType::Never;
+        $record->recurrence_end_after = isset($item['recurrence_end_after']) ? (int)$item['recurrence_end_after'] : null;
+        $record->recurrence_end_date = $item['recurrence_end_date'] ?? null;
     }
 
     /**
@@ -122,6 +219,17 @@ final class StationScheduleRepository extends Repository
         $endType = isset($item['recurrence_end_type'])
             ? (is_string($item['recurrence_end_type']) ? RecurrenceEndType::tryFrom($item['recurrence_end_type']) : $item['recurrence_end_type'])
             : RecurrenceEndType::Never;
+
+        if (null !== $recurrenceType) {
+            $startDateRaw = $item['start_date'] ?? null;
+            $endDateRaw = $item['end_date'] ?? null;
+            $startDate = $this->parseScheduleDate($startDateRaw, 'Start date');
+            $endDate = $this->parseScheduleDate($endDateRaw, 'End date');
+
+            if (null !== $startDate && null !== $endDate && $endDate <= $startDate) {
+                throw new ValidationException(__('End date must be after start date for recurring events.'));
+            }
+        }
 
         if ($recurrenceType === RecurrenceType::Monthly) {
             $pattern = isset($item['recurrence_monthly_pattern'])
@@ -171,6 +279,21 @@ final class StationScheduleRepository extends Repository
                 throw new ValidationException(__('Recurrence end date must be in Y-m-d format.'));
             }
         }
+    }
+
+    private function parseScheduleDate(mixed $value, string $label): ?DateTimeImmutable
+    {
+        if (null === $value || '' === $value) {
+            return null;
+        }
+
+        $date = DateTimeImmutable::createFromFormat('!Y-m-d', (string)$value);
+        $errors = DateTimeImmutable::getLastErrors();
+        if (false === $date || (is_array($errors) && ($errors['warning_count'] > 0 || $errors['error_count'] > 0))) {
+            throw new ValidationException(__($label . ' must be in Y-m-d format.'));
+        }
+
+        return $date;
     }
 
     /**

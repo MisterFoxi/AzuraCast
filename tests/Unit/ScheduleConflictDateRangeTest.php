@@ -37,4 +37,19 @@ final class ScheduleConflictDateRangeTest extends Unit
 
         self::assertFalse($a->isWithin($b));
     }
+
+    public function testBackToBackRangesDoNotOverlap(): void
+    {
+        $a = new DateRange(
+            CarbonImmutable::parse('2026-05-19 13:00:00'),
+            CarbonImmutable::parse('2026-05-19 14:00:00'),
+        );
+        $b = new DateRange(
+            CarbonImmutable::parse('2026-05-19 14:00:00'),
+            CarbonImmutable::parse('2026-05-19 15:00:00'),
+        );
+
+        self::assertFalse($a->isWithin($b));
+        self::assertFalse($b->isWithin($a));
+    }
 }

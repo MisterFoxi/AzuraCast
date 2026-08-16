@@ -139,6 +139,15 @@
                 :input-attrs="{ disabled: !isRecurring || scheduleRow.recurrence_end_type === 'after' }"
             />
 
+            <div
+                v-if="recurringEndDateInvalid"
+                class="col-12"
+            >
+                <div class="alert alert-danger py-2 px-3 mb-0 small">
+                    {{ $gettext('End Date must be after Start Date for a recurring event.') }}
+                </div>
+            </div>
+
             <form-markup
                 id="edit_form_scheduling"
                 class="col-md-4"
@@ -344,6 +353,7 @@ import FormGroupSelect from '~/components/Form/FormGroupSelect.vue';
 import FormMarkup from '~/components/Form/FormMarkup.vue';
 import TimeZone from '~/components/Stations/Common/TimeZone.vue';
 import {applyIf, minLength, minValue, required, requiredIf, withMessage} from '@regle/rules';
+import {createRule} from '@regle/core';
 import {useAppScopedRegle} from '~/vendor/regle.ts';
 import {ref, computed, onMounted, watch, useTemplateRef} from 'vue';
 import {useTranslate} from '~/vendor/gettext';
@@ -357,12 +367,17 @@ import {
 } from '~/components/Stations/Common/scheduleItemDefaults.ts';
 import normalizeStationScheduleDays from '~/functions/normalizeStationScheduleDays';
 import type {EventImpl} from '@fullcalendar/core/internal';
+import {useStationData} from '~/functions/useStationQuery.ts';
+import {toRefs} from '@vueuse/core';
+import {useLuxon} from '~/vendor/luxon.ts';
 
 const {$gettext} = useTranslate();
 const {axios} = useAxios();
 const {getStationApiUrl} = useApiRouter();
 const {notifySuccess} = useNotify();
 const {confirmDelete} = useDialog();
+const {timezone: stationTimezone} = toRefs(useStationData());
+const {DateTime} = useLuxon();
 
 const emit = defineEmits<{
     relist: [];
@@ -417,6 +432,7 @@ watch(isRecurring, (recurring) => {
         if (!scheduleRow.value.recurrence_type) {
             scheduleRow.value.recurrence_type = 'weekly';
         }
+        scheduleRow.value.end_date = '';
     } else {
         scheduleRow.value.recurrence_type = null;
         scheduleRow.value.recurrence_monthly_pattern = null;
@@ -513,6 +529,19 @@ const daysOfWeekFieldDescription = computed(() => {
     return $gettext('Select at least one day of the week.');
 });
 
+const endDateAfterStart = createRule({
+    validator: (endDate: unknown) => {
+        if (!isRecurring.value) {
+            return true;
+        }
+
+        const end = typeof endDate === 'string' ? endDate.trim() : '';
+        const start = scheduleRow.value.start_date.trim();
+        return !end || !start || end > start;
+    },
+    message: () => $gettext('End Date must be after Start Date for recurring events.'),
+});
+
 const {r$} = useAppScopedRegle(
     scheduleRow,
     {
@@ -521,12 +550,16 @@ const {r$} = useAppScopedRegle(
         start_date: {required},
         end_date: {
             required: requiredIf(() => isRecurring.value && scheduleRow.value.recurrence_end_type !== 'after'),
+            endDateAfterStart,
         },
         days: {
             minLength: withMessage(
                 applyIf(requiresDaysOfWeek, minLength(1)),
                 () => $gettext('Select at least one day of the week.')
             ),
+        },
+        recurrence_type: {
+            required: requiredIf(() => isRecurring.value),
         },
         recurrence_end_after: {
             required: requiredIf(() => scheduleRow.value.recurrence_end_type === 'after'),
@@ -577,9 +610,17 @@ watch(
     }
 );
 
+const recurringEndDateInvalid = computed(() =>
+    isRecurring.value
+    && Boolean(scheduleRow.value.end_date)
+    && Boolean(scheduleRow.value.start_date)
+    && scheduleRow.value.end_date <= scheduleRow.value.start_date
+);
+
 const isFormValid = computed(() =>
     form.value.entity_id !== null &&
-    !r$.$invalid
+    !r$.$invalid &&
+    !recurringEndDateInvalid.value
 );
 
 const dayOptions = [
@@ -626,17 +667,14 @@ const modalTitle = computed(() =>
 );
 
 const applyCalendarTimesToRow = (start: Date, end?: Date) => {
-    const startDate = start.toISOString().slice(0, 10);
-    const startH = start.getHours().toString().padStart(2, '0');
-    const startM = start.getMinutes().toString().padStart(2, '0');
-    scheduleRow.value.start_date = startDate;
-    scheduleRow.value.end_date = startDate;
-    scheduleRow.value.start_time = Number(`${startH}${startM}`);
+    const startInStation = DateTime.fromJSDate(start).setZone(stationTimezone.value);
+    scheduleRow.value.start_date = startInStation.toFormat('yyyy-MM-dd');
+    scheduleRow.value.end_date = scheduleRow.value.start_date;
+    scheduleRow.value.start_time = Number(startInStation.toFormat('HHmm'));
 
     if (end) {
-        const endH = end.getHours().toString().padStart(2, '0');
-        const endM = end.getMinutes().toString().padStart(2, '0');
-        scheduleRow.value.end_time = Number(`${endH}${endM}`);
+        const endInStation = DateTime.fromJSDate(end).setZone(stationTimezone.value);
+        scheduleRow.value.end_time = Number(endInStation.toFormat('HHmm'));
     }
 };
 
@@ -736,6 +774,18 @@ const open = () => {
     if (playlists.value.length > 0) {
         form.value.entity_id = playlists.value[0].id;
     }
+    ($modal.value as any)?.show();
+};
+
+const openAtTime = (date: Date) => {
+    clearForm();
+    if (playlists.value.length > 0) {
+        form.value.entity_id = playlists.value[0].id;
+    }
+
+    const end = DateTime.fromJSDate(date).plus({hours: 1}).toJSDate();
+    applyCalendarTimesToRow(date, end);
+    syncDurationFromTimes();
     ($modal.value as any)?.show();
 };
 
@@ -899,5 +949,5 @@ const doDelete = async () => {
     }
 };
 
-defineExpose({open, openForEdit});
+defineExpose({open, openAtTime, openForEdit});
 </script>

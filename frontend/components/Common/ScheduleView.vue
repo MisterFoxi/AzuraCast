@@ -22,6 +22,7 @@ import allLocales from "@fullcalendar/core/locales-all";
 import luxon3Plugin from "@fullcalendar/luxon3";
 import timeGridPlugin from "@fullcalendar/timegrid";
 import dayGridPlugin from "@fullcalendar/daygrid";
+import interactionPlugin from "@fullcalendar/interaction";
 import {computed, useTemplateRef} from "vue";
 import {useAzuraCast} from "~/vendor/azuracast";
 import {Calendar, CalendarOptions, FormatterInput} from "@fullcalendar/core";
@@ -80,7 +81,7 @@ const calendarOptions = computed<CalendarOptions>(() => {
     return {
         locale: localeShort,
         locales: allLocales,
-        plugins: [luxon3Plugin, timeGridPlugin, dayGridPlugin, bootstrap5Plugin],
+        plugins: [luxon3Plugin, timeGridPlugin, dayGridPlugin, interactionPlugin, bootstrap5Plugin],
         themeSystem: 'bootstrap5',
         initialView: 'timeGridWeek',
         nowIndicator: true,
