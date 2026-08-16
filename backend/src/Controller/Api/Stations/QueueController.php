@@ -128,6 +128,28 @@ final class QueueController extends AbstractStationApiCrudController
                 ->setParameter('query', '%' . $searchPhrase . '%');
         }
 
+        $playlistId = Types::intOrNull($request->getQueryParam('playlist_id'));
+        if (null !== $playlistId && $playlistId > 0) {
+            $qb->andWhere('sp.id = :playlist_id')
+                ->setParameter('playlist_id', $playlistId);
+        }
+
+        $groupListId = Types::intOrNull($request->getQueryParam('group_list_id'));
+        if (null !== $groupListId && $groupListId > 0) {
+            $qb->andWhere('gp.id = :group_list_id')
+                ->setParameter('group_list_id', $groupListId);
+        }
+
+        $viaGroupList = Types::boolOrNull(
+            $request->getQueryParam('via_group_list'),
+            true
+        );
+        if (true === $viaGroupList) {
+            $qb->andWhere('sq.group_playlist IS NOT NULL');
+        } elseif (false === $viaGroupList) {
+            $qb->andWhere('sq.group_playlist IS NULL');
+        }
+
         return $this->listPaginatedFromQuery(
             $request,
             $response,
@@ -146,6 +168,8 @@ final class QueueController extends AbstractStationApiCrudController
         $apiResponse->sent_to_autodj = $record->sent_to_autodj;
         $apiResponse->is_played = $record->is_played;
         $apiResponse->autodj_custom_uri = $record->autodj_custom_uri;
+        $apiResponse->playlist_id = $record->playlist?->id;
+        $apiResponse->group_list_id = $record->group_playlist?->id;
 
         $groupPlaylist = $record->group_playlist;
         if ($groupPlaylist instanceof StationPlaylist) {

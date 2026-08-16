@@ -48,6 +48,13 @@ final class SongHistory implements
     public private(set) ?int $playlist_id = null;
 
     #[ORM\ManyToOne]
+    #[ORM\JoinColumn(name: 'group_playlist_id', referencedColumnName: 'id', nullable: true, onDelete: 'SET NULL')]
+    public ?StationPlaylist $group_playlist = null;
+
+    #[ORM\Column(nullable: true, insertable: false, updatable: false)]
+    public private(set) ?int $group_playlist_id = null;
+
+    #[ORM\ManyToOne]
     #[ORM\JoinColumn(name: 'streamer_id', referencedColumnName: 'id', nullable: true, onDelete: 'SET NULL')]
     public ?StationStreamer $streamer = null;
 
@@ -220,6 +227,7 @@ final class SongHistory implements
         $sh->media = $queue->media;
         $sh->request = $queue->request;
         $sh->playlist = $queue->playlist;
+        $sh->group_playlist = $queue->group_playlist;
         $sh->duration = $queue->duration;
         $sh->updateVisibility();
 

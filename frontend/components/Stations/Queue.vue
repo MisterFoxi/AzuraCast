@@ -1,5 +1,35 @@
 <template>
     <card-page :title="$gettext('Upcoming Song Queue')">
+        <template #info>
+            <div class="row g-2">
+                <div class="col-md-4">
+                    <label class="form-label" for="queue_playlist_filter">{{ $gettext('Playlist') }}</label>
+                    <select id="queue_playlist_filter" v-model="playlistId" class="form-select">
+                        <option :value="null">{{ $gettext('All Playlists') }}</option>
+                        <option v-for="item in playlistOptions" :key="item.id" :value="item.id">
+                            {{ item.name }}
+                        </option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label" for="queue_group_filter">{{ $gettext('Group List') }}</label>
+                    <select id="queue_group_filter" v-model="groupListId" class="form-select">
+                        <option :value="null">{{ $gettext('All Group Lists') }}</option>
+                        <option v-for="item in groupListOptions" :key="item.id" :value="item.id">
+                            {{ item.name }}
+                        </option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label" for="queue_via_group_filter">{{ $gettext('Group List Source') }}</label>
+                    <select id="queue_via_group_filter" v-model="viaGroupList" class="form-select">
+                        <option value="all">{{ $gettext('All Entries') }}</option>
+                        <option value="yes">{{ $gettext('Played via a Group List') }}</option>
+                        <option value="no">{{ $gettext('Not played via a Group List') }}</option>
+                    </select>
+                </div>
+            </div>
+        </template>
         <template #actions>
             <button
                 type="button"
@@ -90,14 +120,20 @@
 import DataTable, {DataTableField} from "~/components/Common/DataTable.vue";
 import QueueLogsModal from "~/components/Stations/Queue/LogsModal.vue";
 import {useTranslate} from "~/vendor/gettext";
-import {useTemplateRef} from "vue";
+import {computed, onMounted, ref, useTemplateRef} from "vue";
 import useConfirmAndDelete from "~/functions/useConfirmAndDelete";
 import {useNotify} from "~/components/Common/Toasts/useNotify.ts";
 import {useAxios} from "~/vendor/axios";
 import CardPage from "~/components/Common/CardPage.vue";
 import useStationDateTimeFormatter from "~/functions/useStationDateTimeFormatter.ts";
 import {useDialog} from "~/components/Common/Dialogs/useDialog.ts";
-import {ApiNowPlayingStationQueue, ApiStationQueueDetailed, ApiStatus} from "~/entities/ApiInterfaces.ts";
+import {
+    ApiNowPlayingStationQueue,
+    ApiStationQueueDetailed,
+    ApiStatus,
+    PlaylistSources,
+    StationPlaylist
+} from "~/entities/ApiInterfaces.ts";
 import {useApiItemProvider} from "~/functions/dataTable/useApiItemProvider.ts";
 import {QueryKeys, queryKeyWithStation} from "~/entities/Queries.ts";
 import IconIcRemove from "~icons/ic/baseline-remove";
@@ -106,8 +142,10 @@ import {useApiRouter} from "~/functions/useApiRouter.ts";
 const {getStationApiUrl} = useApiRouter();
 const listUrl = getStationApiUrl('/queue');
 const clearUrl = getStationApiUrl('/queue/clear');
+const playlistsUrl = getStationApiUrl('/playlists');
 
 const {$gettext} = useTranslate();
+const {axios} = useAxios();
 
 type Row = Required<ApiNowPlayingStationQueue & ApiStationQueueDetailed>;
 
@@ -118,13 +156,49 @@ const fields: DataTableField<Row>[] = [
     {key: 'source', label: $gettext('Source'), sortable: false}
 ];
 
+const playlistId = ref<number | null>(null);
+const groupListId = ref<number | null>(null);
+const viaGroupList = ref<'all' | 'yes' | 'no'>('all');
+
+type PlaylistOption = Pick<StationPlaylist, 'id' | 'name' | 'source'>;
+type PlaylistListResponse = {rows: PlaylistOption[]};
+const playlistOptions = ref<PlaylistOption[]>([]);
+const groupListOptions = ref<PlaylistOption[]>([]);
+
+const filteredListUrl = computed(() => {
+    const url = new URL(listUrl.value, document.location.href);
+    if (null !== playlistId.value) {
+        url.searchParams.set('playlist_id', String(playlistId.value));
+    }
+    if (null !== groupListId.value) {
+        url.searchParams.set('group_list_id', String(groupListId.value));
+    }
+    if ('all' !== viaGroupList.value) {
+        url.searchParams.set('via_group_list', 'yes' === viaGroupList.value ? 'true' : 'false');
+    }
+    return url.toString();
+});
+
 const listItemProvider = useApiItemProvider(
-    listUrl,
-    queryKeyWithStation([QueryKeys.StationQueue]),
+    filteredListUrl,
+    queryKeyWithStation([
+        QueryKeys.StationQueue,
+        playlistId,
+        groupListId,
+        viaGroupList,
+    ]),
     {
         refetchInterval: 30000
     }
 );
+
+onMounted(async () => {
+    const {data} = await axios.get<PlaylistListResponse>(playlistsUrl.value, {
+        params: {internal: true, rowCount: 0},
+    });
+    playlistOptions.value = data.rows.filter((item) => item.source !== PlaylistSources.Group);
+    groupListOptions.value = data.rows.filter((item) => item.source === PlaylistSources.Group);
+});
 
 const relist = () => {
     void listItemProvider.refresh();
@@ -148,7 +222,6 @@ const {doDelete} = useConfirmAndDelete(
 
 const {confirmDelete} = useDialog();
 const {notifySuccess} = useNotify();
-const {axios} = useAxios();
 
 const doClear = async () => {
     const {value} = await confirmDelete({

@@ -689,6 +689,12 @@ export type ApiDetailedSongHistory = ApiNowPlayingSongHistory & {
    * @example true
    */
   is_visible?: boolean;
+  /** Playlist identifier that produced this history entry. */
+  playlist_id?: number | null;
+  /** Group List identifier that produced this history entry. */
+  group_list_id?: number | null;
+  /** Group List that produced this history entry. */
+  group_lists?: string[];
 };
 
 export interface ApiError {
@@ -1348,6 +1354,10 @@ export type ApiStationQueueDetailed = HasLinks & {
    * @example ""
    */
   autodj_custom_uri?: string | null;
+  /** Playlist identifier that produced this queue entry. */
+  playlist_id?: number | null;
+  /** Group List identifier that produced this queue entry. */
+  group_list_id?: number | null;
   /** Group List that queued this specific item. */
   group_lists?: string[];
   /** Log entries on how the specific queue item was picked by the AutoDJ. */
@@ -2501,6 +2511,17 @@ export type StationPlaylist = HasAutoIncrementId & {
   schedule_items?: any[];
   /** Podcast> */
   podcasts?: any[];
+};
+
+export type ApiWebStream = HasAutoIncrementId & HasLinks & {
+  name: string;
+  source: PlaylistSources.RemoteUrl;
+  remote_url: string;
+  remote_type: PlaylistRemoteTypes;
+  remote_buffer: number;
+  is_enabled: boolean;
+  backend_options: string[];
+  schedule_items: ApiStationSchedule[];
 };
 
 export type StationPlaylistSmartBlockCriterion = {

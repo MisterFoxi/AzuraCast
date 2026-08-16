@@ -171,6 +171,16 @@ export function useStationsMenu() {
                 && station.value.features.media,
         },
         {
+            key: 'web_streams',
+            label: $gettext('Web / Remote Streams'),
+            icon: () => IconBiBroadcast,
+            url: {
+                name: 'stations:web_streams:index'
+            },
+            visible: () => userAllowedForStation(StationPermissions.Media)
+                && station.value.features.media,
+        },
+        {
             key: 'schedule',
             label: $gettext('Schedule'),
             icon: () => IconIcSchedule,

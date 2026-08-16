@@ -92,6 +92,11 @@ export default function useStationsRoutes(): RouteRecordRaw[] {
                     name: 'stations:playlists:index'
                 },
                 {
+                    path: 'web-streams',
+                    component: () => import('~/components/Stations/WebStreams.vue'),
+                    name: 'stations:web_streams:index'
+                },
+                {
                     path: 'schedule',
                     component: () => import('~/components/Stations/Schedule.vue'),
                     name: 'stations:schedule:index'

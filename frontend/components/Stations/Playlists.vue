@@ -460,7 +460,9 @@ const isDynamicList = (playlist: PlaylistRow): boolean =>
 
 const standardPlaylists = computed(() =>
     (playlistsQuery.data.value ?? []).filter(
-        (playlist) => playlist.source !== PlaylistSources.Group && !isDynamicList(playlist)
+        (playlist) => playlist.source !== PlaylistSources.Group
+            && playlist.source !== PlaylistSources.RemoteUrl
+            && !isDynamicList(playlist)
     )
 );
 

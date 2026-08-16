@@ -33,6 +33,36 @@
                 </div>
             </div>
         </div>
+        <div class="card-body border-bottom">
+            <div class="row g-2">
+                <div class="col-md-4">
+                    <label class="form-label" for="timeline_playlist_filter">{{ $gettext('Playlist') }}</label>
+                    <select id="timeline_playlist_filter" v-model="playlistId" class="form-select">
+                        <option :value="null">{{ $gettext('All Playlists') }}</option>
+                        <option v-for="item in playlistOptions" :key="item.id" :value="item.id">
+                            {{ item.name }}
+                        </option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label" for="timeline_group_filter">{{ $gettext('Group List') }}</label>
+                    <select id="timeline_group_filter" v-model="groupListId" class="form-select">
+                        <option :value="null">{{ $gettext('All Group Lists') }}</option>
+                        <option v-for="item in groupListOptions" :key="item.id" :value="item.id">
+                            {{ item.name }}
+                        </option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label" for="timeline_via_group_filter">{{ $gettext('Group List Source') }}</label>
+                    <select id="timeline_via_group_filter" v-model="viaGroupList" class="form-select">
+                        <option value="all">{{ $gettext('All Entries') }}</option>
+                        <option value="yes">{{ $gettext('Played via a Group List') }}</option>
+                        <option value="no">{{ $gettext('Not played via a Group List') }}</option>
+                    </select>
+                </div>
+            </div>
+        </div>
         <data-table
             ref="$dataTable"
             paginated
@@ -83,7 +113,14 @@
                 </template>
             </template>
             <template #cell(playlist)="row">
-                {{ row.item.playlist || '—' }}
+                <div>{{ row.item.playlist || '—' }}</div>
+                <span
+                    v-for="groupList in row.item.group_lists ?? []"
+                    :key="groupList"
+                    class="badge text-bg-info me-1"
+                >
+                    {{ $gettext('Group List') }}: {{ groupList }}
+                </span>
             </template>
         </data-table>
     </div>
@@ -92,7 +129,7 @@
 <script setup lang="ts">
 import DataTable, {DataTableField} from "~/components/Common/DataTable.vue";
 import DateRangeDropdown from "~/components/Common/DateRangeDropdown.vue";
-import {computed, nextTick, ref, useTemplateRef, watch} from "vue";
+import {computed, nextTick, onMounted, ref, useTemplateRef, watch} from "vue";
 import {useTranslate} from "~/vendor/gettext";
 import useHasDatatable from "~/functions/useHasDatatable.ts";
 import useStationDateTimeFormatter from "~/functions/useStationDateTimeFormatter.ts";
@@ -105,9 +142,17 @@ import IconIcCloudDownload from "~icons/ic/baseline-cloud-download";
 import IconIcTrendingDown from "~icons/ic/baseline-trending-down";
 import IconIcTrendingUp from "~icons/ic/baseline-trending-up";
 import {useApiRouter} from "~/functions/useApiRouter.ts";
+import {useAxios} from "~/vendor/axios.ts";
+import {
+    ApiDetailedSongHistory,
+    PlaylistSources,
+    StationPlaylist
+} from "~/entities/ApiInterfaces.ts";
 
 const {getStationApiUrl} = useApiRouter();
 const baseApiUrl = getStationApiUrl('/history');
+const playlistsUrl = getStationApiUrl('/playlists');
+const {axios} = useAxios();
 
 const stationData = useStationData();
 const {timezone} = toRefs(stationData);
@@ -130,7 +175,16 @@ const dateRange = ref(
 
 const {$gettext} = useTranslate();
 
-const fields: DataTableField[] = [
+const playlistId = ref<number | null>(null);
+const groupListId = ref<number | null>(null);
+const viaGroupList = ref<'all' | 'yes' | 'no'>('all');
+
+type PlaylistOption = Pick<StationPlaylist, 'id' | 'name' | 'source'>;
+type PlaylistListResponse = {rows: PlaylistOption[]};
+const playlistOptions = ref<PlaylistOption[]>([]);
+const groupListOptions = ref<PlaylistOption[]>([]);
+
+const fields: DataTableField<ApiDetailedSongHistory>[] = [
     {
         key: 'played_at',
         label: $gettext('Date/Time (Browser)'),
@@ -201,6 +255,16 @@ const apiUrl = computed(() => {
         apiUrlParams.set('end', endDate.toISO());
     }
 
+    if (null !== playlistId.value) {
+        apiUrlParams.set('playlist_id', String(playlistId.value));
+    }
+    if (null !== groupListId.value) {
+        apiUrlParams.set('group_list_id', String(groupListId.value));
+    }
+    if ('all' !== viaGroupList.value) {
+        apiUrlParams.set('via_group_list', 'yes' === viaGroupList.value ? 'true' : 'false');
+    }
+
     return apiUrl.toString();
 });
 
@@ -218,9 +282,20 @@ const listItemProvider = useApiItemProvider(
     queryKeyWithStation([
         QueryKeys.StationReports,
         'timeline',
-        dateRange
+        dateRange,
+        playlistId,
+        groupListId,
+        viaGroupList,
     ])
 );
+
+onMounted(async () => {
+    const {data} = await axios.get<PlaylistListResponse>(playlistsUrl.value, {
+        params: {internal: true, rowCount: 0},
+    });
+    playlistOptions.value = data.rows.filter((item) => item.source !== PlaylistSources.Group);
+    groupListOptions.value = data.rows.filter((item) => item.source === PlaylistSources.Group);
+});
 
 const abs = (val: number) => {
     return Math.abs(val);

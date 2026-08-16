@@ -104,6 +104,11 @@ final readonly class SongHistoryApiGenerator
         $response->listeners_end = (int)$record->listeners_end;
         $response->delta_total = $record->delta_total;
         $response->is_visible = $record->is_visible;
+        $response->playlist_id = $record->playlist?->id;
+        $response->group_list_id = $record->group_playlist?->id;
+        if ($record->group_playlist instanceof StationPlaylist) {
+            $response->group_lists = [$record->group_playlist->name];
+        }
 
         return $response;
     }

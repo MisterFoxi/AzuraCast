@@ -89,10 +89,11 @@ final class HistoryAction implements SingleActionInterface
 
         $qb = $this->em->createQueryBuilder();
 
-        $qb->select('sh, sr, sp, ss')
+        $qb->select('sh, sr, sp, gp, ss')
             ->from(SongHistory::class, 'sh')
             ->leftJoin('sh.request', 'sr')
             ->leftJoin('sh.playlist', 'sp')
+            ->leftJoin('sh.group_playlist', 'gp')
             ->leftJoin('sh.streamer', 'ss')
             ->where('sh.station = :station')
             ->andWhere('sh.timestamp_start >= :start AND sh.timestamp_start <= :end')
@@ -100,6 +101,28 @@ final class HistoryAction implements SingleActionInterface
             ->setParameter('station', $station)
             ->setParameter('start', $start)
             ->setParameter('end', $end);
+
+        $playlistId = Types::intOrNull($request->getQueryParam('playlist_id'));
+        if (null !== $playlistId && $playlistId > 0) {
+            $qb->andWhere('sp.id = :playlist_id')
+                ->setParameter('playlist_id', $playlistId);
+        }
+
+        $groupListId = Types::intOrNull($request->getQueryParam('group_list_id'));
+        if (null !== $groupListId && $groupListId > 0) {
+            $qb->andWhere('gp.id = :group_list_id')
+                ->setParameter('group_list_id', $groupListId);
+        }
+
+        $viaGroupList = Types::boolOrNull(
+            $request->getQueryParam('via_group_list'),
+            true
+        );
+        if (true === $viaGroupList) {
+            $qb->andWhere('sh.group_playlist IS NOT NULL');
+        } elseif (false === $viaGroupList) {
+            $qb->andWhere('sh.group_playlist IS NULL');
+        }
 
         $format = $request->getQueryParam('format', 'json');
 
@@ -155,6 +178,7 @@ final class HistoryAction implements SingleActionInterface
             'Track',
             'Artist',
             'Playlist',
+            'Group List',
             'Streamer',
         ]);
 
@@ -174,6 +198,11 @@ final class HistoryAction implements SingleActionInterface
                 ? $streamer->display_name
                 : '';
 
+            $groupPlaylist = $sh->group_playlist;
+            $groupPlaylistName = (null !== $groupPlaylist)
+                ? $groupPlaylist->name
+                : '';
+
             $csv->insertOne([
                 $datetime->format('Y-m-d'),
                 $datetime->format('g:ia'),
@@ -182,6 +211,7 @@ final class HistoryAction implements SingleActionInterface
                 $sh->title ?: $sh->text,
                 $sh->artist,
                 $playlistName,
+                $groupPlaylistName,
                 $streamerName,
             ]);
         }

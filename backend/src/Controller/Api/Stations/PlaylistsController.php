@@ -154,6 +154,15 @@ final class PlaylistsController extends AbstractScheduledEntityController
             ->where('sp.station = :station')
             ->setParameter('station', $station);
 
+        $source = $request->getQueryParam('source');
+        if (is_string($source) && '' !== $source) {
+            $playlistSource = PlaylistSources::tryFrom($source);
+            if (null !== $playlistSource) {
+                $qb->andWhere('sp.source = :source')
+                    ->setParameter('source', $playlistSource);
+            }
+        }
+
         $qb = $this->sortQueryBuilder(
             $request,
             $qb,

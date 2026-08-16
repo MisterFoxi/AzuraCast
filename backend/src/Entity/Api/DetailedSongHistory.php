@@ -36,4 +36,17 @@ final class DetailedSongHistory extends SongHistory
         example: true
     )]
     public bool $is_visible = true;
+
+    #[OA\Property(description: 'Playlist identifier that produced this history entry.')]
+    public ?int $playlist_id = null;
+
+    #[OA\Property(description: 'Group List identifier that produced this history entry.')]
+    public ?int $group_list_id = null;
+
+    #[OA\Property(
+        description: 'Group List that produced this history entry.',
+        type: 'array',
+        items: new OA\Items(type: 'string')
+    )]
+    public array $group_lists = [];
 }

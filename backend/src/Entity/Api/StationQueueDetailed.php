@@ -31,6 +31,12 @@ final class StationQueueDetailed
     )]
     public ?string $autodj_custom_uri = null;
 
+    #[OA\Property(description: 'Playlist identifier that produced this queue entry.')]
+    public ?int $playlist_id = null;
+
+    #[OA\Property(description: 'Group List identifier that produced this queue entry.')]
+    public ?int $group_list_id = null;
+
     #[OA\Property(
         description: 'Group List that queued this specific item.',
         type: 'array',
