@@ -4,14 +4,17 @@ declare(strict_types=1);
 
 namespace PureUnit;
 
+use App\Doctrine\ReloadableEntityManagerInterface;
 use App\Entity\Enums\RecurrenceEndType;
 use App\Entity\Enums\RecurrenceType;
 use App\Entity\Repository\StationScheduleRepository;
 use App\Entity\Station;
 use App\Entity\StationPlaylist;
 use App\Entity\StationSchedule;
+use Doctrine\ORM\EntityRepository;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
+use ReflectionProperty;
 
 final class StationScheduleTargetedUpdateTest extends TestCase
 {
@@ -48,5 +51,36 @@ final class StationScheduleTargetedUpdateTest extends TestCase
         self::assertSame(RecurrenceEndType::OnDate, $updated['recurrence_end_type']);
         self::assertSame('2026-12-31', $updated['recurrence_end_date']);
         self::assertArrayNotHasKey('unknown_field', $updated);
+    }
+
+    public function testTargetedDeleteRemovesOnlyRequestedSchedule(): void
+    {
+        $playlist = new StationPlaylist(new Station());
+        $schedule = new StationSchedule($playlist);
+        $this->setId($playlist, 12);
+        $this->setId($schedule, 42);
+
+        $objectRepository = $this->createStub(EntityRepository::class);
+        $em = $this->createMock(ReloadableEntityManagerInterface::class);
+        $em->method('getRepository')->willReturn($objectRepository);
+        $em->expects(self::once())
+            ->method('find')
+            ->with(StationSchedule::class, 42)
+            ->willReturn($schedule);
+        $em->expects(self::once())->method('remove')->with($schedule);
+        $em->expects(self::once())->method('flush');
+
+        $repositoryReflection = new ReflectionClass(StationScheduleRepository::class);
+        /** @var StationScheduleRepository $repository */
+        $repository = $repositoryReflection->newInstanceWithoutConstructor();
+        $repository->setEntityManager($em);
+
+        $repository->deleteScheduleItem($playlist, 42);
+    }
+
+    private function setId(object $entity, int $id): void
+    {
+        $property = new ReflectionProperty($entity, 'id');
+        $property->setValue($entity, $id);
     }
 }

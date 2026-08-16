@@ -856,38 +856,27 @@ const doSave = async () => {
     try {
         const entityApiUrl = getStationApiUrl(`/playlist/${form.value.entity_id}`).value;
 
-        // Fetch current entity data
-        const {data: entityData} = await axios.get(entityApiUrl);
-
         const newScheduleItem = buildSchedulePayload(
             scheduleRow.value,
             editingScheduleId.value ?? undefined
         );
-        const existingScheduleItems = (entityData.schedule_items as unknown[]) ?? [];
-
-        let updatedScheduleItems: unknown[];
         if (editingScheduleId.value !== null) {
-            let replaced = false;
-            updatedScheduleItems = existingScheduleItems.map((row: any) => {
-                if (row?.id === editingScheduleId.value) {
-                    replaced = true;
-                    return newScheduleItem;
-                }
-                return row;
-            });
-
-            if (!replaced) {
-                updatedScheduleItems = [...updatedScheduleItems, newScheduleItem];
-            }
+            await axios.put(
+                `${entityApiUrl}/schedule/${editingScheduleId.value}`,
+                newScheduleItem
+            );
         } else {
-            updatedScheduleItems = [...existingScheduleItems, newScheduleItem];
-        }
+            // Creating a schedule still appends to the existing collection because
+            // the dedicated endpoint targets records that already have an ID.
+            const {data: entityData} = await axios.get(entityApiUrl);
+            const existingScheduleItems = (entityData.schedule_items as unknown[]) ?? [];
 
-        // Only send schedule_items — a full entity PUT includes relation arrays (e.g. podcasts)
-        // that the serializer cannot denormalize back into Doctrine collections.
-        await axios.put(entityApiUrl, {
-            schedule_items: updatedScheduleItems,
-        });
+            // Only send schedule_items — a full entity PUT includes relation arrays (e.g. podcasts)
+            // that the serializer cannot denormalize back into Doctrine collections.
+            await axios.put(entityApiUrl, {
+                schedule_items: [...existingScheduleItems, newScheduleItem],
+            });
+        }
 
         notifySuccess(editingScheduleId.value !== null ? $gettext('Event updated.') : $gettext('Event created.'));
         ($modal.value as any)?.hide();
@@ -929,18 +918,9 @@ const doDelete = async () => {
     }
 
     try {
-        const entityApiUrl = getStationApiUrl(`/playlist/${entityId}`).value;
-
-        const {data: entityData} = await axios.get(entityApiUrl);
-        const existingScheduleItems = (entityData.schedule_items as unknown[]) ?? [];
-
-        const updatedScheduleItems = existingScheduleItems.filter(
-            (row: any) => row?.id !== scheduleId
+        await axios.delete(
+            getStationApiUrl(`/playlist/${entityId}/schedule/${scheduleId}`).value
         );
-
-        await axios.put(entityApiUrl, {
-            schedule_items: updatedScheduleItems,
-        });
 
         notifySuccess($gettext('Event deleted.'));
         emit('relist');

@@ -109,10 +109,7 @@ final class StationScheduleRepository extends Repository
         int $scheduleId,
         array $changes,
     ): StationSchedule {
-        $record = $this->find($scheduleId);
-        if (!$record instanceof StationSchedule || $record->playlist?->id !== $playlist->id) {
-            throw NotFoundException::generic();
-        }
+        $record = $this->requireForPlaylist($playlist, $scheduleId);
 
         $candidate = $this->mergeScheduleItemUpdate($record, $changes);
         $this->validateRecurrenceItem($candidate);
@@ -129,6 +126,24 @@ final class StationScheduleRepository extends Repository
         $this->populateScheduleItem($record, $candidate);
         $this->em->persist($record);
         $this->em->flush();
+
+        return $record;
+    }
+
+    public function deleteScheduleItem(StationPlaylist $playlist, int $scheduleId): void
+    {
+        $record = $this->requireForPlaylist($playlist, $scheduleId);
+
+        $this->em->remove($record);
+        $this->em->flush();
+    }
+
+    private function requireForPlaylist(StationPlaylist $playlist, int $scheduleId): StationSchedule
+    {
+        $record = $this->find($scheduleId);
+        if (!$record instanceof StationSchedule || $record->playlist?->id !== $playlist->id) {
+            throw NotFoundException::generic();
+        }
 
         return $record;
     }
