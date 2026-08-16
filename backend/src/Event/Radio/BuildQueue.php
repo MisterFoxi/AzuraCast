@@ -7,6 +7,7 @@ namespace App\Event\Radio;
 use App\Entity\Station;
 use App\Entity\StationQueue;
 use App\Utilities\Time;
+use Closure;
 use DateTimeImmutable;
 use Symfony\Contracts\EventDispatcher\Event;
 
@@ -19,15 +20,28 @@ final class BuildQueue extends Event
 
     private DateTimeImmutable $expectedPlayTime;
 
+    /** @var array<string, true> */
+    private array $excludedSongIds = [];
+
+    /** @var array<string, true> */
+    private array $rejectedSongIds = [];
+
+    private ?string $rejectionReason = null;
+
+    /** @var list<Closure(): void> */
+    private array $afterAcceptance = [];
+
     public function __construct(
         private readonly Station $station,
         ?DateTimeImmutable $expectedCueTime = null,
         ?DateTimeImmutable $expectedPlayTime = null,
         private readonly ?string $lastPlayedSongId = null,
-        private readonly bool $isInterrupting = false
+        private readonly bool $isInterrupting = false,
+        array $excludedSongIds = [],
     ) {
         $this->expectedCueTime = $expectedCueTime ?? Time::nowUtc();
         $this->expectedPlayTime = $expectedPlayTime ?? Time::nowUtc();
+        $this->excludedSongIds = array_fill_keys($excludedSongIds, true);
     }
 
     public function getStation(): Station
@@ -55,6 +69,33 @@ final class BuildQueue extends Event
         return $this->isInterrupting;
     }
 
+    /** @return list<string> */
+    public function getExcludedSongIds(): array
+    {
+        return array_keys($this->excludedSongIds);
+    }
+
+    public function isSongExcluded(string $songId): bool
+    {
+        return isset($this->excludedSongIds[$songId]);
+    }
+
+    public function wasRejected(): bool
+    {
+        return null !== $this->rejectionReason;
+    }
+
+    public function getRejectionReason(): ?string
+    {
+        return $this->rejectionReason;
+    }
+
+    /** @return list<string> */
+    public function getRejectedSongIds(): array
+    {
+        return array_keys($this->rejectedSongIds);
+    }
+
     /**
      * @return StationQueue[]
      */
@@ -78,12 +119,21 @@ final class BuildQueue extends Event
         }
 
         if (!is_array($nextSongs)) {
-            if ($this->lastPlayedSongId === $nextSongs->song_id) {
+            if (
+                $this->lastPlayedSongId === $nextSongs->song_id
+                || $this->isSongExcluded($nextSongs->song_id)
+            ) {
                 return false;
             }
 
             $this->nextSongs = [$nextSongs];
         } else {
+            foreach ($nextSongs as $nextSong) {
+                if ($this->isSongExcluded($nextSong->song_id)) {
+                    return false;
+                }
+            }
+
             $this->nextSongs = $nextSongs;
         }
 
@@ -91,6 +141,45 @@ final class BuildQueue extends Event
         // DmcaComplianceListener must still run after a successful selector pick.
         // Selectors themselves early-return when getNextSongs() is already non-empty.
         return true;
+    }
+
+    public function rejectSelection(string $reason): bool
+    {
+        if ([] === $this->nextSongs) {
+            return false;
+        }
+
+        foreach ($this->nextSongs as $nextSong) {
+            $this->rejectedSongIds[$nextSong->song_id] = true;
+            $this->excludedSongIds[$nextSong->song_id] = true;
+        }
+
+        $this->nextSongs = [];
+        $this->rejectionReason = $reason;
+        $this->afterAcceptance = [];
+        $this->stopPropagation();
+
+        return true;
+    }
+
+    public function deferUntilAccepted(Closure $callback): void
+    {
+        $this->afterAcceptance[] = $callback;
+    }
+
+    public function commitAcceptedSelection(): void
+    {
+        if ($this->wasRejected() || [] === $this->nextSongs) {
+            $this->afterAcceptance = [];
+            return;
+        }
+
+        $callbacks = $this->afterAcceptance;
+        $this->afterAcceptance = [];
+
+        foreach ($callbacks as $callback) {
+            $callback();
+        }
     }
 
     public function __toString(): string

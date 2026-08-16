@@ -27,6 +27,8 @@ final class Queue
     use LoggerAwareTrait;
     use EntityManagerAwareTrait;
 
+    private const int MAX_SELECTION_ATTEMPTS = 5;
+
     public function __construct(
         private readonly EventDispatcherInterface $dispatcher,
         private readonly StationQueueRepository $queueRepo,
@@ -116,15 +118,13 @@ final class Queue
             $testHandler = new TestHandler(LogLevel::DEBUG, true);
             $this->logger->pushHandler($testHandler);
 
-            $event = new BuildQueue(
-                $station,
-                $expectedCueTime,
-                $expectedPlayTime,
-                $lastSongId
-            );
-
             try {
-                $this->dispatcher->dispatch($event);
+                $event = $this->dispatchTransactionalBuildQueue(
+                    $station,
+                    $expectedCueTime,
+                    $expectedPlayTime,
+                    $lastSongId,
+                );
             } finally {
                 $this->logger->popHandler();
             }
@@ -189,16 +189,14 @@ final class Queue
         $testHandler = new TestHandler(LogLevel::DEBUG, true);
         $this->logger->pushHandler($testHandler);
 
-        $event = new BuildQueue(
-            $station,
-            $expectedPlayTime,
-            $expectedPlayTime,
-            null,
-            true
-        );
-
         try {
-            $this->dispatcher->dispatch($event);
+            $event = $this->dispatchTransactionalBuildQueue(
+                $station,
+                $expectedPlayTime,
+                $expectedPlayTime,
+                null,
+                true,
+            );
         } finally {
             $this->logger->popHandler();
         }
@@ -229,6 +227,108 @@ final class Queue
         }
 
         return $nextSongs;
+    }
+
+    /**
+     * Run selection and all selector mutations inside one transaction. A validator
+     * may reject the candidate; in that case every database mutation is rolled
+     * back and the rejected song IDs are excluded from the next attempt.
+     */
+    private function dispatchTransactionalBuildQueue(
+        Station &$station,
+        DateTimeImmutable $expectedCueTime,
+        DateTimeImmutable $expectedPlayTime,
+        ?string $lastSongId,
+        bool $isInterrupting = false,
+    ): BuildQueue {
+        $excludedSongIds = [];
+        $lastEvent = null;
+
+        for ($attempt = 1; $attempt <= self::MAX_SELECTION_ATTEMPTS; $attempt++) {
+            $event = new BuildQueue(
+                $station,
+                $expectedCueTime,
+                $expectedPlayTime,
+                $lastSongId,
+                $isInterrupting,
+                $excludedSongIds,
+            );
+            $lastEvent = $event;
+            $connection = $this->em->getConnection();
+            $connection->beginTransaction();
+
+            try {
+                $this->dispatcher->dispatch($event);
+
+                if ([] !== $event->getNextSongs() && !$event->wasRejected()) {
+                    // Flush selector state only after all lower-priority validators
+                    // have accepted the candidate, then make it durable atomically.
+                    $this->em->flush();
+                    $connection->commit();
+
+                    try {
+                        $event->commitAcceptedSelection();
+                    } catch (\Throwable $e) {
+                        $this->logger->warning(
+                            'Queue selection was accepted but a deferred side effect failed.',
+                            ['exception' => $e->getMessage()]
+                        );
+                    }
+
+                    return $event;
+                }
+
+                $connection->rollBack();
+            } catch (\Throwable $e) {
+                if ($connection->isTransactionActive()) {
+                    $connection->rollBack();
+                }
+
+                $this->em->clear();
+                throw $e;
+            }
+
+            // Rollback does not restore already-mutated PHP objects. Detach them
+            // and continue from a fresh station graph before another selection.
+            $this->em->clear();
+            $station = $this->em->refetch($station);
+
+            if (!$event->wasRejected()) {
+                return $event;
+            }
+
+            $excludedSongIds = array_values(array_unique([
+                ...$excludedSongIds,
+                ...$event->getRejectedSongIds(),
+            ]));
+
+            $this->logger->warning(
+                'Queue candidate rejected; retrying selection.',
+                [
+                    'attempt' => $attempt,
+                    'max_attempts' => self::MAX_SELECTION_ATTEMPTS,
+                    'reason' => $event->getRejectionReason(),
+                    'excluded_song_ids' => $excludedSongIds,
+                ]
+            );
+        }
+
+        $this->logger->error(
+            'Queue selection attempts exhausted.',
+            [
+                'max_attempts' => self::MAX_SELECTION_ATTEMPTS,
+                'excluded_song_ids' => $excludedSongIds,
+            ]
+        );
+
+        return $lastEvent ?? new BuildQueue(
+            $station,
+            $expectedCueTime,
+            $expectedPlayTime,
+            $lastSongId,
+            $isInterrupting,
+            $excludedSongIds,
+        );
     }
 
     private function addDurationToTime(

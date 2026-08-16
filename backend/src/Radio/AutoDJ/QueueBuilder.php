@@ -39,6 +39,8 @@ final class QueueBuilder implements EventSubscriberInterface
     use LoggerAwareTrait;
     use EntityManagerAwareTrait;
 
+    private ?BuildQueue $currentBuildEvent = null;
+
     public function __construct(
         private readonly Scheduler $scheduler,
         private readonly SponsorGuaranteedPlayoutService $sponsorGuarantee,
@@ -78,6 +80,8 @@ final class QueueBuilder implements EventSubscriberInterface
         if (!empty($event->getNextSongs())) {
             return;
         }
+
+        $this->currentBuildEvent = $event;
 
         $this->logger->info('AzuraCast AutoDJ is calculating the next song to play...');
 
@@ -540,14 +544,18 @@ final class QueueBuilder implements EventSubscriberInterface
             return null;
         }
 
+        $stationQueueEntry = StationQueue::fromMedia($playlist->station, $mediaToPlay);
+        $stationQueueEntry->playlist = $playlist;
+
+        if ($this->currentBuildEvent?->isSongExcluded($stationQueueEntry->song_id)) {
+            return null;
+        }
+
         $spm = $this->em->find(StationPlaylistMedia::class, $validTrack->spm_id);
         if ($spm instanceof StationPlaylistMedia) {
             $spm->played($expectedPlayTime->getTimestamp());
             $this->em->persist($spm);
         }
-
-        $stationQueueEntry = StationQueue::fromMedia($playlist->station, $mediaToPlay);
-        $stationQueueEntry->playlist = $playlist;
 
         // Soft-strict scheduling for normal scheduled transitions (e.g. a talk show
         // starting at 5:01pm). TOPH itself is handled by the interrupting queue at
@@ -601,9 +609,6 @@ final class QueueBuilder implements EventSubscriberInterface
         if (is_array($mediaToPlay)) {
             [$mediaUri, $mediaDuration] = $mediaToPlay;
 
-            $playlist->played_at = $expectedPlayTime;
-            $this->em->persist($playlist);
-
             $stationQueueEntry = new StationQueue(
                 $playlist->station,
                 Song::createFromText('Remote Playlist URL')
@@ -612,6 +617,13 @@ final class QueueBuilder implements EventSubscriberInterface
             $stationQueueEntry->playlist = $playlist;
             $stationQueueEntry->autodj_custom_uri = $mediaUri;
             $stationQueueEntry->duration = $mediaDuration;
+
+            if ($this->currentBuildEvent?->isSongExcluded($stationQueueEntry->song_id)) {
+                return null;
+            }
+
+            $playlist->played_at = $expectedPlayTime;
+            $this->em->persist($playlist);
 
             if (!$deferQueuePersistence) {
                 $this->em->persist($stationQueueEntry);
@@ -661,8 +673,15 @@ final class QueueBuilder implements EventSubscriberInterface
             $mediaId = array_shift($mediaQueue);
         }
 
-        // Save the modified cache, sans the now-missing entry.
-        $this->cache->set($queueCacheKey, $mediaQueue, 6000);
+        // Advancing a remote playlist is a non-database side effect, so only
+        // publish it after all validators accept the candidate.
+        if (null !== $mediaId && null !== $this->currentBuildEvent) {
+            $this->currentBuildEvent->deferUntilAccepted(
+                fn () => $this->cache->set($queueCacheKey, $mediaQueue, 6000)
+            );
+        } else {
+            $this->cache->set($queueCacheKey, $mediaQueue, 6000);
+        }
 
         return ($mediaId)
             ? [$mediaId, 0]
@@ -880,10 +899,33 @@ final class QueueBuilder implements EventSubscriberInterface
         DateTimeImmutable $expectedPlayTime,
     ): array {
         return $this->filterQueueByPlayability(
-            $this->filterQueueByRotationGoal($playlist, $mediaQueue),
+            $this->filterQueueByRejectedCandidates(
+                $this->filterQueueByRotationGoal($playlist, $mediaQueue)
+            ),
             $expectedPlayTime,
             $playlist->station->getTimezoneObject(),
         );
+    }
+
+    /**
+     * @param StationPlaylistQueue[] $mediaQueue
+     * @return StationPlaylistQueue[]
+     */
+    private function filterQueueByRejectedCandidates(array $mediaQueue): array
+    {
+        if (null === $this->currentBuildEvent || [] === $this->currentBuildEvent->getExcludedSongIds()) {
+            return $mediaQueue;
+        }
+
+        return array_values(array_filter(
+            $mediaQueue,
+            function (StationPlaylistQueue $item): bool {
+                $media = $this->em->find(StationMedia::class, $item->media_id);
+
+                return !($media instanceof StationMedia)
+                    || !$this->currentBuildEvent?->isSongExcluded($media->song_id);
+            }
+        ));
     }
 
     private function getRandomMediaIdFromPlaylist(
@@ -1005,6 +1047,7 @@ final class QueueBuilder implements EventSubscriberInterface
         array $recentSongHistory,
         bool $allowDuplicates = false,
     ): ?StationPlaylistQueue {
+        $this->currentBuildEvent = null;
         $this->smartBlockPlaybackPreparer->beginQueueBuild();
         if (!$this->smartBlockPlaybackPreparer->prepare($playlist)) {
             return null;
@@ -1047,6 +1090,8 @@ final class QueueBuilder implements EventSubscriberInterface
             return;
         }
 
+        $this->currentBuildEvent = $event;
+
         $expectedPlayTime = $event->getExpectedPlayTime();
         $station = $event->getStation();
 
@@ -1074,11 +1119,14 @@ final class QueueBuilder implements EventSubscriberInterface
         $this->logger->debug(sprintf('Queueing next song from request ID %d.', $request->id));
 
         $stationQueueEntry = StationQueue::fromRequest($request);
+
+        if (!$event->setNextSongs($stationQueueEntry)) {
+            return;
+        }
+
         $this->em->persist($stationQueueEntry);
 
         $request->played_at = $expectedPlayTime;
         $this->em->persist($request);
-
-        $event->setNextSongs($stationQueueEntry);
     }
 }

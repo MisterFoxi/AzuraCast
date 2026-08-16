@@ -29,8 +29,8 @@ use Symfony\Component\EventDispatcher\EventSubscriberInterface;
  *
  * Priority -5: runs AFTER selectors (QueueBuilder, etc.) pick a
  * song. Selectors must not stopPropagation on success so this listener can
- * clear a violating pick via setNextSongs(null); the next AutoDJ BuildQueue
- * attempt then retries with a different track.
+ * reject a violating pick explicitly; Queue then rolls the attempt back and
+ * retries with the rejected song excluded.
  */
 final class DmcaComplianceListener implements EventSubscriberInterface
 {
@@ -73,8 +73,7 @@ final class DmcaComplianceListener implements EventSubscriberInterface
 
         foreach ($nextSongs as $queueEntry) {
             if (!$this->isCompliant($queueEntry, $station, $event->getExpectedPlayTime())) {
-                $event->setNextSongs(null); // clear selection so AutoDJ retries with a different track
-                $event->stopPropagation();
+                $event->rejectSelection('DMCA compliance validation failed.');
 
                 $this->logger->warning(
                     'DMCA Compliance: Rejected song — BuildQueue will retry with a different track.',
