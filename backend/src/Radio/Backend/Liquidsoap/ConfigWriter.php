@@ -731,8 +731,8 @@ LIQ;
             'port = ' . $this->liquidsoap->getStreamPort($station),
             'auth = azuracast.dj_auth',
             'icy = true',
-            'icy_metadata_charset = "' . $charset . '"',
-            'metadata_charset = "' . $charset . '"',
+            'icy_metadata_charset = ' . self::toRawString($charset),
+            'metadata_charset = ' . self::toRawString($charset),
         ];
 
         $djBuffer = $settings->dj_buffer;
@@ -1191,10 +1191,12 @@ LIQ;
                         $stereoToolProcess .= ' -k "' . $stereoToolLicenseKey . '"';
                     }
 
+                    $stereoToolProcessString = self::toRawString($stereoToolProcess);
+
                     $event->appendBlock(
                         <<<LIQ
                         # Stereo Tool Pipe
-                        radio = pipe(replay_delay=1.0, process='{$stereoToolProcess}', radio)
+                        radio = pipe(replay_delay=1.0, process={$stereoToolProcessString}, radio)
                         LIQ
                     );
                 } else {
@@ -1217,13 +1219,17 @@ LIQ;
                         }
                     }
 
+                    $stereoToolLibraryString = self::toRawString($stereoToolLibrary);
+                    $stereoToolLicenseKeyString = self::toRawString($stereoToolLicenseKey ?? '');
+                    $stereoToolConfigurationString = self::toRawString($stereoToolConfiguration);
+
                     $event->appendBlock(
                         <<<LIQ
                         # Stereo Tool Pipe
                         radio = stereotool(
-                            library_file="{$stereoToolLibrary}",
-                            license_key="{$stereoToolLicenseKey}",
-                            preset="{$stereoToolConfiguration}",
+                            library_file={$stereoToolLibraryString},
+                            license_key={$stereoToolLicenseKeyString},
+                            preset={$stereoToolConfigurationString},
                             radio
                         )
                         LIQ
@@ -1413,14 +1419,14 @@ LIQ;
             $outputParams[] = 'user = ' . self::toRawString($source->username);
         }
 
-        $password = self::cleanUpString($source->password);
+        $password = $source->password;
 
         $adapterType = $source->adapterType;
         if (FrontendAdapters::Shoutcast === $adapterType) {
             $password .= ':#' . $id;
         }
 
-        $outputParams[] = 'password = "' . $password . '"';
+        $outputParams[] = 'password = ' . self::toRawString($password);
 
         $mountPoint = $source->mount;
         if (StreamProtocols::Icy === $source->protocol) {
@@ -1447,7 +1453,7 @@ LIQ;
         }
 
         $outputParams[] = 'public = ' . ($source->isPublic ? 'true' : 'false');
-        $outputParams[] = 'encoding = "' . $charset . '"';
+        $outputParams[] = 'encoding = ' . self::toRawString($charset);
 
         if (StreamProtocols::Https === $source->protocol) {
             $outputParams[] = 'transport = https_transport';

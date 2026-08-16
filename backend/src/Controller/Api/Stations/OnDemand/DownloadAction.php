@@ -5,8 +5,7 @@ declare(strict_types=1);
 namespace App\Controller\Api\Stations\OnDemand;
 
 use App\Controller\SingleActionInterface;
-use App\Entity\Repository\StationMediaRepository;
-use App\Flysystem\StationFilesystems;
+use App\Exception\NotFoundException;
 use App\Http\Response;
 use App\Http\ServerRequest;
 use App\OpenApi;
@@ -16,7 +15,7 @@ use Psr\Http\Message\ResponseInterface;
 #[OA\Get(
     path: '/station/{station_id}/ondemand/download/{media_id}',
     operationId: 'getStationOnDemandDownload',
-    summary: 'Download an on-demand playlist file by media unique ID.',
+    summary: 'Legacy on-demand download route (downloads are disabled).',
     security: [],
     tags: [OpenApi::TAG_PUBLIC_STATIONS],
     parameters: [
@@ -30,34 +29,18 @@ use Psr\Http\Message\ResponseInterface;
         ),
     ],
     responses: [
-        new OpenApi\Response\SuccessWithDownload(),
         new OpenApi\Response\NotFound(),
-        new OpenApi\Response\GenericError(),
     ]
 )]
 final readonly class DownloadAction implements SingleActionInterface
 {
-    public function __construct(
-        private StationMediaRepository $mediaRepo,
-        private StationFilesystems $stationFilesystems,
-    ) {
-    }
-
     public function __invoke(
         ServerRequest $request,
         Response $response,
         array $params
     ): ResponseInterface {
-        /** @var string $mediaId */
-        $mediaId = $params['media_id'];
-
-        $station = $request->getStation();
-
-        $media = $this->mediaRepo->requireByUniqueId($mediaId, $station);
-
-        $fsMedia = $this->stationFilesystems->getMediaFilesystem($station);
-
-        set_time_limit(600);
-        return $response->streamFilesystemFile($fsMedia, $media->path);
+        // Keep the historical route for compatibility, but never expose the
+        // source media file through a public, unauthenticated endpoint.
+        throw NotFoundException::file();
     }
 }

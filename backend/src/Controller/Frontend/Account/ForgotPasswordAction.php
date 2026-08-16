@@ -11,6 +11,8 @@ use App\Entity\Repository\UserRepository;
 use App\Entity\User;
 use App\Exception\Http\RateLimitExceededException;
 use App\Http\Response;
+use App\Http\Router;
+use App\Http\RouterInterface;
 use App\Http\ServerRequest;
 use App\RateLimit;
 use App\Service\Mail;
@@ -69,12 +71,7 @@ final readonly class ForgotPasswordAction implements SingleActionInterface
                     'Self-service password reset'
                 );
 
-                $router = $request->getRouter();
-                $url = $router->named(
-                    routeName: 'account:login-token',
-                    routeParams: ['token' => $token],
-                    absolute: true
-                );
+                $url = self::buildRecoveryUrl($request->getRouter(), $token);
 
                 $email->text(
                     $view->render(
@@ -100,5 +97,21 @@ final readonly class ForgotPasswordAction implements SingleActionInterface
         }
 
         return $view->renderToResponse($response, 'frontend/account/forgot');
+    }
+
+    public static function buildRecoveryUrl(RouterInterface $router, string $token): string
+    {
+        $relativeUrl = $router->named(
+            routeName: 'account:login-token',
+            routeParams: ['token' => $token]
+        );
+
+        // Passing false prevents request headers (including Host) from replacing
+        // the server URL configured by the administrator.
+        return (string)Router::resolveUri(
+            $router->buildBaseUrl(false),
+            $relativeUrl,
+            absolute: true
+        );
     }
 }
