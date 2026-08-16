@@ -8,6 +8,7 @@ use App\Controller\SingleActionInterface;
 use App\Entity\Enums\PlaylistSources;
 use App\Entity\Enums\SmartBlockLimitType;
 use App\Entity\Enums\SmartBlockMatchType;
+use App\Entity\Enums\SmartBlockSort;
 use App\Entity\Enums\SmartBlockType;
 use App\Entity\Repository\StationPlaylistRepository;
 use App\Entity\StationPlaylistSmartBlockCriteria;
@@ -81,6 +82,10 @@ final readonly class PutSmartBlockAction implements SingleActionInterface
             SmartBlockLimitType::class
         );
         $limit = $this->parseLimit($body['smart_block_limit'] ?? null);
+        $sort = $this->parseEnum(
+            $body['smart_block_sort'] ?? SmartBlockSort::Random->value,
+            SmartBlockSort::class
+        );
         $criteria = $this->criteriaParser->parse($playlist, $body['criteria'] ?? null);
 
         if ($enabled && [] === $criteria) {
@@ -94,6 +99,7 @@ final readonly class PutSmartBlockAction implements SingleActionInterface
             $matchType,
             $limit,
             $limitType,
+            $sort,
             $criteria
         ): void {
             $this->em->createQuery(
@@ -114,6 +120,7 @@ final readonly class PutSmartBlockAction implements SingleActionInterface
             $playlist->smart_block_match_type = $matchType;
             $playlist->smart_block_limit = $limit;
             $playlist->smart_block_limit_type = $limitType;
+            $playlist->smart_block_sort = $sort;
             $this->em->persist($playlist);
             $this->em->flush();
         });

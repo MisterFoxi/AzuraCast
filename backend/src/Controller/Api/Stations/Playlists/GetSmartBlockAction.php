@@ -91,6 +91,7 @@ final readonly class GetSmartBlockAction implements SingleActionInterface
             'smart_block_match_type' => $playlist->smart_block_match_type->value,
             'smart_block_limit' => $playlist->smart_block_limit,
             'smart_block_limit_type' => $playlist->smart_block_limit_type->value,
+            'smart_block_sort' => $playlist->smart_block_sort->value,
             'criteria' => $playlist->smart_block_criteria->toArray(),
             'current_member_count' => $playlist->media_items->count(),
             'matching_count' => count($matchingMedia),

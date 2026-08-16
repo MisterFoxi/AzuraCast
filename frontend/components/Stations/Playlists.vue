@@ -11,7 +11,7 @@
                         id="hdr_playlists"
                         class="card-title"
                     >
-                        {{ $gettext('Playlists') }}
+                        {{ pageTitle }}
                     </h2>
                 </div>
                 <div class="col-md-6 text-end">
@@ -34,9 +34,17 @@
                     <div class="card-body-flush">
                         <div class="card-body buttons">
                             <add-button
+                                v-if="props.view === 'playlists'"
                                 :text="$gettext('Add Playlist')"
                                 @click="doCreate"
                             />
+                            <router-link
+                                v-else
+                                class="btn btn-primary"
+                                :to="{name: 'stations:playlists:index'}"
+                            >
+                                {{ $gettext('Create from Playlists') }}
+                            </router-link>
                         </div>
 
                         <data-table
@@ -59,6 +67,12 @@
                                         class="badge text-bg-success"
                                     >
                                         {{ $gettext('Dynamic List') }}
+                                    </span>
+                                    <span
+                                        v-else-if="isSmartBlock(row.item)"
+                                        class="badge text-bg-info"
+                                    >
+                                        {{ $gettext('Static Smart Block') }}
                                     </span>
                                     <span
                                         v-else
@@ -153,7 +167,7 @@
                                 </template>
                             </template>
                             <template #cell(num_songs)="row">
-                                <template v-if="row.item.source === 'songs' && !isDynamicList(row.item)">
+                                <template v-if="row.item.source === 'songs'">
                                     <router-link
                                         :to="{
                                             name: 'stations:files:index',
@@ -365,6 +379,12 @@ import type {DataTableItemProvider} from "~/functions/useHasDatatable.ts";
 const {getStationApiUrl} = useApiRouter();
 const listUrl = getStationApiUrl('/playlists');
 
+const props = withDefaults(defineProps<{
+    view?: 'playlists' | 'smart-blocks',
+}>(), {
+    view: 'playlists',
+});
+
 
 const {$gettext} = useTranslate();
 const {axios} = useAxios();
@@ -458,16 +478,22 @@ const playlistsQuery = useQuery<PlaylistRow[]>({
 const isDynamicList = (playlist: PlaylistRow): boolean =>
     playlist.is_smart_block === true && playlist.smart_block_type === 'dynamic';
 
+const isSmartBlock = (playlist: PlaylistRow): boolean => playlist.is_smart_block === true;
+
+const pageTitle = computed(() => props.view === 'smart-blocks'
+    ? $gettext('Smart Blocks')
+    : $gettext('Playlists'));
+
 const standardPlaylists = computed(() =>
     (playlistsQuery.data.value ?? []).filter(
         (playlist) => playlist.source !== PlaylistSources.Group
             && playlist.source !== PlaylistSources.RemoteUrl
-            && !isDynamicList(playlist)
+            && !isSmartBlock(playlist)
     )
 );
 
-const dynamicLists = computed(() =>
-    (playlistsQuery.data.value ?? []).filter(isDynamicList)
+const smartBlocks = computed(() =>
+    (playlistsQuery.data.value ?? []).filter(isSmartBlock)
 );
 
 const groupLists = computed(() =>
@@ -487,8 +513,8 @@ const standardPlaylistProvider = useClientItemProvider(
     refreshPlaylists
 );
 
-const dynamicListProvider = useClientItemProvider(
-    dynamicLists,
+const smartBlockProvider = useClientItemProvider(
+    smartBlocks,
     playlistsQuery.isFetching,
     undefined,
     refreshPlaylists
@@ -508,7 +534,14 @@ type PlaylistTab = {
     provider: DataTableItemProvider<PlaylistRow>,
 }
 
-const playlistTabs: PlaylistTab[] = [
+const playlistTabs = computed<PlaylistTab[]>(() => props.view === 'smart-blocks' ? [
+    {
+        id: 'smart_blocks',
+        tableId: 'station_smart_blocks',
+        label: 'Smart Blocks',
+        provider: smartBlockProvider,
+    },
+] : [
     {
         id: 'playlists',
         tableId: 'station_playlists',
@@ -516,18 +549,12 @@ const playlistTabs: PlaylistTab[] = [
         provider: standardPlaylistProvider,
     },
     {
-        id: 'dynamic_lists',
-        tableId: 'station_dynamic_lists',
-        label: 'Dynamic Lists',
-        provider: dynamicListProvider,
-    },
-    {
         id: 'group_lists',
         tableId: 'station_group_lists',
         label: 'Group Lists',
         provider: groupListProvider,
     },
-];
+]);
 
 const {Duration} = useLuxon();
 

@@ -32,6 +32,7 @@ final class SmartBlockSynchronizerTest extends TestCase
         $removed = $this->createMedia(2, 'removed.mp3');
         $added = $this->createMedia(3, 'added.mp3');
         $keptMembership = new StationPlaylistMedia($playlist, $kept);
+        $keptMembership->weight = 1;
         $removedMembership = new StationPlaylistMedia($playlist, $removed);
 
         $objectRepository = $this->createMock(EntityRepository::class);
@@ -53,10 +54,6 @@ final class SmartBlockSynchronizerTest extends TestCase
             ])
             ->willReturn(null);
 
-        $highestWeightQuery = $this->createMock(Query::class);
-        $highestWeightQuery->method('setParameter')->willReturnSelf();
-        $highestWeightQuery->method('getSingleScalarResult')->willReturn(2);
-
         $clearQueueQuery = $this->createMock(Query::class);
         $clearQueueQuery->expects(self::exactly(2))->method('setParameter')->willReturnSelf();
         $clearQueueQuery->expects(self::once())->method('execute')->willReturn(1);
@@ -65,9 +62,9 @@ final class SmartBlockSynchronizerTest extends TestCase
         $entityManager = $this->createMock(ReloadableEntityManagerInterface::class);
         $entityManager->method('getRepository')->willReturn($objectRepository);
         $entityManager
-            ->expects(self::exactly(2))
+            ->expects(self::once())
             ->method('createQuery')
-            ->willReturnOnConsecutiveCalls($clearQueueQuery, $highestWeightQuery);
+            ->willReturn($clearQueueQuery);
         $entityManager
             ->expects(self::once())
             ->method('remove')
@@ -95,7 +92,7 @@ final class SmartBlockSynchronizerTest extends TestCase
         );
         self::assertInstanceOf(StationPlaylistMedia::class, $persisted);
         self::assertSame($added, $persisted->media);
-        self::assertSame(3, $persisted->weight);
+        self::assertSame(2, $persisted->weight);
     }
 
     public function testReconcileIsIdempotentWhenMembershipsAlreadyMatch(): void
@@ -105,13 +102,15 @@ final class SmartBlockSynchronizerTest extends TestCase
         $second = $this->createMedia(2, 'second.mp3');
 
         $objectRepository = $this->createMock(EntityRepository::class);
+        $firstMembership = new StationPlaylistMedia($playlist, $first);
+        $firstMembership->weight = 1;
+        $secondMembership = new StationPlaylistMedia($playlist, $second);
+        $secondMembership->weight = 2;
+
         $objectRepository
             ->expects(self::once())
             ->method('findBy')
-            ->willReturn([
-                new StationPlaylistMedia($playlist, $first),
-                new StationPlaylistMedia($playlist, $second),
-            ]);
+            ->willReturn([$firstMembership, $secondMembership]);
         $objectRepository->expects(self::never())->method('findOneBy');
 
         $entityManager = $this->createMock(ReloadableEntityManagerInterface::class);
@@ -143,6 +142,7 @@ final class SmartBlockSynchronizerTest extends TestCase
         $playlist = $this->createPlaylist();
         $media = $this->createMedia(1, 'duplicate.mp3');
         $keptMembership = new StationPlaylistMedia($playlist, $media);
+        $keptMembership->weight = 1;
         $duplicateMembership = new StationPlaylistMedia($playlist, $media);
 
         $objectRepository = $this->createMock(EntityRepository::class);
@@ -178,6 +178,42 @@ final class SmartBlockSynchronizerTest extends TestCase
             ],
             $result
         );
+    }
+
+    public function testReconcileRecalculatesWeightsWhenSortChanges(): void
+    {
+        $playlist = $this->createPlaylist();
+        $first = $this->createMedia(1, 'first.mp3');
+        $second = $this->createMedia(2, 'second.mp3');
+
+        $firstMembership = new StationPlaylistMedia($playlist, $first);
+        $firstMembership->weight = 2;
+        $secondMembership = new StationPlaylistMedia($playlist, $second);
+        $secondMembership->weight = 1;
+
+        $objectRepository = $this->createMock(EntityRepository::class);
+        $objectRepository
+            ->expects(self::once())
+            ->method('findBy')
+            ->willReturn([$secondMembership, $firstMembership]);
+
+        $entityManager = $this->createMock(ReloadableEntityManagerInterface::class);
+        $entityManager->method('getRepository')->willReturn($objectRepository);
+        $entityManager
+            ->expects(self::exactly(2))
+            ->method('persist')
+            ->with(self::isInstanceOf(StationPlaylistMedia::class));
+        $entityManager->expects(self::once())->method('flush');
+
+        $result = $this->createSynchronizer($entityManager)->reconcile(
+            $playlist,
+            [$first, $second]
+        );
+
+        self::assertSame(1, $firstMembership->weight);
+        self::assertSame(2, $secondMembership->weight);
+        self::assertTrue($result['changed']);
+        self::assertSame(2, $result['unchanged']);
     }
 
     private function createSynchronizer(

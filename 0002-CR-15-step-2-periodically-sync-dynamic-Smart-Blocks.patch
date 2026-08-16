@@ -1,0 +1,168 @@
+From a0ac8a26864f02d777fcab99d5c4f4689420171d Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Sun, 16 Aug 2026 12:43:31 +0300
+Subject: [PATCH 2/3] CR-15 step 2: periodically sync dynamic Smart Blocks
+
+---
+ backend/config/events.php                     |  1 +
+ .../Sync/Task/SynchronizeSmartBlocksTask.php  | 58 +++++++++++++++
+ .../SynchronizeSmartBlocksTaskTest.php        | 70 +++++++++++++++++++
+ 3 files changed, 129 insertions(+)
+ create mode 100644 backend/src/Sync/Task/SynchronizeSmartBlocksTask.php
+ create mode 100644 tests/PureUnit/SynchronizeSmartBlocksTaskTest.php
+
+diff --git a/backend/config/events.php b/backend/config/events.php
+index ebade74..8d74f10 100644
+--- a/backend/config/events.php
++++ b/backend/config/events.php
+@@ -87,6 +87,7 @@ return static function (CallableEventDispatcherInterface $dispatcher) {
+                 App\Sync\Task\UpdateGeoLiteTask::class,
+                 App\Sync\Task\UpdateStorageLocationSizesTask::class,
+                 App\Sync\Task\AiDjCleanupTask::class,
++                App\Sync\Task\SynchronizeSmartBlocksTask::class,
+             ]);
+         }
+     );
+diff --git a/backend/src/Sync/Task/SynchronizeSmartBlocksTask.php b/backend/src/Sync/Task/SynchronizeSmartBlocksTask.php
+new file mode 100644
+index 0000000..bdbb487
+--- /dev/null
++++ b/backend/src/Sync/Task/SynchronizeSmartBlocksTask.php
+@@ -0,0 +1,58 @@
++<?php
++
++declare(strict_types=1);
++
++namespace App\Sync\Task;
++
++use App\Entity\Enums\PlaylistSources;
++use App\Entity\Enums\SmartBlockType;
++use App\Entity\Station;
++use App\Radio\SmartBlock\SmartBlockSynchronizerInterface;
++use Throwable;
++
++final class SynchronizeSmartBlocksTask extends AbstractTask
++{
++    public function __construct(
++        private readonly SmartBlockSynchronizerInterface $synchronizer
++    ) {
++    }
++
++    public static function getSchedulePattern(): string
++    {
++        return self::SCHEDULE_EVERY_FIVE_MINUTES;
++    }
++
++    public function run(bool $force = false): void
++    {
++        foreach ($this->iterateStations() as $station) {
++            $this->synchronizeStation($station);
++        }
++    }
++
++    public function synchronizeStation(Station $station): void
++    {
++        foreach ($station->playlists as $playlist) {
++            if (!$playlist->is_smart_block
++                || SmartBlockType::Dynamic !== $playlist->smart_block_type
++                || PlaylistSources::Songs !== $playlist->source
++            ) {
++                continue;
++            }
++
++            try {
++                $result = $this->synchronizer->synchronize($playlist);
++                $this->logger->debug('Dynamic Smart Block synchronized.', [
++                    'station' => $station->name,
++                    'playlist' => $playlist->name,
++                    'result' => $result,
++                ]);
++            } catch (Throwable $e) {
++                $this->logger->error('Dynamic Smart Block synchronization failed.', [
++                    'station' => $station->name,
++                    'playlist' => $playlist->name,
++                    'exception' => $e,
++                ]);
++            }
++        }
++    }
++}
+diff --git a/tests/PureUnit/SynchronizeSmartBlocksTaskTest.php b/tests/PureUnit/SynchronizeSmartBlocksTaskTest.php
+new file mode 100644
+index 0000000..d1459b8
+--- /dev/null
++++ b/tests/PureUnit/SynchronizeSmartBlocksTaskTest.php
+@@ -0,0 +1,70 @@
++<?php
++
++declare(strict_types=1);
++
++namespace PureUnit;
++
++use App\Entity\Enums\PlaylistSources;
++use App\Entity\Enums\SmartBlockType;
++use App\Entity\Station;
++use App\Entity\StationPlaylist;
++use App\Radio\SmartBlock\SmartBlockSynchronizerInterface;
++use App\Sync\Task\ScheduledTaskInterface;
++use App\Sync\Task\SynchronizeSmartBlocksTask;
++use Doctrine\Common\Collections\ArrayCollection;
++use Monolog\Logger;
++use PHPUnit\Framework\TestCase;
++use ReflectionProperty;
++
++final class SynchronizeSmartBlocksTaskTest extends TestCase
++{
++    public function testRunsEveryFiveMinutesAndOnlySynchronizesDynamicSmartBlocks(): void
++    {
++        self::assertSame(
++            ScheduledTaskInterface::SCHEDULE_EVERY_FIVE_MINUTES,
++            SynchronizeSmartBlocksTask::getSchedulePattern()
++        );
++
++        $station = new Station();
++        $station->name = 'Test Station';
++
++        $dynamic = $this->createSmartBlock($station, SmartBlockType::Dynamic);
++        $static = $this->createSmartBlock($station, SmartBlockType::Static);
++        $ordinary = new StationPlaylist($station);
++        $ordinary->name = 'Ordinary';
++        $ordinary->is_smart_block = false;
++
++        (new ReflectionProperty($station, 'playlists'))->setValue(
++            $station,
++            new ArrayCollection([$dynamic, $static, $ordinary])
++        );
++
++        $synchronizer = $this->createMock(SmartBlockSynchronizerInterface::class);
++        $synchronizer
++            ->expects(self::once())
++            ->method('synchronize')
++            ->with($dynamic)
++            ->willReturn([
++                'matched' => 0,
++                'added' => 0,
++                'removed' => 0,
++                'unchanged' => 0,
++                'changed' => false,
++            ]);
++
++        $task = new SynchronizeSmartBlocksTask($synchronizer);
++        $task->setLogger($this->createMock(Logger::class));
++        $task->synchronizeStation($station);
++    }
++
++    private function createSmartBlock(Station $station, SmartBlockType $type): StationPlaylist
++    {
++        $playlist = new StationPlaylist($station);
++        $playlist->name = $type->value;
++        $playlist->source = PlaylistSources::Songs;
++        $playlist->is_smart_block = true;
++        $playlist->smart_block_type = $type;
++
++        return $playlist;
++    }
++}
+-- 
+2.51.1
+

@@ -92,6 +92,12 @@ export default function useStationsRoutes(): RouteRecordRaw[] {
                     name: 'stations:playlists:index'
                 },
                 {
+                    path: 'smart-blocks',
+                    component: () => import('~/components/Stations/Playlists.vue'),
+                    props: {view: 'smart-blocks'},
+                    name: 'stations:smart_blocks:index'
+                },
+                {
                     path: 'web-streams',
                     component: () => import('~/components/Stations/WebStreams.vue'),
                     name: 'stations:web_streams:index'

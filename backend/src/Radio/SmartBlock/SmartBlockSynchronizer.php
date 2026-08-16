@@ -68,6 +68,7 @@ final class SmartBlockSynchronizer implements SmartBlockSynchronizerInterface
         $added = 0;
         $removed = 0;
         $unchanged = 0;
+        $reordered = 0;
 
         foreach ($duplicateMemberships as $membership) {
             $this->playlistMediaRepository->removeDirectMediaMembership($membership);
@@ -84,17 +85,26 @@ final class SmartBlockSynchronizer implements SmartBlockSynchronizerInterface
             ++$removed;
         }
 
+        $weight = 1;
         foreach ($targetMedia as $mediaId => $media) {
             if (isset($currentMemberships[$mediaId])) {
+                $membership = $currentMemberships[$mediaId];
+                if ($membership->weight !== $weight) {
+                    $membership->weight = $weight;
+                    $this->playlistMediaRepository->getEntityManager()->persist($membership);
+                    ++$reordered;
+                }
+                ++$weight;
                 continue;
             }
 
-            if ($this->playlistMediaRepository->addMediaToPlaylistIfMissing($media, $playlist)) {
+            if ($this->playlistMediaRepository->addMediaToPlaylistIfMissing($media, $playlist, $weight)) {
                 ++$added;
             }
+            ++$weight;
         }
 
-        $changed = $added > 0 || $removed > 0;
+        $changed = $added > 0 || $removed > 0 || $reordered > 0;
         if ($changed) {
             $this->playlistMediaRepository->getEntityManager()->flush();
         }

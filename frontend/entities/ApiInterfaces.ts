@@ -252,6 +252,14 @@ export enum SmartBlockType {
   Dynamic = "dynamic",
 }
 
+export enum SmartBlockSort {
+  Random = "random",
+  Newest = "newest",
+  Oldest = "oldest",
+  Title = "title",
+  Artist = "artist",
+}
+
 export enum LoginTokenTypes {
   ResetPassword = "reset_password",
   Login = "login",
@@ -2503,6 +2511,12 @@ export type StationPlaylist = HasAutoIncrementId & {
   backend_options?: string[];
   /** @example true */
   avoid_duplicates?: boolean;
+  is_smart_block?: boolean;
+  smart_block_type?: SmartBlockType;
+  smart_block_match_type?: SmartBlockMatchType;
+  smart_block_limit?: number | null;
+  smart_block_limit_type?: SmartBlockLimitType;
+  smart_block_sort?: SmartBlockSort;
   smart_shuffle_distance?: number | null;
   /** Minimum days between repeats of the same track (positive rotation goal). */
   rotation_goal_days?: number | null;

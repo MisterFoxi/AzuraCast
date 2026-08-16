@@ -39,8 +39,15 @@ final class StationPlaylistSmartBlockCriteriaRepository extends Repository
             ->where('sm.storage_location = :storageLocation')
             ->andWhere('sm.do_not_play = false')
             ->andWhere($expression['where'])
-            ->setParameter('storageLocation', $playlist->station->media_storage_location)
-            ->orderBy('RAND()');
+            ->setParameter('storageLocation', $playlist->station->media_storage_location);
+
+        foreach ($playlist->smart_block_sort->getOrderBy() as $index => $orderBy) {
+            if (0 === $index) {
+                $queryBuilder->orderBy($orderBy['expression'], $orderBy['direction']);
+            } else {
+                $queryBuilder->addOrderBy($orderBy['expression'], $orderBy['direction']);
+            }
+        }
 
         foreach ($expression['parameters'] as $name => $value) {
             $queryBuilder->setParameter($name, $value);

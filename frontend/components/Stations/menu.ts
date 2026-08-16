@@ -171,6 +171,16 @@ export function useStationsMenu() {
                 && station.value.features.media,
         },
         {
+            key: 'smart_blocks',
+            label: $gettext('Smart Blocks'),
+            icon: () => IconIcQueueMusic,
+            url: {
+                name: 'stations:smart_blocks:index'
+            },
+            visible: () => userAllowedForStation(StationPermissions.Media)
+                && station.value.features.media,
+        },
+        {
             key: 'web_streams',
             label: $gettext('Web / Remote Streams'),
             icon: () => IconBiBroadcast,

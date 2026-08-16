@@ -182,7 +182,8 @@ final class StationPlaylistMediaRepository extends Repository
      */
     public function addMediaToPlaylistIfMissing(
         StationMedia $media,
-        StationPlaylist $playlist
+        StationPlaylist $playlist,
+        int $weight = 0
     ): bool {
         if (PlaylistSources::Songs !== $playlist->source) {
             throw new RuntimeException('This playlist is not meant to contain songs!');
@@ -198,8 +199,11 @@ final class StationPlaylistMediaRepository extends Repository
             return false;
         }
 
-        $weight = $this->getHighestSongWeight($playlist) + 1;
-        if (PlaylistOrders::Sequential !== $playlist->order) {
+        $hasExplicitWeight = $weight > 0;
+        if (!$hasExplicitWeight) {
+            $weight = $this->getHighestSongWeight($playlist) + 1;
+        }
+        if (PlaylistOrders::Sequential !== $playlist->order && !$hasExplicitWeight) {
             $weight = random_int(1, $weight);
         }
 

@@ -38,6 +38,15 @@
                     radio
                     :label="$gettext('Criteria Matching')"
                 />
+
+                <form-group-select
+                    v-if="editor.is_smart_block"
+                    id="smart_block_sort"
+                    class="col-md-6"
+                    v-model="editor.smart_block_sort"
+                    :options="sortOptions"
+                    :label="$gettext('Sort Order')"
+                />
             </div>
 
             <template v-if="editor.is_smart_block">
@@ -208,6 +217,7 @@ import {
     SmartBlockCriteriaField,
     SmartBlockLimitType,
     SmartBlockMatchType,
+    SmartBlockSort,
     SmartBlockType,
     type StationPlaylistSmartBlockCriterion,
 } from "~/entities/ApiInterfaces.ts";
@@ -231,6 +241,7 @@ type SmartBlockResponse = {
     smart_block_match_type: SmartBlockMatchType,
     smart_block_limit: number | null,
     smart_block_limit_type: SmartBlockLimitType,
+    smart_block_sort: SmartBlockSort,
     criteria: StationPlaylistSmartBlockCriterion[],
     current_member_count: number,
     matching_count: number,
@@ -249,6 +260,7 @@ const editor = ref({
     smart_block_match_type: SmartBlockMatchType.All,
     smart_block_limit: null as number | null,
     smart_block_limit_type: SmartBlockLimitType.Tracks,
+    smart_block_sort: SmartBlockSort.Random,
     criteria: [] as CriterionRow[],
 });
 
@@ -269,6 +281,14 @@ const typeOptions = [
 const matchTypeOptions = [
     {value: SmartBlockMatchType.All, text: $gettext('Match all criteria (AND)')},
     {value: SmartBlockMatchType.Any, text: $gettext('Match any criterion (OR)')},
+];
+
+const sortOptions = [
+    {value: SmartBlockSort.Random, text: $gettext('Random')},
+    {value: SmartBlockSort.Newest, text: $gettext('Newest First')},
+    {value: SmartBlockSort.Oldest, text: $gettext('Oldest First')},
+    {value: SmartBlockSort.Title, text: $gettext('Title A–Z')},
+    {value: SmartBlockSort.Artist, text: $gettext('Artist A–Z')},
 ];
 
 const limitTypeOptions = [
@@ -387,6 +407,7 @@ const load = async (): Promise<void> => {
             smart_block_match_type: data.smart_block_match_type,
             smart_block_limit: data.smart_block_limit,
             smart_block_limit_type: data.smart_block_limit_type,
+            smart_block_sort: data.smart_block_sort,
             criteria: data.criteria.map((criterion) => ({...criterion, rowId: nextRowId++})),
         };
         preview.value = {
@@ -452,6 +473,7 @@ const save = async (): Promise<void> => {
             smart_block_match_type: editor.value.smart_block_match_type,
             smart_block_limit: editor.value.smart_block_limit,
             smart_block_limit_type: editor.value.smart_block_limit_type,
+            smart_block_sort: editor.value.smart_block_sort,
             criteria,
         });
 

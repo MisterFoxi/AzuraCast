@@ -10,6 +10,7 @@ use App\Entity\Enums\PlaylistSources;
 use App\Entity\Enums\PlaylistTypes;
 use App\Entity\Enums\SmartBlockLimitType;
 use App\Entity\Enums\SmartBlockMatchType;
+use App\Entity\Enums\SmartBlockSort;
 use App\Entity\Enums\SmartBlockType;
 use App\Utilities\File;
 use App\Utilities\Time;
@@ -385,6 +386,12 @@ final class StationPlaylist implements
         ORM\Column(type: 'string', length: 10, enumType: SmartBlockType::class, options: ['default' => 'dynamic'])
     ]
     public SmartBlockType $smart_block_type = SmartBlockType::Dynamic;
+
+    #[
+        OA\Property(example: 'random'),
+        ORM\Column(type: 'string', length: 10, enumType: SmartBlockSort::class, options: ['default' => 'random'])
+    ]
+    public SmartBlockSort $smart_block_sort = SmartBlockSort::Random;
 
     #[
         ORM\Column(type: 'datetime_immutable', precision: 6, nullable: true),
