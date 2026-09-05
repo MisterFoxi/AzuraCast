@@ -61,6 +61,7 @@
 
             <div class="dropdown allow-focus">
                 <button
+                    ref="$genreDropdown"
                     class="btn btn-sm btn-primary dropdown-toggle"
                     type="button"
                     data-bs-toggle="dropdown"
@@ -523,11 +524,17 @@ const onBulkCategoryChange = async (event: Event) => {
     });
 };
 
+const $genreDropdown = useTemplateRef('$genreDropdown');
+
 const onBulkGenreApply = async () => {
     const genre = bulkGenre.value.trim();
 
     if (!genre || classifyPending.value) {
         return;
+    }
+
+    if ($genreDropdown.value) {
+        Dropdown.getInstance($genreDropdown.value)?.hide();
     }
 
     await applyClassify({genre});
