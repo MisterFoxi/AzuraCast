@@ -24,6 +24,7 @@ use App\Http\ServerRequest;
 use App\Media\MimeType;
 use App\OpenApi;
 use App\Paginator;
+use App\Radio\AutoDJ\MediaAssignmentResolver;
 use App\Utilities\Strings;
 use App\Utilities\Types;
 use Doctrine\Common\Collections\Order;
@@ -81,7 +82,8 @@ final class ListAction implements SingleActionInterface
 
     public function __construct(
         private readonly MediaListCache $mediaListCache,
-        private readonly StationFilesystems $stationFilesystems
+        private readonly StationFilesystems $stationFilesystems,
+        private readonly MediaAssignmentResolver $mediaAssignmentResolver
     ) {
     }
 
@@ -130,6 +132,7 @@ final class ListAction implements SingleActionInterface
         }
 
         $cacheKey = implode('.', $cacheKeyParts);
+        $bypassCache = 'unassigned' === $special;
 
         $flushCache = Types::bool($request->getParam('flushCache'), false, true);
         if ($flushCache) {
@@ -138,7 +141,7 @@ final class ListAction implements SingleActionInterface
 
         $cacheItem = $cache->getItem($cacheKey);
 
-        if ($cacheItem->isHit()) {
+        if (!$bypassCache && $cacheItem->isHit()) {
             /** @var array<int, FileList> $result */
             $result = $cacheItem->get();
         } else {
@@ -192,9 +195,7 @@ final class ListAction implements SingleActionInterface
                             )
                         );
                     } elseif ('unassigned' === $special) {
-                        $mediaQueryBuilder->andWhere(
-                            'sm.id NOT IN (SELECT spm2.media_id FROM App\Entity\StationPlaylistMedia spm2)'
-                        );
+                        $this->mediaAssignmentResolver->applyUnassignedFilter($mediaQueryBuilder, $station);
                     } elseif (null !== $playlist) {
                         $mediaQueryBuilder->andWhere(
                             'sm.id IN (SELECT spm2.media_id FROM App\Entity\StationPlaylistMedia spm2 '
@@ -308,9 +309,11 @@ final class ListAction implements SingleActionInterface
                 $result[] = $row;
             }
 
-            $cacheItem->set($result);
-            $cacheItem->expiresAfter(60 * 5);
-            $cache->save($cacheItem);
+            if (!$bypassCache) {
+                $cacheItem->set($result);
+                $cacheItem->expiresAfter(60 * 5);
+                $cache->save($cacheItem);
+            }
         }
 
         // Apply sorting
