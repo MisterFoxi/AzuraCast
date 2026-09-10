@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 0007
 
 usage() {
     cat <<'EOF'
@@ -27,6 +28,16 @@ EOF
 die() {
     echo "Erreur: $*" >&2
     exit 1
+}
+
+set_archive_permissions() {
+    local archive="$1"
+
+    [[ -f "$archive" ]] || die "archive locale introuvable: ${archive}"
+    chmod 660 -- "$archive" \
+        || die "impossible de fixer les droits 660 sur: ${archive}"
+    [[ -r "$archive" ]] \
+        || die "archive illisible apres chmod; verifier les ACL et les droits NFS: ${archive}"
 }
 
 require_value() {
@@ -188,9 +199,12 @@ docker buildx build \
     -t "${FULL_IMAGE}" \
     "$REPO_ROOT"
 
+set_archive_permissions "$BUILD_TAR"
+
 echo
 echo "==> Compression image"
-gzip -f "$BUILD_TAR"
+gzip -f -- "$BUILD_TAR" || die "compression de l'image impossible: ${BUILD_TAR}"
+set_archive_permissions "$LOCAL_TAR"
 
 echo
 echo "==> Export image: ${LOCAL_TAR}"
@@ -198,8 +212,8 @@ echo "==> Export image: ${LOCAL_TAR}"
 file "$LOCAL_TAR"
 ls -lh "$LOCAL_TAR"
 
-ARCHIVE_MANIFEST="$(tar -xOzf "$LOCAL_TAR" manifest.json 2>/dev/null)" \
-    || die "tarball Docker invalide: ${LOCAL_TAR}"
+ARCHIVE_MANIFEST="$(tar -xOzf "$LOCAL_TAR" manifest.json)" \
+    || die "impossible de lire manifest.json dans l'archive Docker: ${LOCAL_TAR}"
 grep -Fq "\"${FULL_IMAGE}\"" <<< "$ARCHIVE_MANIFEST" \
     || die "le tarball ne contient pas l'image attendue: ${FULL_IMAGE}"
 

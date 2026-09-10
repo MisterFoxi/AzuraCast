@@ -560,7 +560,7 @@ return [
     ) {
         $httpFactory = new GuzzleHttp\Psr7\HttpFactory();
 
-        return new NowPlaying\AdapterFactory(
+        return new App\Radio\AdapterFactory(
             $httpFactory,
             $httpFactory,
             $httpClient,

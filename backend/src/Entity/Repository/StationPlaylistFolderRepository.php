@@ -41,7 +41,7 @@ final class StationPlaylistFolderRepository extends AbstractStationBasedReposito
                 AND sm.path LIKE :path
             DQL
         )->setParameter('storageLocation', $location)
-            ->setParameter('path', $path . '/%')
+            ->setParameter('path', '' === $path ? '%' : $path . '/%')
             ->getArrayResult();
 
         return array_column($mediaInFolderRaw, 'id', 'id');
