@@ -219,6 +219,7 @@ export enum PlaylistOrders {
 export enum SmartBlockCriteriaField {
   Genre = "genre",
   Category = "category",
+  Type = "type",
   Artist = "artist",
   Album = "album",
   Title = "title",

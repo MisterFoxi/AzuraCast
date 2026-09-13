@@ -7,6 +7,7 @@ namespace App\Radio\SmartBlock;
 use App\Entity\CustomField;
 use App\Entity\Enums\SmartBlockCriteriaComparison;
 use App\Entity\Enums\SmartBlockCriteriaField;
+use App\Entity\Enums\StationMediaTypes;
 use App\Entity\StationMediaCategory;
 use App\Entity\StationPlaylist;
 use App\Entity\StationPlaylistSmartBlockCriteria;
@@ -58,6 +59,11 @@ final readonly class SmartBlockCriteriaPayloadParser
 
             if (SmartBlockCriteriaField::Category === $field) {
                 $row->value = (string)$this->resolveCategoryId($playlist, $value);
+            } elseif (SmartBlockCriteriaField::Type === $field) {
+                if (!in_array($value, StationMediaTypes::values(), true)) {
+                    throw new ValidationException('type value is invalid.');
+                }
+                $row->value = StationMediaTypes::isStationId($value) ? StationMediaTypes::ID : $value;
             } elseif ($field->isNumeric()) {
                 $row->value = $this->normalizeNumber($value);
                 $row->value2 = null !== $value2 ? $this->normalizeNumber($value2, 'value2') : null;
@@ -112,6 +118,7 @@ final readonly class SmartBlockCriteriaPayloadParser
         SmartBlockCriteriaComparison $comparison
     ): void {
         $allowed = match ($field) {
+            SmartBlockCriteriaField::Type,
             SmartBlockCriteriaField::Category => [
                 SmartBlockCriteriaComparison::Is,
                 SmartBlockCriteriaComparison::IsNot,
