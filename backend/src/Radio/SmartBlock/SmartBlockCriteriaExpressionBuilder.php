@@ -7,6 +7,7 @@ namespace App\Radio\SmartBlock;
 use App\Entity\Enums\SmartBlockCriteriaComparison;
 use App\Entity\Enums\SmartBlockCriteriaField;
 use App\Entity\Enums\SmartBlockMatchType;
+use App\Entity\Enums\StationMediaTypes;
 use App\Entity\SongHistory;
 use App\Entity\StationMediaCustomField;
 use App\Entity\StationPlaylistSmartBlockCriteria;
@@ -77,10 +78,29 @@ final class SmartBlockCriteriaExpressionBuilder
             SmartBlockCriteriaField::LastPlayed => $this->buildLastPlayedCondition($criterion, $index, $now),
             SmartBlockCriteriaField::Genre => $this->buildTextCondition('sm.genre', $criterion, $index),
             SmartBlockCriteriaField::Category => $this->buildCategoryCondition($criterion, $index),
+            SmartBlockCriteriaField::Type => $this->buildTypeCondition($criterion, $index),
             SmartBlockCriteriaField::Artist => $this->buildTextCondition('sm.artist', $criterion, $index),
             SmartBlockCriteriaField::Album => $this->buildTextCondition('sm.album', $criterion, $index),
             SmartBlockCriteriaField::Title => $this->buildTextCondition('sm.title', $criterion, $index),
         };
+    }
+
+    /** @return array{string, array<string, mixed>} */
+    private function buildTypeCondition(
+        StationPlaylistSmartBlockCriteria $criterion,
+        int $index
+    ): array {
+        if (!StationMediaTypes::isStationId($criterion->value)) {
+            return $this->buildTextCondition('sm.type', $criterion, $index);
+        }
+
+        $parameter = 'val' . $index;
+        $operator = SmartBlockCriteriaComparison::IsNot === $criterion->comparison ? 'NOT IN' : 'IN';
+
+        return [
+            sprintf('sm.type %s (:%s)', $operator, $parameter),
+            [$parameter => StationMediaTypes::stationIdTypeValues()],
+        ];
     }
 
     /** @return array{string, array<string, mixed>} */

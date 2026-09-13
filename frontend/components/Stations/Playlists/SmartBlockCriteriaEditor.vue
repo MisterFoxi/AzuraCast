@@ -91,6 +91,16 @@
                     />
 
                     <form-group-select
+                        v-else-if="row.field === SmartBlockCriteriaField.Type"
+                        :id="`smart_block_media_type_${index}`"
+                        class="col-12 col-md-4"
+                        :model-value="row.value ?? ''"
+                        :options="mediaTypeOptions"
+                        :label="$gettext('Type')"
+                        @update:model-value="updateRow(index, {value: String($event)})"
+                    />
+
+                    <form-group-select
                         v-else-if="row.field === SmartBlockCriteriaField.CustomField"
                         :id="`smart_block_custom_field_${index}`"
                         class="col-12 col-md-2"
@@ -101,7 +111,7 @@
                     />
 
                     <form-group-field
-                        v-if="row.field !== SmartBlockCriteriaField.Category"
+                        v-if="row.field !== SmartBlockCriteriaField.Category && row.field !== SmartBlockCriteriaField.Type"
                         :id="`smart_block_value_${index}`"
                         :class="row.field === SmartBlockCriteriaField.CustomField ? 'col-12 col-md-2' : 'col-12 col-md-4'"
                         :model-value="row.value ?? ''"
@@ -223,6 +233,7 @@ import {
 } from "~/entities/ApiInterfaces.ts";
 import {getErrorAsString, useAxios} from "~/vendor/axios";
 import {useTranslate} from "~/vendor/gettext";
+import {getMediaTypeOptions} from "~/functions/mediaTypes.ts";
 import IconIcAdd from "~icons/ic/baseline-add";
 import IconIcDelete from "~icons/ic/baseline-delete";
 
@@ -298,6 +309,7 @@ const limitTypeOptions = [
 
 const fieldOptions = {
     [SmartBlockCriteriaField.Category]: $gettext('Category'),
+    [SmartBlockCriteriaField.Type]: $gettext('Type'),
     [SmartBlockCriteriaField.Genre]: $gettext('Genre'),
     [SmartBlockCriteriaField.Artist]: $gettext('Artist'),
     [SmartBlockCriteriaField.Album]: $gettext('Album'),
@@ -306,6 +318,10 @@ const fieldOptions = {
     [SmartBlockCriteriaField.LastPlayed]: $gettext('Last Played (days ago)'),
     [SmartBlockCriteriaField.CustomField]: $gettext('Custom Field'),
 };
+
+const mediaTypeOptions = computed<Record<string, string>>(() => Object.fromEntries(
+    getMediaTypeOptions($gettext).map((option) => [option.value, option.label])
+));
 
 const categoryOptions = computed<Record<string, string>>(() => Object.fromEntries(
     availableCategories.value.map((category) => [String(category.id), category.name])
@@ -331,7 +347,7 @@ const numericComparisonOptions = {
 };
 
 const comparisonOptionsFor = (row: CriterionRow): Record<string, string> => {
-    if (row.field === SmartBlockCriteriaField.Category) {
+    if (row.field === SmartBlockCriteriaField.Category || row.field === SmartBlockCriteriaField.Type) {
         return {
             [SmartBlockCriteriaComparison.Is]: $gettext('Is'),
             [SmartBlockCriteriaComparison.IsNot]: $gettext('Is Not'),
@@ -450,7 +466,9 @@ const updateField = (index: number, field: SmartBlockCriteriaField): void => {
     updateRow(index, {
         field,
         comparison: isNumeric ? SmartBlockCriteriaComparison.GreaterThan : SmartBlockCriteriaComparison.Is,
-        value: field === SmartBlockCriteriaField.Category && firstCategory ? String(firstCategory.id) : '',
+        value: field === SmartBlockCriteriaField.Type
+            ? getMediaTypeOptions($gettext)[0]?.value ?? ''
+            : field === SmartBlockCriteriaField.Category && firstCategory ? String(firstCategory.id) : '',
         value2: null,
         custom_field_id: null,
     });
